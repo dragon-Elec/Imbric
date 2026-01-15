@@ -1,0 +1,2 @@
+PySide6
+# Note: PyGObject and GnomeDesktop must be installed via system package manager (apt install python3-gi gir1.2-gnomedesktop-3.0)
