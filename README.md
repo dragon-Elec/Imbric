@@ -13,16 +13,10 @@
 ╚═════════════════════════════════════════════════════════════╝
 ```
 
-<br/>
-
 > **Imbric** doesn't manage your files.  
 > It *lenses* them.
 
-<br/>
 
----
-
-<br/>
 
 ## The Philosophy
 
@@ -48,17 +42,9 @@ Imbric treats them like **what they are**: visual objects with shape, color, and
 └───────────────────────────────────────────────────────────────┘
 ```
 
-<br/>
-
----
-
-<br/>
-
 ## How It Works
 
-Imbric is a **lens**, not an engine.
-
-It doesn't reinvent Linux. It *uses* it.
+Imbric is a **lens**, not an engine. It doesn't reinvent Linux. It *uses* it.
 
 | What           | How Imbric Does It              | Why It's Fast                        |
 | -------------- | ------------------------------- | ------------------------------------ |
