@@ -7,11 +7,11 @@
 
 ## Current Focus
 
-**Active Task:** Fix Folder Display Bug
+**Active Task:** Interactions Implementation (Zoom Complete)
 
-**Context:** MasonryView works but folders show as blank boxes. Need to either show folder icons OR add navigation so clicking folders opens them.
+**Context:** Successfully implemented Zoom controls (Toolbar, Mouse, Keyboard). Ready for next interaction task (File Preview).
 
-**Blockers:** None — ready to fix.
+**Blockers:** None.
 
 ---
 
@@ -19,39 +19,40 @@
 
 | ID | Summary | Priority | File |
 |----|---------|----------|------|
-| #001 | Folder boxes blank (no icon) | P1 | `thumbnail_provider.py` |
-| #002 | Click folder does nothing | P1 | `MasonryView.qml` |
-| #003 | Image heights randomized | P2 | `MasonryView.qml` |
+| #005 | Resize lag (minor) | P3 | `MainWindow` |
 
 ---
 
 ## Task Backlog
 
-### 🟠 High Priority (P1)
+### 🟢 Completed (Recent)
+- [x] **Smart Material View:**
+    - [x] Integrate Material Style for QML
+    - [x] Dynamic Theme Binding (Light/Dark)
+    - [x] Card Design (Elevation, Rounded Corners, Hover Animation)
+- [x] **Sidebar Styling:**
+    - [x] GTK-like Padding (6px)
+    - [x] Removing default borders
+    - [x] Modern Selection State
+- [x] **Navigation Bar:**
+    - [x] "PathBar" styling (Rounded Pill design)
+- [x] **Debugging:**
+    - [x] Fix Thumbnail Visibility (Removed broken MultiEffect)
 
-- [x] Fix #001: Return folder icon from ThumbnailProvider
-- [x] Fix #002: Click traversal for folders
-- [x] Fix #003: True Aspect Ratios
-- [x] Fix #004: MasonryView layout width fix
-
-## Backlog (Low Priority)
+### 🟡 Backlog (Next Up)
+- [ ] **Responsive Grid Logic**
+    - [ ] Auto-calculate column count based on window width
+    - [ ] Prevent "Zooming" effect on resize
 - [ ] File Preview (Fullscreen)
 - [ ] Keyboard Navigation
+- [ ] Context Menu (Open, Rename, Trash)
 - [ ] Sorting Logic
-- [ ] Fix #002: Add MouseArea to MasonryView delegate
-- [ ] Add Breadcrumb/Back navigation
-
-### 🟡 Medium Priority (P2)
-
-- [ ] Fix #003: Read actual image dimensions for heights
-- [ ] Async thumbnail generation (background thread)
-- [ ] Sorting logic (QSortFilterProxyModel)
 
 ---
 
 ## Recently Completed
 
 - [x] Phase 1: Native Shell
-- [x] Phase 2: Split-Column Engine (Scanner, Splitter, MasonryView)
-- [x] Phase 3: ThumbnailProvider (GnomeDesktop integration)
-- [x] Sidebar navigation → appBridge connection
+- [x] Phase 2: Split-Column Engine
+- [x] Phase 3: ThumbnailProvider
+- [x] Phase 4a: Visual Polish (Smart Material + Sidebar Styling)

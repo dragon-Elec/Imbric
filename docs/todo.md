@@ -62,13 +62,29 @@
 
 ---
 
-## Phase 4: Interactions & Polish
+## Phase 4a: Visual Polish (Material & GTK) ✓
 
-### Navigation (Core - Done)
-- [x] **Click to Navigate** (Folders)
-- [x] **Breadcrumb Bar** (Native Toolbar)
+- [x] **Smart Material Engine**
+    - [x] Integrate Qt Material Style for QML
+    - [x] `modern.qss` for Qt Widgets styling
+    - [x] Dynamic System Theme binding
+- [x] **MasonryView Logic**
+    - [x] Card elevation and animations
+    - [x] Rounded corners (Safe clipping)
+    - [x] Gradient text overlays
+- [x] **Sidebar GTK Styling**
+    - [x] Padding (6px) and border removal
+    - [x] Modern selection states
+- [x] **Toolbar Polish**
+    - [x] Breadcrumb/PathBar rounded pill design
+    - [x] Zoom Controls (In/Out buttons)
+- [x] **Card Interactions**
+    - [x] Ctrl+Scroll Zooming (MouseArea Overlay)
+    - [x] Keyboard Zoom Shortcuts (Ctrl+/Ctrl-)
 
 ---
+
+## Phase 4b: Interactions & Features
 
 ## Phase 4: Backlog / Low Priority
 

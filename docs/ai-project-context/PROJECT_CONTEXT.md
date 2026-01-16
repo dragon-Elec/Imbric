@@ -222,6 +222,32 @@ ApplicationWindow (MainWindow)
     └── [FUTURE] Detail View  → Fullscreen Overlay (ImageModel)
 ```
 
+### 4.4. Visual Engineering: "The Smart Fusion" Strategy
+
+We achieve a modern, native Linux look *without* using non-standard libraries (like KDE Frameworks) by applying a modernization layer on top of the standard Qt **Fusion** style.
+
+**The Problem:**
+Standard Qt widgets (Fusion style) look "safe" but dated—hard borders, small padding, and lack of elevation.
+
+**The Solution:**
+We use a 3-layer styling approach:
+
+1.  **Style Base:** `QStyleFactory.create("Fusion")`
+    *   Provides the correct logic (hits, focus rects) but generic visuals.
+2.  **System Binding:** `activePalette` (Python)
+    *   We do *not* hardcode colors. We bind Qt's `QPalette` to the system's `activePalette` (from GTK/GNOME).
+    *   Dark Mode works automatically because Qt reads the OS text/window colors.
+3.  **QSS Patching:** `ui/styles/modern.qss`
+    *   **Flatness:** We remove the 1px `border` from Toolbars and TreeViews.
+    *   **Padding:** We inject `6px` padding into lists (up from default ~2px) to match GTK4 spatial density.
+    *   **Radius:** We enforce `border-radius: 6px` on input fields and buttons.
+    *   **Palette Roles:** We use CSS variables like `background: palette(window)` instead of hex codes. This ensures the QSS "recolors" itself instantly when the system theme changes.
+
+**Key Implementation Details:**
+*   **PathBar:** A `QLineEdit` styled as a pill (`border-radius: 6px`).
+*   **Sidebar:** A `QTreeView` stripped of its frame (`border: none`) with `::item` padding increased to `6px 4px`.
+*   **Zoom:** Toolbar buttons use standard `QIcon.fromTheme()` (e.g., `zoom-in`, `go-up`) to pull the active icon pack (Adwaita, Papirus, etc.).
+
 ---
 
 ## 5. Data Flow & Patterns
@@ -326,25 +352,24 @@ def deal(files: list, num_columns: int) -> list[list]:
 **Next Steps:**
 - Pick up "File Preview" from Backlog when ready.
 
-### 8.2. Session History (Partial)
+### 8.6. Session History (Partial)
 
 | Date | Focus Area | Key Changes |
 |:-----|:-----------|:------------|
+| 2026-01-16 | Interactions | Implemented Zoom (Toolbar + Ctrl-Scroll + Keyboard) |
+| 2026-01-16 | Visual Polish | Smart Material QML + "GTK-like" Sidebar styling |
+| 2026-01-16 | Debugging | Fixed Thumbnail visibility (removed faulty `MultiEffect`) |
 | 2026-01-15 | Performance | Jitter fix, Hardware Acceleration, True Aspect Ratios |
-| 2026-01-15 | Architecture | Hybrid Stack (Widgets + QML) |
-| 2026-01-15 | Foundation | Scanner, Splitter, ThumbnailProvider |
 
-### 8.3. Architecture Decisions
+### 8.7. Architecture Decisions
 - **Why Hybrid?** Pure QML lacked native "feel" for menus/sidebar. Widgets gives us standard desktop behavior for free.
-- **Why QQuickView?** `QQuickWidget` software rendering was too slow/jittery for large grids. `createWindowContainer` gives direct GPU access.
+- **Why not MultiEffect?** It caused total rendering failure on the specific target hardware. Switched to `clip: true` for safe, performant rounded corners.
+- **Why MouseArea Overlay for Zoom?** The `ScrollView` was consuming scroll events before `WheelHandler` could see them. An overlay with `propagateComposedEvents` was the robust fix.
 
-### 8.4. AI Observations
-- User prefers "lens not engine" philosophy — use GNOME libs, don't reimplement
-- Documentation should be visual (ASCII diagrams, tables)
-- User wants Fusion/Breeze style (Qt6 Breeze not available in repos, using Fusion)
-- Always ask before making changes
+### 8.8. AI Observations
+- User prefers visually polished "GTK-like" aesthetics (padding, flat borders).
+- "Lens not engine" applies to UI too: mimic the native shell (Fusion/GTK) as close as possible.
+- User prefers specific, native-aligned implementation (e.g. keybinds matching Nautilus) over generic solutions.
 
-### 8.5. Pending Investigations
-- [ ] [AI-TODO] Async thumbnail generation thread (Priority)
 
 ```
