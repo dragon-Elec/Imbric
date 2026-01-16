@@ -1,7 +1,9 @@
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QToolBar, 
-                               QTreeView, QSplitter, QFileSystemModel, QLineEdit)
+                               QTreeView, QSplitter, QFileSystemModel, QLineEdit, QSizePolicy)
 from PySide6.QtCore import QUrl, Slot, Qt, QDir
 from PySide6.QtGui import QAction, QIcon
+
+
 
 from pathlib import Path
 import os
@@ -45,8 +47,28 @@ class MainWindow(QMainWindow):
         
         # Path Bar
         self.path_edit = QLineEdit()
+        self.path_edit.setObjectName("PathBar")
         self.path_edit.returnPressed.connect(lambda: self.navigate_to(self.path_edit.text()))
         self.toolbar.addWidget(self.path_edit)
+
+        # Spacer to push Zoom buttons to the right (Optional, but looks better)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.toolbar.addWidget(spacer)
+        
+        # Zoom Out (More Columns - Smaller icons)
+        self.zoom_out_action = QAction(QIcon.fromTheme("zoom-out"), "Zoom Out", self)
+        self.zoom_out_action.setShortcut("Ctrl+-")
+        self.zoom_out_action.triggered.connect(lambda: self.change_zoom(1))
+        self.toolbar.addAction(self.zoom_out_action)
+        
+        # Zoom In (Fewer Columns - Larger icons)
+        self.zoom_in_action = QAction(QIcon.fromTheme("zoom-in"), "Zoom In", self)
+        self.zoom_in_action.setShortcut("Ctrl+=")
+        self.zoom_in_action.triggered.connect(lambda: self.change_zoom(-1))
+        self.toolbar.addAction(self.zoom_in_action)
+
+        # --- Main Layout (Splitter) ---
 
         # --- Main Layout (Splitter) ---
         self.main_splitter = QSplitter(Qt.Horizontal)
@@ -61,6 +83,7 @@ class MainWindow(QMainWindow):
         self.fs_model.setFilter(QDir.NoDotAndDotDot | QDir.AllDirs)
         
         self.sidebar_tree = QTreeView()
+        self.sidebar_tree.setObjectName("SidebarTree")
         self.sidebar_tree.setModel(self.fs_model)
         self.sidebar_tree.setRootIndex(self.fs_model.index(QDir.homePath())) # Start at home
         self.sidebar_tree.clicked.connect(self._on_sidebar_clicked)
@@ -153,3 +176,16 @@ class MainWindow(QMainWindow):
 
     def _on_columns_changed(self):
         pass
+
+    def change_zoom(self, delta):
+        """
+        Adjusts column count.
+        delta: +1 (Zoom Out / More columns), -1 (Zoom In / Fewer columns)
+        """
+        # Note: logic inverse of "zoom" -> More columns = smaller icons = "Zoom Out"
+        current = self.splitter._column_count # Accessing property
+        new_count = current + delta
+        
+        # Clamp between 1 and 8
+        if 1 <= new_count <= 8:
+            self.splitter.setColumnCount(new_count)
