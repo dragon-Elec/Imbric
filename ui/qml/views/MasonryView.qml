@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Effects
 
 Item {
     id: root
@@ -11,13 +12,26 @@ Item {
     // Calculate column width based on available space
     property real columnWidth: root.width > 0 ? (root.width - 40 - (columnCount - 1) * 10) / Math.max(columnCount, 1) : 200
 
-    // Access System Palette
+    // --- 1. SMART MATERIAL SETUP ---
+    // Inherit System Fonts and Colors for a native look
     SystemPalette { id: activePalette; colorGroup: SystemPalette.Active }
     
-    // Background Rectangle using System Window Color
+    // Detect Dark Mode
+    readonly property bool isSystemDark: Qt.styleHints.colorScheme === Qt.Dark
+
+    // Bind Material Theme to System Palette
+    Material.theme: isSystemDark ? Material.Dark : Material.Light
+    Material.accent: activePalette.highlight
+    Material.primary: activePalette.highlight
+    Material.background: activePalette.window
+    Material.foreground: activePalette.text
+        
+
+
+    // Background Rectangle using Material Background
     Rectangle {
         anchors.fill: parent
-        color: activePalette.window
+        color: Material.background
     
         ScrollView {
             id: scrollView
@@ -48,70 +62,103 @@ Item {
                         delegate: Item {
                             id: delegateItem
                             width: columnListView.width
-                            // Calculate exact height based on aspect ratio
-                            // Fallback to square (width) if no dimensions or isDir
-                            height: {
-                                if (model.isDir) return columnListView.width * 0.8 // Slightly shorter for folders
+                            
+                            // Calculate Image Height (Aspect Ratio)
+                            readonly property real imgHeight: {
+                                if (model.isDir) return columnListView.width * 0.8
                                 if (model.width > 0 && model.height > 0) {
                                     return (model.height / model.width) * columnListView.width
                                 }
-                                return columnListView.width // Square fallback
-                            } 
+                                return columnListView.width
+                            }
                             
-                            Image {
-                                id: thumbnailImage
+                            // Footer Height for Text
+                            readonly property int footerHeight: 36
+                            
+                            // Total Delegate Height
+                            height: imgHeight + footerHeight
+
+                            // The "Card" Container
+                            Rectangle {
+                                id: clipContainer
                                 anchors.fill: parent
-                                anchors.margins: 5
-                                source: "image://thumbnail/" + model.path
+                                anchors.margins: 4 // External spacing
+                                radius: 8
+                                color: "transparent" // Let hover handle background
+                                clip: true
                                 
-                                fillMode: Image.PreserveAspectCrop
-                                asynchronous: true
-                                cache: true
-                                
-                                onStatusChanged: {
-                                    if (status === Image.Error) {
-                                        console.error("Image Load Error:", source)
+                                // 1. Main Image (Top)
+                                Image {
+                                    id: thumbnailImage
+                                    width: parent.width
+                                    height: delegateItem.imgHeight
+                                    anchors.top: parent.top
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    
+                                    source: "image://thumbnail/" + model.path
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                    cache: true
+                                    
+                                    onStatusChanged: {
+                                        if (status === Image.Error) console.error("Image Load Error:", source)
                                     }
                                 }
                                 
-                                // Visual frame
+                                // 2. Text Footer (Bottom) - No Gradient, Native Look
                                 Rectangle {
-                                    anchors.fill: parent
-                                    color: "transparent"
-                                    border.color: "#33ffffff"
-                                    border.width: 1
-                                    radius: 4
-                                }
-                                
-                                // Filename overlay
-                                Rectangle {
-                                    anchors.bottom: parent.bottom
+                                    id: titleFooter
                                     width: parent.width
-                                    height: 20
-                                    color: "#80000000"
+                                    height: delegateItem.footerHeight
+                                    anchors.bottom: parent.bottom
+                                    color: "transparent" // Clean look
                                     
                                     Text {
                                         anchors.centerIn: parent
+                                        width: parent.width - 16
+                                        
                                         text: model.name
-                                        color: "white"
-                                        font.pixelSize: 10
-                                        elide: Text.ElideRight
-                                        width: parent.width - 4
+                                        
+                                        // Use System Colors (Smart Material)
+                                        color: Material.foreground
+                                        
+                                        font.pixelSize: 12
+                                        font.family: Qt.application.font.family
+                                        elide: Text.ElideMiddle // Filename style
+                                        horizontalAlignment: Text.AlignHCenter
                                     }
                                 }
                                 
-                                // Navigation MouseArea
-                                MouseArea {
+                                // Hover Effect (Whole Card)
+                                Rectangle {
+                                    id: hoverBg
                                     anchors.fill: parent
+                                    color: Material.foreground
+                                    opacity: 0.0
+                                    z: -1 // Behind content? No, container is transparent.
+                                    // Actually, put it behind image? 
+                                    // If we want hover to show a card background:
+                                }
+                                
+                                states: [
+                                    State {
+                                        name: "hovered"
+                                        when: mouseArea.containsMouse
+                                        PropertyChanges { target: clipContainer; color: Qt.rgba(Material.foreground.r, Material.foreground.g, Material.foreground.b, 0.05) }
+                                    }
+                                ]
+                                
+                                // Hover & Click Interactions
+                                MouseArea {
+                                    id: mouseArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
                                     cursorShape: model.isDir ? Qt.PointingHandCursor : Qt.ArrowCursor
                                     
                                     onClicked: {
                                         if (model.isDir) {
-                                            console.log("Navigating to:", model.path)
                                             appBridge.openPath(model.path)
-                                        } else {
-                                            console.log("Clicked file:", model.path)
-                                            // TODO: Open file preview
                                         }
                                     }
                                 }
@@ -128,6 +175,34 @@ Item {
         target: columnSplitter
         function onColumnsChanged() {
             root.columnModels = columnSplitter.getModels()
+        }
+    }
+    
+    // Zoom Logic (Ctrl + Scroll) - MouseArea Overlay
+    MouseArea {
+        anchors.fill: parent
+        propagateComposedEvents: true // Let clicks pass through
+        acceptedButtons: Qt.NoButton // Don't eat clicks/right-clicks
+        hoverEnabled: true // Required for wheel events? actually onWheel works without this usually, but safe to add
+        
+        onWheel: (wheel) => {
+            // Check for Ctrl Modifier
+            if (wheel.modifiers & Qt.ControlModifier) {
+                
+                if (wheel.angleDelta.y > 0) {
+                    // Zoom In
+                    if (root.columnCount > 1) columnSplitter.setColumnCount(root.columnCount - 1)
+                } else if (wheel.angleDelta.y < 0) {
+                    // Zoom Out
+                    if (root.columnCount < 8) columnSplitter.setColumnCount(root.columnCount + 1)
+                }
+                
+                // Consume the event so ScrollView doesn't scroll
+                wheel.accepted = true
+            } else {
+                // Pass event to underlying ScrollView
+                wheel.accepted = false
+            }
         }
     }
 }
