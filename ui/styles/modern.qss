@@ -1,0 +1,87 @@
+/* Modern Fusion Patches */
+
+/* 1. Main Window Background */
+QMainWindow {
+    background: palette(window);
+}
+
+/* 2. Toolbar - Flat and Clean */
+QToolBar {
+    background: palette(window);
+    border: none;
+    spacing: 6px; /* Space between buttons */
+    padding: 6px; /* Space around the toolbar */
+    border-bottom: 1px solid palette(mid); /* Subtle separator */
+}
+
+/* 3. Toolbar Buttons */
+QToolButton {
+    background: transparent;
+    border: none;
+    border-radius: 4px; /* Modern rounded corners */
+    padding: 6px 12px; /* Comfortable click targets */
+    font-weight: bold;
+}
+
+/* Hover State */
+QToolButton:hover {
+    background: palette(midlight); /* Subtle highlight */
+}
+
+/* Pressed State */
+QToolButton:pressed {
+    background: palette(highlight);
+    color: palette(highlightedText);
+}
+
+/* Checked/Active State */
+QToolButton:checked {
+    background: palette(light);
+    border: 1px solid palette(highlight);
+}
+
+/* 4. Sidebar TreeView - GTK-like Styling */
+#SidebarTree {
+    background: palette(window);
+    border: none;
+    outline: none; /* Remove focus dotted line */
+    font-size: 14px;
+}
+
+#SidebarTree::item {
+    padding: 6px 4px; /* Reduced from 8px as requested */
+    border-radius: 4px;
+    margin-left: 4px;
+    margin-right: 4px; 
+}
+
+#SidebarTree::item:hover {
+    background: palette(midlight);
+}
+
+#SidebarTree::item:selected {
+    background: palette(highlight);
+    color: palette(highlightedText);
+}
+
+#SidebarTree::item:selected:!active {
+    background: palette(mid); 
+    color: palette(text);
+}
+
+/* 5. Path Bar - Modern Breadcrumb Logic */
+#PathBar {
+    padding: 6px 12px; /* Comfortable text entry */
+    border-radius: 6px; /* consistent rounding */
+    border: 1px solid palette(mid);
+    background: palette(base);
+    color: palette(text);
+    selection-background-color: palette(highlight);
+    selection-color: palette(highlightedText);
+    margin-right: 6px; /* Spacing from edge */
+}
+
+#PathBar:focus {
+    border: 2px solid palette(highlight); /* Clear focus indicator */
+    padding: 5px 11px; /* Adjust padding to prevent shift width increase */
+}
