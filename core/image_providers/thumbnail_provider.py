@@ -32,7 +32,7 @@ class ThumbnailProvider(QQuickImageProvider):
         file_path = id_path
         
         if not os.path.exists(file_path):
-            print(f"[PROVIDER] ERROR: File not found: {file_path}")
+            # print(f"[PROVIDER] ERROR: File not found: {file_path}")
             return QImage()
         
         target_size = requestedSize if requestedSize.isValid() else QSize(128, 128)
@@ -53,15 +53,15 @@ class ThumbnailProvider(QQuickImageProvider):
         uri = "file://" + urllib.parse.quote(file_path)
         mtime = int(os.path.getmtime(file_path))
         
-        print(f"[PROVIDER] URI: {uri} | MTime: {mtime}")
+        # print(f"[PROVIDER] URI: {uri} | MTime: {mtime}")
 
         # Try to find existing cached thumbnail
         thumb_path = self._factory.lookup(uri, mtime)
 
         if thumb_path:
-            print(f"[PROVIDER] CACHE HIT: {thumb_path}")
+            pass  # print(f"[PROVIDER] CACHE HIT: {thumb_path}")
         else:
-            print(f"[PROVIDER] CACHE MISS. Generating for {uri}")
+            # print(f"[PROVIDER] CACHE MISS. Generating for {uri}")
             # Thumbnail doesn't exist. Try to generate.
             try:
                 mime_map = {
@@ -77,28 +77,28 @@ class ThumbnailProvider(QQuickImageProvider):
                 if pixbuf:
                     self._factory.save_thumbnail(pixbuf, uri, mtime)
                     thumb_path = self._factory.lookup(uri, mtime)
-                    print(f"[PROVIDER] GENERATION SUCCESS: {thumb_path}")
+                    # print(f"[PROVIDER] GENERATION SUCCESS: {thumb_path}")
                 else:
-                    print(f"[PROVIDER] GENERATION FAILED (Pixbuf is None)")
+                    pass  # print(f"[PROVIDER] GENERATION FAILED (Pixbuf is None)")
             except Exception as e:
-                print(f"[PROVIDER] EXCEPTION during generation: {e}")
+                # print(f"[PROVIDER] EXCEPTION during generation: {e}")
                 pass  # Silent fail, will use fallback
         
         # Load from cached thumbnail path
         if thumb_path and os.path.exists(thumb_path):
             img = QImage(thumb_path)
         else:
-            print(f"[PROVIDER] FALLBACK to original image: {file_path}")
+            # print(f"[PROVIDER] FALLBACK to original image: {file_path}")
             # Fallback: Load original image directly
             img = QImage(file_path)
 
         if img.isNull():
             # Image failed to load - return file icon
-            print(f"[PROVIDER] Image NULL after loading. Returning icon.")
+            # print(f"[PROVIDER] Image NULL after loading. Returning icon.")
             return self._get_themed_icon("image-x-generic", size, target_size)
 
-        # DEBUG: Log properties
-        print(f"[PROVIDER] Image Loaded. Size: {img.size()}, Format: {img.format()}, Bytes: {img.sizeInBytes()}")
+        # DEBUG: Log properties (disabled for performance)
+        # print(f"[PROVIDER] Image Loaded. Size: {img.size()}, Format: {img.format()}, Bytes: {img.sizeInBytes()}")
 
         # DEBUG: FORCE TEST PATTERN via pixel manipulation (Test Logic Phase 2)
         # Uncomment the next lines to prove if the pipeline works

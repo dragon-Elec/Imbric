@@ -1,5 +1,5 @@
 ```
-        █ █▀▄▀█ █▄▄ █▀█ █ █▀▀
+        █ █▀▄▀█ █▄▄ █▀█ █ █▀▀s
         █ █░▀░█ █▄█ █▀▄ █ █▄▄ 
  Your Photos. Your Filesystem. Zero Lag.
 ```

@@ -1,7 +1,7 @@
 # Imbric: Architecture & State Reference
 
-> **Version:** 0.1-alpha  
-> **Last Updated:** 2026-01-15  
+> **Version:** 0.2-alpha  
+> **Last Updated:** 2026-01-17  
 > **Status:** Active Development  
 > **Target Platform:** Linux (GNOME-based: Zorin, Ubuntu, Fedora)  
 > **Primary Stack:** Python 3.10+ / PySide6 (Qt6) / QML
@@ -12,11 +12,13 @@
 
 **What:** Photo-first file manager with Masonry layout, native GNOME integration.
 
-**Current Phase:** Phase 3 Complete. Working on Phase 4 (Interactions).
+**Current Phase:** Phase 5 (Async I/O). Non-blocking file operations with progress overlay.
 
 **Critical Context:**
 - Uses `Gio` for file ops, `GnomeDesktop` for thumbnails — NOT Python reimplementations
 - Masonry = "Card Dealing" into N columns, not position calculation
+- **Input Handling:** "God Object" pattern — Single global MouseArea handles all clicks/drags.
+- **Hybrid Menus:** QML emits signal → Python shows native `QMenu`.
 - Linux-only. No cross-platform abstraction.
 
 **Blockers:** None
@@ -71,30 +73,42 @@ Imbric is a **lens** for your filesystem, not a file manager built from scratch.
 
 ```
 imbric/
-├── [ENTRY]    main.py              # Initializes QApplication, starts MainWindow
+├── [ENTRY]    main.py                   # Initializes QApplication, starts MainWindow
 │
-├── [CORE]     core/                # Backend logic (Python → GNOME)
-│   ├──        gio_bridge/          # Wrappers for GLib I/O
-│   │   ├──    bookmarks.py         # Reads ~/.config/gtk-3.0/bookmarks
-│   │   └──    volumes.py           # Gio.VolumeMonitor wrapper
-│   ├──        image_providers/     # Thumbnail generation (Direct GnomeDesktop usage)
-│   └──        gnome_utils/         # [FUTURE] Standalone GnomeDesktop wrappers (Refactor target)
+├── [CORE]     core/                     # Backend logic (Python → GNOME)
+│   ├──        gio_bridge/               # Wrappers for GLib I/O
+│   │   ├──    bookmarks.py              # Reads ~/.config/gtk-3.0/bookmarks
+│   │   └──    volumes.py                # Gio.VolumeMonitor wrapper
+│   ├──        image_providers/          # Thumbnail generation (Direct GnomeDesktop usage)
+│   ├──        file_operations.py        # [NEW] Trash, Move, Copy, Open (via Gio)
+│   ├──        clipboard_manager.py      # [NEW] System Clipboard (Copy/Cut/Paste)
+│   ├──        selection_helper.py       # [NEW] Geometry Hit-Testing for Masonry
+│   └──        file_monitor.py           # [NEW] Gio.FileMonitor wrapper
 │
-├── [UI]       ui/                  # Frontend (Qt Widgets + QML)
-│   ├──        main_window.py       # [NEW] Native Shell (QMainWindow, Toolbar, Sidebar)
-│   ├──        models/              # QAbstractListModel implementations
-│   │   └──    sidebar_model.py     # Bookmarks + Volumes for sidebar
+├── [UI]       ui/                       # Frontend (Qt Widgets + QML)
+│   ├──        main_window.py            # Native Shell (QMainWindow, Toolbar, Sidebar, Shortcuts)
+│   ├──        models/                   # QAbstractListModel implementations
+│   │   ├──    sidebar_model.py          # Bookmarks + Volumes for sidebar
+│   │   ├──    column_splitter.py        # "Card Dealing" logic for Masonry
+│   │   └──    app_bridge.py             # [NEW] QML-Python Controller (Drag, Drop, Menu)
 │   └──        qml/
 │       ├──    views/
-│       │      ├── MasonryView.qml  # [EMBEDDED] High-performance grid
-│       │      └── DetailView.qml   # [FUTURE] Fullscreen image viewer
-│       └──    components/          # [FUTURE] Reusable QML UI elements
+│       │      ├── MasonryView.qml       # High-performance grid with Selection & DnD
+│       │      └── DetailView.qml        # [FUTURE] Fullscreen image viewer
+│       └──    components/               # [NEW] Reusable QML UI elements
+│              ├── RubberBand.qml        # Selection marquee
+│              ├── SelectionModel.qml    # Path-based selection state
+│              └── qmldir                 # Library manifest
+│   └──        widgets/                  # [NEW] Python Qt widgets
+│              ├── progress_overlay.py   # Non-blocking file op progress
+│              ├── status_bar.py         # [NEW] Status bar with item counts
+│              └── qmldir                 # Library manifest
 │
-├── [ASSET]    assets/              # Template files only
+├── [ASSET]    assets/                   # Template files only
 │
-└── [DOC]      docs/                # Structure, TODO, archive
-    ├──        ai-project-context/  # THIS FOLDER
-    └──        archive/             # Legacy QML Shell files
+└── [DOC]      docs/                     # Structure, TODO, archive
+    ├──        ai-project-context/       # THIS FOLDER
+    └──        archive/                  # Legacy QML Shell files
 ```
 
 ### 2.2. Dependency Flow (Hybrid)
@@ -114,13 +128,14 @@ imbric/
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    ui/models/ (Bridge)                      │
-│   ColumnSplitter, SidebarModel                              │
+│   ColumnSplitter, SidebarModel, AppBridge                   │
 └───────────────────────────┬─────────────────────────────────┘
                             │ imports
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    core/ (Python Logic)                     │
 │   gio_bridge/, image_providers/                             │
+│   FileOperations, ClipboardManager, SelectionHelper         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -192,6 +207,262 @@ imbric/
 
 ---
 
+### 3.4. `core/file_operations.py` — File System Operations
+
+**Status:** [VERIFIED: 2026-01-17]
+
+**Purpose:** Non-blocking file operations using QThread + Gio.Cancellable.
+
+**Architecture:**
+- `_FileOperationWorker`: Internal worker running in QThread
+- `FileOperations`: Public controller class
+
+**Key Exports:**
+
+| Method | Purpose | Blocking | Risk |
+|:-------|:--------|:---------|:-----|
+| `copy(src, dest)` | Copy file/folder | NO | MED |
+| `move(src, dest)` | Move file/folder | NO | MED |
+| `trash(path)` | Move to Trash | NO | MED |
+| `trashMultiple(paths)` | Trash multiple files | NO | MED |
+| `rename(path, name)` | Rename file/folder | NO | MED |
+| `cancel()` | Cancel current op | NO | LOW |
+| `openWithDefaultApp(path)` | Launch with default app | YES | LOW |
+
+**Signals:**
+- `operationStarted(op_type, path)`
+- `operationProgress(path, current, total)` (uses qint64)
+- `operationCompleted(op_type, path)`
+- `operationError(op_type, path, message)`
+
+**Threading Model:**
+- **Controller:** (Main Thread) Emits `_request*` signals to Worker.
+- **Worker:** (Background Thread) Executes I/O and emits progress.
+- **Throttling:** Progress updates limited to 10Hz to prevent UI freeze.
+
+**Dependencies:** `gi.repository.Gio`, `PySide6.QtCore.QThread`
+
+---
+
+### 3.5. `core/clipboard_manager.py` — System Clipboard
+
+**Status:** [VERIFIED: 2026-01-17]
+
+**Purpose:** Manage copy/cut/paste state using the system clipboard.
+
+**Key Exports:**
+
+| Method | Purpose | Risk |
+|:-------|:--------|:-----|
+| `copy(paths)` | Set clipboard to copy mode | LOW |
+| `cut(paths)` | Set clipboard to cut mode | LOW |
+| `getFiles()` | Retrieve files from clipboard | LOW |
+| `hasFiles()` | Check if clipboard has files | LOW |
+| `isCut()` | Check if cut operation | LOW |
+
+**Dependencies:** `PySide6.QtGui.QClipboard`, `PySide6.QtCore.QMimeData`
+
+---
+
+### 3.6. `core/selection_helper.py` — Masonry Hit Testing
+
+**Status:** [VERIFIED: 2026-01-17]
+
+**Purpose:** Provides geometry calculations for the Masonry layout to determine which items are within a rubberband selection rectangle.
+
+**Key Exports:**
+
+| Method | Purpose | Risk |
+|:-------|:--------|:-----|
+| `getMasonrySelection(splitter, cols, colW, gap, x, y, w, h)` | Return list of paths within rect | LOW |
+
+**Dependencies:** `PySide6.QtCore.QObject`
+
+---
+
+### 3.7. `ui/models/app_bridge.py` — QML-Python Controller
+
+**Status:** [VERIFIED: 2026-01-17]
+
+**Purpose:** Acts as the central controller for QML interactions, bridging high-level commands to Python backend.
+
+**Key Exports:**
+
+| Method | Purpose | Risk |
+|:-------|:--------|:-----|
+| `openPath(path)` | Navigate to directory | LOW |
+| `showContextMenu(paths)` | Show native QMenu for selection | LOW |
+| `startDrag(paths)` | Initiate system drag-and-drop | LOW |
+| `handleDrop(urls, dest)` | Process dropped files (Auto-rename duplicates) | MED |
+| `paste()` | Paste from clipboard (Auto-rename duplicates) | MED |
+
+**Dependencies:** `PySide6.QtWidgets.QMenu`, `PySide6.QtGui.QDrag`
+
+---
+
+
+### 3.8. `core/gio_bridge/scanner.py` — Async File Scanner
+
+**Status:** [VERIFIED: 2026-01-17]
+
+**Purpose:** Asynchronously enumerates files in a directory using Gio, retrieving metadata (name, type, hidden status) in batches.
+
+**Key Exports:**
+
+| Class | Method | Purpose | Risk |
+|:------|:-------|:--------|:-----|
+| `FileScanner` | `scan_directory(path)` | Starts async scan | LOW |
+| — | `filesFound` (Signal) | Emits batch of `[{name, path, isDir, w, h}]` | LOW |
+| — | `scanFinished` (Signal) | Emits when all files scanned | LOW |
+
+**Internal Logic:**
+1. Uses `Gio.File.enumerate_children_async` for non-blocking I/O.
+2. Fetches files in batches (default 50) using `next_files_async`.
+3. Filters hidden files.
+4. Reads image dimensions using `QImageReader` (fast header read) for non-directories.
+5. Emits `filesFound` incrementally to populate UI while scanning.
+
+**Dependencies:** `gi.repository.Gio`, `PySide6.QtGui.QImageReader`
+
+---
+
+### 3.9. `core/file_monitor.py` — Directory Watcher
+
+**Status:** [VERIFIED: 2026-01-17]
+
+**Purpose:** Watches a specific directory for filesystem changes (create, delete, rename) using `Gio.FileMonitor`.
+
+**Key Exports:**
+
+| Class | Method | Purpose | Risk |
+|:------|:-------|:--------|:-----|
+| `FileMonitor` | `watch(path)` | Starts monitoring path | LOW |
+| — | `stop()` | Stops monitoring | LOW |
+| — | `fileCreated`, `fileDeleted` | Signals for change events | LOW |
+
+**Internal Logic:**
+1. Wraps `Gio.File.monitor_directory`.
+2. Translates raw GIO events (`moved_in`, `renamed`, etc.) into clean Qt signals.
+3. Used to trigger a refresh of the `FileScanner` or updating the model directly (future).
+
+**Dependencies:** `gi.repository.Gio`
+
+---
+
+### 3.10. `core/image_providers/thumbnail_provider.py` — Thumbnail Generator
+
+**Status:** [VERIFIED: 2026-01-17]
+
+**Purpose:** Custom `QQuickImageProvider` that generates/retrieves thumbnails using GNOME's system-wide thumbnailer.
+
+**Key Exports:**
+
+| Class | Method | Purpose | Risk |
+|:------|:-------|:--------|:-----|
+| `ThumbnailProvider` | `requestImage(id, size, reqSize)` | Returns `QImage` for path | MED |
+
+**Internal Logic:**
+1. Receives request `image://thumbnail//path/to/file.jpg`.
+2. Checks GNOME thumbnail cache (`~/.cache/thumbnails/`) using `GnomeDesktop.DesktopThumbnailFactory`.
+3. If missing, attempts to generate a new thumbnail via `GnomeDesktop`.
+4. Fallbacks:
+   - If folder: Returns themed folder icon.
+   - If image load fails: Returns themed file icon.
+   - If generation fails: Loads original image (slow fallback).
+
+**Dependencies:** `gi.repository.GnomeDesktop`, `PySide6.QtQuick.QQuickImageProvider`
+
+---
+
+### 3.11. `ui/models/column_splitter.py` — Masonry Layout Engine
+
+**Status:** [VERIFIED: 2026-01-17]
+
+**Purpose:** The "Dealer" logic that splits a flat list of files into N columns to achieve a Masonry layout.
+
+**Key Exports:**
+
+| Class | Method | Purpose | Risk |
+|:------|:-------|:--------|:-----|
+| `ColumnSplitter` | `setFiles(list)` | Sets master list and deals | LOW |
+| `ColumnSplitter` | `setColumnCount(n)` | Re-deals into N columns | LOW |
+| `ColumnSplitter` | `getModels()` | Returns list of `SimpleListModel` | LOW |
+| `SimpleListModel` | — | Read-only list model for one column | LOW |
+
+**Internal Logic:**
+1. **Round-Robin Dealing:** Iterates input list, assigning item `i` to column `i % N`.
+2. **Models:** Maintains N `SimpleListModel` instances.
+3. On change, clears and repopulates all N models.
+4. Preserves chronological order (top-left to bottom-right reading direction).
+
+**Dependencies:** `PySide6.QtCore.QAbstractListModel`
+
+---
+
+### 3.12. `main.py` — Application Entry Point
+
+**Status:** [VERIFIED: 2026-01-17]
+
+**Purpose:** Bootstraps the PySide6 application, sets up the Python instance, and launches the main window.
+
+**Key Exports:** N/A (Script)
+
+**Internal Logic:**
+1. Initializes `QApplication`.
+2. Instantiates `MainWindow`.
+
+---
+
+### 3.13. `ui/widgets/status_bar.py` — File Count & Selection Status
+
+**Status:** [VERIFIED: 2026-01-17]
+
+**Purpose:** Custom `QStatusBar` widget that displays live folder statistics and selection counts.
+
+**Key Exports:**
+
+| Class | Method | Purpose | Risk |
+|:------|:-------|:--------|:-----|
+| `StatusBar` | `updateItemCount(files)` | Accumulates batch counts | LOW |
+| `StatusBar` | `updateSelection(int)` | Updates "X items selected" | LOW |
+| `StatusBar` | `resetCounts()` | Clears counters (on nav) | LOW |
+
+**Internal Logic:**
+1. Maintains `_total_items`, `_folder_count`, `_file_count`.
+2. Updates accumulatively as `FileScanner` emits batches.
+3. Switches text between "X folders, Y files" and "Z items selected".
+
+**Dependencies:** `PySide6.QtWidgets`
+
+---
+
+### 3.14. `ui/widgets/progress_overlay.py` — Async Operation Feedback
+
+**Status:** [VERIFIED: 2026-01-17]
+
+**Purpose:** Slide-up overlay at the bottom of the window showing progress for long-running file operations.
+
+**Key Exports:**
+
+| Class | Slots | Purpose | Risk |
+|:------|:-----|:--------|:-----|
+| `ProgressOverlay` | `onOperationStarted` | Shows overlay (delayed) | LOW |
+| `ProgressOverlay` | `onOperationProgress` | Updates bar (via qint64) | LOW |
+| `ProgressOverlay` | `onOperationCompleted` | Hides overlay | LOW |
+
+**Internal Logic:**
+1. **Throttled Display:** Uses 300ms timer to avoid flashing for quick ops.
+2. **Visuals:** Shows icon (Copy/Move/Trash), text, and progress bar.
+3. **Safety:** Connects to `qint64` signals to handle >2GB files.
+
+**Dependencies:** `PySide6.QtWidgets`, `core/file_operations.py`
+3. Sets up signal handling (SIGINT) for polite exit on Ctrl+C.
+4. Executes the Qt event loop.
+
+**Dependencies:** `PySide6.QtWidgets`, `ui/main_window.py`
+
+---
+
 ## 4. Interface/UI Layer
 
 ### 4.1. Interface Type
@@ -204,8 +475,12 @@ imbric/
 | Component | Location | Purpose | Status |
 |:----------|:---------|:--------|:-------|
 | `Main.qml` | `ui/qml/Main.qml` | Root window with SplitView | [ARCHIVED] |
-| `MainWindow` | `ui/main_window.py` | Native Shell (Toolbar, Sidebar) | [VERIFIED] |
-| `MasonryView` | `ui/qml/views/` | High-performance photo grid | [VERIFIED] |
+| `MainWindow` | `ui/main_window.py` | Native Shell (Toolbar, Sidebar, Shortcuts) | [VERIFIED] |
+| `MasonryView` | `ui/qml/views/` | High-performance grid w/ Selection & DnD | [VERIFIED] |
+| `RubberBand` | `ui/qml/components/` | Selection Marquee | [VERIFIED] |
+| `SelectionModel` | `ui/qml/components/` | Path-based Selection State | [VERIFIED] |
+| `ProgressOverlay` | `ui/widgets/` | Non-blocking file op progress (Throttled) | [VERIFIED] |
+| `StatusBar` | `ui/widgets/` | Item count & Selection status | [VERIFIED] |
 | `DetailView` | `ui/qml/views/` | [FUTURE] Fullscreen image viewer | [TODO] |
 | `SearchBar` | `ui/qml/components/` | [FUTURE] Global search input | [TODO] |
 
@@ -292,9 +567,10 @@ def deal(files: list, num_columns: int) -> list[list]:
 
 | Operation | Location | Risk | Mitigation |
 |:----------|:---------|:-----|:-----------|
-| `Gio.File.trash_async()` | [FUTURE] | MED | User confirmation dialog |
+| `Gio.File.trash()` | `core/file_operations.py` | MED | Uses Trash, not rm. |
+| File Move | `core/file_operations.py` | MED | Overwrites if dest exists. |
 | File rename | [FUTURE] | MED | Validate name, check conflicts |
-| File delete | [FUTURE] | HIGH | **Never implement rm**. Only Trash. |
+| File delete | — | HIGH | **Never implemented.** Only Trash. |
 
 ### 6.2. Validation Gates
 
@@ -337,25 +613,40 @@ def deal(files: list, num_columns: int) -> list[list]:
 
 ### 8.1. Last Session Summary
 
-**Date:** 2026-01-15  
-**Focus:** Hybrid Architecture & Performance
+**Date:** 2026-01-17 (Evening)  
+**Focus:** Async File Operations & Progress UI
 **Outcome:**
-- **Hybrid Refactor:** Migrated Shell to `QMainWindow` (Qt Widgets) for native look/feel.
-- **Performance:** Fixed `QQuickWidget` jitter by switching to `QQuickView` + `createWindowContainer`.
-- **Masonry Layout:** Implemented true aspect-ratio sizing by reading image headers in `scanner.py`.
-- **Navigation:** Implemented native Sidebar and Toolbar with "Up" navigation.
+- **QThread Refactor:** Rewrote `FileOperations` to use QThread + Gio.Cancellable.
+- **Non-blocking I/O:** All file ops (copy, move, trash) now run in background thread.
+- **Progress Overlay:** Created Nautilus-style progress indicator at bottom of window.
+- **Cancellation Support:** Operations can be cancelled via Gio.Cancellable.
+- **Clean Shutdown:** Added `closeEvent` to properly shutdown worker thread.
 
 **Known Bugs:**
 1. File Preview not implemented (Clicking image does nothing).
-2. Resize lag (minor) check known trade-offs.
+2. Inline Rename not implemented.
 
 **Next Steps:**
-- Pick up "File Preview" from Backlog when ready.
+- Test file operations on actual UI. [DONE]
+- Implement Inline Rename.
+- Implement File Preview / Detail View.
+
+### 8.2. Session Update: Robust File Operations (Late Night)
+**Focus:** Fix UI freezes and crashes during I/O.
+**Outcome:**
+1.  **Threading Fixed:** Converted `FileOperations` to usage Signals/Slots. Direct method calls were blocking main thread.
+2.  **Stability:** Updated signals to `qint64` to fix `OverflowError` on >2GB files.
+3.  **Recursive Copy:** implemented manual recursion for folder copying.
+4.  **UX Polish:** Throttled progress signals (10Hz) and tuned overlay delay (300ms).
+
+**Status:** Code is now stable and responsive under load.
 
 ### 8.6. Session History (Partial)
 
 | Date | Focus Area | Key Changes |
 |:-----|:-----------|:------------|
+| 2026-01-17 | Async I/O | QThread file ops, ProgressOverlay widget |
+| 2026-01-17 | Interactions | Selection, DnD, Context Menu, Shortcuts |
 | 2026-01-16 | Interactions | Implemented Zoom (Toolbar + Ctrl-Scroll + Keyboard) |
 | 2026-01-16 | Visual Polish | Smart Material QML + "GTK-like" Sidebar styling |
 | 2026-01-16 | Debugging | Fixed Thumbnail visibility (removed faulty `MultiEffect`) |
@@ -364,12 +655,15 @@ def deal(files: list, num_columns: int) -> list[list]:
 ### 8.7. Architecture Decisions
 - **Why Hybrid?** Pure QML lacked native "feel" for menus/sidebar. Widgets gives us standard desktop behavior for free.
 - **Why not MultiEffect?** It caused total rendering failure on the specific target hardware. Switched to `clip: true` for safe, performant rounded corners.
-- **Why MouseArea Overlay for Zoom?** The `ScrollView` was consuming scroll events before `WheelHandler` could see them. An overlay with `propagateComposedEvents` was the robust fix.
+- **Why "God Object" MouseArea?** Individual item MouseAreas created z-order conflicts (clicks vs rubberband). A single overlay resolves this cleanly.
+- **Why Hybrid Context Menu?** QML menus don't match GTK. Python `QMenu` provides native look-and-feel.
+- **Why QThread over asyncio?** QThread + Gio.Cancellable gives proper cancellation and progress callbacks. asyncio.to_thread() doesn't support mid-operation cancellation.
 
 ### 8.8. AI Observations
 - User prefers visually polished "GTK-like" aesthetics (padding, flat borders).
 - "Lens not engine" applies to UI too: mimic the native shell (Fusion/GTK) as close as possible.
 - User prefers specific, native-aligned implementation (e.g. keybinds matching Nautilus) over generic solutions.
+- User values code organization (extracting `AppBridge`, avoiding "God classes" in MainWindow).
 
 
 ```
