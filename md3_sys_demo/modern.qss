@@ -1,0 +1,41 @@
+/* Modern Fusion Patches */
+
+/* 1. Main Window Background */
+QMainWindow {
+    background: palette(window);
+}
+
+/* 2. Toolbar - Flat and Clean */
+QToolBar {
+    background: palette(window);
+    border: none;
+    spacing: 6px; /* Space between buttons */
+    padding: 6px; /* Space around the toolbar */
+    border-bottom: 1px solid palette(mid); /* Subtle separator */
+}
+
+/* 3. Toolbar Buttons */
+QToolButton {
+    background: transparent;
+    border: none;
+    border-radius: 4px; /* Modern rounded corners */
+    padding: 6px 12px; /* Comfortable click targets */
+    font-weight: bold;
+}
+
+/* Hover State */
+QToolButton:hover {
+    background: palette(midlight); /* Subtle highlight */
+}
+
+/* Pressed State */
+QToolButton:pressed {
+    background: palette(highlight);
+    color: palette(highlightedText);
+}
+
+/* Checked/Active State */
+QToolButton:checked {
+    background: palette(light);
+    border: 1px solid palette(highlight);
+}
