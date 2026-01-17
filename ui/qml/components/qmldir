@@ -1,0 +1,3 @@
+module components
+RubberBand 1.0 RubberBand.qml
+SelectionModel 1.0 SelectionModel.qml

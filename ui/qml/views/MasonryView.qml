@@ -1,208 +1,347 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Effects
+import components as Components  // Shared library
 
 Item {
     id: root
     
-    // We get the list of models from Python: columnSplitter.getModels()
+    // Python properties
     property var columnModels: columnSplitter.getModels()
     property int columnCount: columnModels ? columnModels.length : 0
-    // Calculate column width based on available space
-    property real columnWidth: root.width > 0 ? (root.width - 40 - (columnCount - 1) * 10) / Math.max(columnCount, 1) : 200
-
-    // --- 1. SMART MATERIAL SETUP ---
-    // Inherit System Fonts and Colors for a native look
-    SystemPalette { id: activePalette; colorGroup: SystemPalette.Active }
+    property real columnWidth: appBridge ? appBridge.targetCellWidth : 250
     
-    // Detect Dark Mode
-    readonly property bool isSystemDark: Qt.styleHints.colorScheme === Qt.Dark
+    // EXPOSED PROPERTY: For Python Key Shortcuts (Copy/Cut/Trash)
+    property alias currentSelection: selectionModel.selection
 
-    // Bind Material Theme to System Palette
-    Material.theme: isSystemDark ? Material.Dark : Material.Light
-    Material.accent: activePalette.highlight
-    Material.primary: activePalette.highlight
-    Material.background: activePalette.window
-    Material.foreground: activePalette.text
-        
+    // --- LIBRARY COMPONENTS ---
+    Components.SelectionModel {
+        id: selectionModel
+    }
 
+    // --- SYSTEM PALETTE ---
+    SystemPalette { id: activePalette; colorGroup: SystemPalette.Active }
 
-    // Background Rectangle using Material Background
+    // --- ROOT CONTAINER ---
     Rectangle {
         anchors.fill: parent
-        color: Material.background
-    
+        color: activePalette.base
+
+        // Layer 1: Content
         ScrollView {
             id: scrollView
             anchors.fill: parent
             clip: true
             
-            // Horizontal Row of Columns
             Row {
                 id: columnsRow
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: 10
                 
-                // Generate N columns
                 Repeater {
                     id: columnRepeater
                     model: root.columnModels
                     
                     delegate: ListView {
                         id: columnListView
-                        // Use explicit column width calculated from root
                         width: root.columnWidth
-                        
-                        interactive: false // Let parent ScrollView handle inputs
-                        height: contentHeight // Expand to fit all items
-                        
-                        model: modelData // The SimpleListModel for this column
+                        interactive: false
+                        height: contentHeight
+                        model: modelData
                         
                         delegate: Item {
                             id: delegateItem
-                            width: columnListView.width
+                            width: root.columnWidth
                             
-                            // Calculate Image Height (Aspect Ratio)
                             readonly property real imgHeight: {
-                                if (model.isDir) return columnListView.width * 0.8
-                                if (model.width > 0 && model.height > 0) {
-                                    return (model.height / model.width) * columnListView.width
-                                }
-                                return columnListView.width
+                                if (model.isDir) return width * 0.8
+                                if (model.width > 0 && model.height > 0) return (model.height / model.width) * width
+                                return width
                             }
-                            
-                            // Footer Height for Text
                             readonly property int footerHeight: 36
-                            
-                            // Total Delegate Height
                             height: imgHeight + footerHeight
+                            
+                            readonly property bool selected: selectionModel.isSelected(model.path)
 
-                            // The "Card" Container
                             Rectangle {
-                                id: clipContainer
                                 anchors.fill: parent
-                                anchors.margins: 4 // External spacing
-                                radius: 8
-                                color: "transparent" // Let hover handle background
-                                clip: true
+                                anchors.margins: 4
+                                radius: 4
                                 
-                                // 1. Main Image (Top)
+                                // Color Logic:
+                                // 1. Selected -> Highlight
+                                // 2. Drag Over Folder -> Highlight (Visual Feedback)
+                                // 3. Hover -> Light tint
+                                color: {
+                                    if (delegateItem.selected) return activePalette.highlight
+                                    if (model.isDir && itemDropArea.containsDrag) return activePalette.highlight
+                                    if (hoverHandler.hovered) return Qt.rgba(activePalette.text.r, activePalette.text.g, activePalette.text.b, 0.1)
+                                    return "transparent"
+                                }
+                                
+                                // Drop Area for Folders (Allows dragging files INTO a folder)
+                                DropArea {
+                                    id: itemDropArea
+                                    anchors.fill: parent
+                                    enabled: model.isDir // Only folders accept drops
+                                    
+                                    onEntered: (drag) => {
+                                        drag.accept(Qt.CopyAction)
+                                    }
+                                    
+                                    onDropped: (drop) => {
+                                        if (drop.hasUrls) {
+                                            drop.accept()
+                                            var urls = []
+                                            for (var i = 0; i < drop.urls.length; i++) {
+                                                urls.push(drop.urls[i].toString())
+                                            }
+                                            // Handle drop INTO this folder
+                                            appBridge.handleDrop(urls, model.path)
+                                        }
+                                    }
+                                }
+                                
                                 Image {
-                                    id: thumbnailImage
-                                    width: parent.width
-                                    height: delegateItem.imgHeight
+                                    width: parent.width - 8
+                                    height: delegateItem.imgHeight - 8
                                     anchors.top: parent.top
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.topMargin: 4
                                     
                                     source: "image://thumbnail/" + model.path
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true
                                     cache: true
-                                    
-                                    onStatusChanged: {
-                                        if (status === Image.Error) console.error("Image Load Error:", source)
-                                    }
                                 }
                                 
-                                // 2. Text Footer (Bottom) - No Gradient, Native Look
-                                Rectangle {
-                                    id: titleFooter
-                                    width: parent.width
-                                    height: delegateItem.footerHeight
+                                Text {
                                     anchors.bottom: parent.bottom
-                                    color: "transparent" // Clean look
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottomMargin: 4
+                                    width: parent.width - 8
                                     
-                                    Text {
-                                        anchors.centerIn: parent
-                                        width: parent.width - 16
-                                        
-                                        text: model.name
-                                        
-                                        // Use System Colors (Smart Material)
-                                        color: Material.foreground
-                                        
-                                        font.pixelSize: 12
-                                        font.family: Qt.application.font.family
-                                        elide: Text.ElideMiddle // Filename style
-                                        horizontalAlignment: Text.AlignHCenter
-                                    }
+                                    text: model.name
+                                    color: (delegateItem.selected || (model.isDir && itemDropArea.containsDrag)) ? activePalette.highlightedText : activePalette.text
+                                    font.pixelSize: 12
+                                    elide: Text.ElideMiddle
+                                    horizontalAlignment: Text.AlignHCenter
                                 }
                                 
-                                // Hover Effect (Whole Card)
-                                Rectangle {
-                                    id: hoverBg
-                                    anchors.fill: parent
-                                    color: Material.foreground
-                                    opacity: 0.0
-                                    z: -1 // Behind content? No, container is transparent.
-                                    // Actually, put it behind image? 
-                                    // If we want hover to show a card background:
-                                }
+                                HoverHandler { id: hoverHandler }
                                 
-                                states: [
-                                    State {
-                                        name: "hovered"
-                                        when: mouseArea.containsMouse
-                                        PropertyChanges { target: clipContainer; color: Qt.rgba(Material.foreground.r, Material.foreground.g, Material.foreground.b, 0.05) }
-                                    }
-                                ]
-                                
-                                // Hover & Click Interactions
-                                MouseArea {
-                                    id: mouseArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: model.isDir ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    
-                                    onClicked: {
-                                        if (model.isDir) {
-                                            appBridge.openPath(model.path)
-                                        }
-                                    }
-                                }
+                                // Item Click & Context Menu -> Handled by Global MouseArea now
                             }
                         }
                     }
                 }
             }
         }
-    }
-    
-    // Auto-refresh when Python signals change
-    Connections {
-        target: columnSplitter
-        function onColumnsChanged() {
-            root.columnModels = columnSplitter.getModels()
-        }
-    }
-    
-    // Zoom Logic (Ctrl + Scroll) - MouseArea Overlay
-    MouseArea {
-        anchors.fill: parent
-        propagateComposedEvents: true // Let clicks pass through
-        acceptedButtons: Qt.NoButton // Don't eat clicks/right-clicks
-        hoverEnabled: true // Required for wheel events? actually onWheel works without this usually, but safe to add
         
-        onWheel: (wheel) => {
-            // Check for Ctrl Modifier
-            if (wheel.modifiers & Qt.ControlModifier) {
-                
-                if (wheel.angleDelta.y > 0) {
-                    // Zoom In
-                    if (root.columnCount > 1) columnSplitter.setColumnCount(root.columnCount - 1)
-                } else if (wheel.angleDelta.y < 0) {
-                    // Zoom Out
-                    if (root.columnCount < 8) columnSplitter.setColumnCount(root.columnCount + 1)
+        // Layer 2: RubberBand Interaction Overlay
+        // HANDLES EVERYTHING: Clicks, drags, double-clicks.
+        // Solves z-order issues by being the only top-level input handler.
+        MouseArea {
+            id: rubberBandArea
+            anchors.fill: parent
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            hoverEnabled: true
+            // z: 0 (Default is on top of siblings defined before it)
+            
+            property point startPoint
+            property string startPath: "" // If pressed on an item, this holds its path
+            property bool isDragging: false
+            property bool wasDragging: false 
+
+            // Zoom Support (Ctrl+Scroll)
+            onWheel: (wheel) => {
+                if (wheel.modifiers & Qt.ControlModifier) {
+                    // Scroll up = zoom in (larger icons), scroll down = zoom out (smaller icons)
+                    var delta = wheel.angleDelta.y > 0 ? -1 : 1
+                    appBridge.zoom(delta)
+                    wheel.accepted = true
+                } else {
+                    wheel.accepted = false
+                }
+            }
+
+            onPressed: (mouse) => {
+                // Don't block scrollbar interaction (right 20px)
+                if (mouse.x > scrollView.width - 20) {
+                    mouse.accepted = false
+                    return
                 }
                 
-                // Consume the event so ScrollView doesn't scroll
-                wheel.accepted = true
-            } else {
-                // Pass event to underlying ScrollView
-                wheel.accepted = false
+                startPoint = Qt.point(mouse.x, mouse.y)
+                isDragging = false
+                wasDragging = false
+                mouse.accepted = true 
+                startPath = ""
+                
+                // Identify if we pressed on an item
+                var mappedPt = columnsRow.mapFromItem(root, mouse.x, mouse.y)
+                var hits = selectionHelper.getMasonrySelection(
+                    columnSplitter, 
+                    root.columnCount, 
+                    root.columnWidth, 
+                    10,
+                    mappedPt.x, 
+                    mappedPt.y, 
+                    1, 1 
+                )
+                
+                if (hits.length > 0) {
+                    startPath = hits[0]
+                    // Do NOT select immediately on press if it's potentially a drag start
+                    // We handle selection in onClicked or on drag start
+                }
+            }
+
+            onPositionChanged: (mouse) => {
+                if (!(mouse.buttons & Qt.LeftButton)) return
+                
+                if (!isDragging && (Math.abs(mouse.x - startPoint.x) > 10 || Math.abs(mouse.y - startPoint.y) > 10)) {
+                    isDragging = true
+                    
+                    // DECISION: Drag Items OR RubberBand?
+                    if (startPath !== "") {
+                        // START SYSTEM DRAG
+                        // Ensure item is selected before dragging
+                        if (!selectionModel.isSelected(startPath)) {
+                            selectionModel.select(startPath)
+                        }
+                        
+                        // Start blocking system drag
+                        appBridge.startDrag(selectionModel.selection)
+                        
+                        // Drag finished (because startDrag blocks)
+                        isDragging = false 
+                        wasDragging = true // suppress click
+                    } else {
+                        // START RUBBERBAND
+                        rubberBand.show()
+                    }
+                }
+
+                if (isDragging) {
+                    // Only update rubberband if we are in rubberband mode (startPath is empty)
+                    if (startPath === "") {
+                        rubberBand.update(startPoint.x, startPoint.y, mouse.x, mouse.y)
+                        
+                        var rect = rubberBand.getRect()
+                        var mappedPt = columnsRow.mapFromItem(root, rect.x, rect.y)
+                        
+                        var hits = selectionHelper.getMasonrySelection(
+                            columnSplitter, 
+                            root.columnCount, 
+                            root.columnWidth, 
+                            10,
+                            mappedPt.x, 
+                            mappedPt.y, 
+                            rect.width, 
+                            rect.height
+                        )
+                        selectionModel.selectRange(hits, (mouse.modifiers & Qt.ControlModifier))
+                    }
+                }
+            }
+
+            onReleased: (mouse) => {
+                if (isDragging) {
+                    rubberBand.hide()
+                    wasDragging = true // Mark that we just finished dragging
+                    isDragging = false
+                }
+            }
+
+            onClicked: (mouse) => {
+                if (isDragging || wasDragging) return
+                
+                // Get item at click position
+                // We use a 1x1 rect to query the specific point
+                var mappedPt = columnsRow.mapFromItem(root, mouse.x, mouse.y)
+                var hits = selectionHelper.getMasonrySelection(
+                    columnSplitter, 
+                    root.columnCount, 
+                    root.columnWidth, 
+                    10,
+                    mappedPt.x, 
+                    mappedPt.y, 
+                    1, 1 
+                )
+                
+                var clickedPath = hits.length > 0 ? hits[0] : null
+                
+                if (mouse.button === Qt.RightButton) {
+                    if (clickedPath) {
+                        if (!selectionModel.isSelected(clickedPath)) {
+                            selectionModel.select(clickedPath)
+                        }
+                        appBridge.showContextMenu(selectionModel.selection)
+                    } else {
+                         // Right click on empty space -> show background menu (Paste, New Folder)
+                         selectionModel.clear()
+                         appBridge.showBackgroundContextMenu()
+                    }
+                } else {
+                     if (clickedPath) {
+                         selectionModel.toggle(clickedPath, (mouse.modifiers & Qt.ControlModifier))
+                     } else {
+                         selectionModel.clear()
+                     }
+                }
+            }
+            
+            onDoubleClicked: (mouse) => {
+                // Double click to open
+                if (mouse.button === Qt.LeftButton) {
+                     var mappedPt = columnsRow.mapFromItem(root, mouse.x, mouse.y)
+                     var hits = selectionHelper.getMasonrySelection(
+                        columnSplitter, 
+                        root.columnCount, 
+                        root.columnWidth, 
+                        10,
+                        mappedPt.x, 
+                        mappedPt.y, 
+                        1, 1 
+                    )
+                    
+                    if (hits.length > 0) {
+                        appBridge.openPath(hits[0])
+                    }
+                }
+            }
+            
+            // RubberBand visual
+            Components.RubberBand {
+                id: rubberBand
             }
         }
+        // Layer 3: Drop Area (Handles incoming files)
+        DropArea {
+            anchors.fill: parent
+            z: -1 // Behind items (items will get drops first if we add DropArea to them later)
+            
+            onEntered: (drag) => {
+                drag.accept(Qt.CopyAction)
+            }
+            
+            onDropped: (drop) => {
+                if (drop.hasUrls) {
+                    drop.accept()
+                    // Convert URLs to array of strings
+                    var urls = []
+                    for (var i = 0; i < drop.urls.length; i++) {
+                        urls.push(drop.urls[i].toString())
+                    }
+                    appBridge.handleDrop(urls, "") // Empty string = current dir
+                }
+            }
+        }
+    }
+    
+    Connections {
+        target: columnSplitter
+        function onColumnsChanged() { root.columnModels = columnSplitter.getModels() }
     }
 }

@@ -139,3 +139,11 @@ class ColumnSplitter(QObject):
     @Slot(result=list)
     def getModels(self):
         return self._column_models
+
+    @Slot(result=list)
+    def getAllItems(self):
+        """
+        Returns the master list of all items. 
+        Used by the SelectionHelper to calculate theoretical geometry for rubberband selection.
+        """
+        return self._all_items
