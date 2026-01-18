@@ -13,6 +13,16 @@ Item {
     
     // EXPOSED PROPERTY: For Python Key Shortcuts (Copy/Cut/Trash)
     property alias currentSelection: selectionModel.selection
+    
+    // STATE: Inverse of SelectionModel, tracks which ONE file is being renamed
+    property string pathBeingRenamed: ""
+    
+    Connections {
+        target: appBridge
+        function onRenameRequested(path) {
+            root.pathBeingRenamed = path
+        }
+    }
 
     // --- LIBRARY COMPONENTS ---
     Components.SelectionModel {
@@ -26,6 +36,30 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: activePalette.base
+        focus: true // Root container takes focus by default if nothing else has it
+
+        // Global Key Handler (F2) - Catches events bubbling from TextArea or MouseArea
+        Keys.onPressed: (event) => {
+            if (event.key === Qt.Key_F2) {
+                var sel = selectionModel.selection
+                if (sel.length === 1) {
+                    if (root.pathBeingRenamed === sel[0]) {
+                        // Toggle OFF if already renaming this file
+                        console.log("[QML_DEBUG] (Root) F2 pressed: Toggling OFF rename")
+                        root.pathBeingRenamed = ""
+                        // Force focus back to specific interaction area if needed, 
+                        // but Root having focus is usually enough. 
+                        // Actually, give it to rubberBandArea to be safe for mouse interaction.
+                        rubberBandArea.forceActiveFocus()
+                    } else {
+                        // Enable rename
+                        console.log("[QML_DEBUG] (Root) F2 pressed: Starting rename for " + sel[0])
+                        root.pathBeingRenamed = sel[0]
+                    }
+                    event.accepted = true
+                }
+            }
+        }
 
         // Layer 1: Content
         ScrollView {
@@ -55,7 +89,16 @@ Item {
                             
                             readonly property real imgHeight: {
                                 if (model.isDir) return width * 0.8
-                                if (model.width > 0 && model.height > 0) return (model.height / model.width) * width
+                                
+                                // 1. Fast Path: Use model dimensions if known (stable layout)
+                                if (model.width > 0 && model.height > 0) 
+                                    return (model.height / model.width) * width
+                                
+                                // 2. Deferred Path: Use loaded thumbnail dimensions
+                                if (img.status === Image.Ready && img.implicitWidth > 0)
+                                    return (img.implicitHeight / img.implicitWidth) * width
+                                    
+                                // 3. Loading State: Square placeholder
                                 return width
                             }
                             readonly property int footerHeight: 36
@@ -103,6 +146,7 @@ Item {
                                 }
                                 
                                 Image {
+                                    id: img
                                     width: parent.width - 8
                                     height: delegateItem.imgHeight - 8
                                     anchors.top: parent.top
@@ -115,17 +159,102 @@ Item {
                                     cache: true
                                 }
                                 
-                                Text {
+                                Loader {
+                                    id: nameLoader
                                     anchors.bottom: parent.bottom
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     anchors.bottomMargin: 4
                                     width: parent.width - 8
+                                    height: 20 // Fixed height for consistency
                                     
-                                    text: model.name
-                                    color: (delegateItem.selected || (model.isDir && itemDropArea.containsDrag)) ? activePalette.highlightedText : activePalette.text
-                                    font.pixelSize: 12
-                                    elide: Text.ElideMiddle
-                                    horizontalAlignment: Text.AlignHCenter
+                                    property bool isRenaming: filterPath(root.pathBeingRenamed) === filterPath(model.path)
+                                    // Helper to handle potential path normalization issues
+                                    function filterPath(p) { return p ? p.toString() : "" }
+
+                                    sourceComponent: isRenaming ? renameComponent : textComponent
+                                    
+                                    Component {
+                                        id: textComponent
+                                        Text {
+                                            text: model.name
+                                            color: (delegateItem.selected || (model.isDir && itemDropArea.containsDrag)) ? activePalette.highlightedText : activePalette.text
+                                            font.pixelSize: 12
+                                            elide: Text.ElideMiddle
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                    }
+                                    
+                                    Component {
+                                        id: renameComponent
+                                        TextArea { // Use TextArea or TextField
+                                            id: renameField
+                                            text: model.name
+                                            font.pixelSize: 12
+                                            
+                                            // Style to match native look
+                                            background: Rectangle {
+                                                color: activePalette.base
+                                                border.color: activePalette.highlight
+                                                border.width: 1
+                                                radius: 2
+                                            }
+                                            color: activePalette.text
+                                            selectedTextColor: activePalette.highlightedText
+                                            selectionColor: activePalette.highlight
+                                            
+                                            verticalAlignment: Text.AlignVCenter
+                                            horizontalAlignment: Text.AlignHCenter
+                                            
+                                            focus: true // Auto-focus when loaded
+                                            selectByMouse: true
+                                            
+                                            Component.onCompleted: {
+                                                forceActiveFocus()
+                                                // Select filename without extension
+                                                var name = text
+                                                var lastDot = name.lastIndexOf(".")
+                                                if (lastDot > 0) {
+                                                    select(0, lastDot)
+                                                } else {
+                                                    selectAll()
+                                                }
+                                            }
+                                            
+                                            Keys.onPressed: (event) => {
+                                                if (event.key === Qt.Key_Enter || event.key === Qt.Key_Return) {
+                                                    commit()
+                                                    event.accepted = true
+                                                } else if (event.key === Qt.Key_Escape) {
+                                                    root.pathBeingRenamed = ""
+                                                    rubberBandArea.forceActiveFocus()
+                                                    event.accepted = true
+                                                }
+                                            }
+                                            
+                                            function commit() {
+                                                console.log("[QML_DEBUG] commit() called")
+                                                // ... (logging omitted for brevity, keeping original logic if preferred or replace all)
+                                                // Actually let's keep the logging short or remove if we trust it now.
+                                                // Let's keep it but just add the focus call.
+                                                
+                                                if (text !== model.name) {
+                                                    console.log("[QML_DEBUG]   Name changed, calling appBridge.renameFile...")
+                                                    appBridge.renameFile(model.path, text)
+                                                } else {
+                                                    console.log("[QML_DEBUG]   Name unchanged, skipping.")
+                                                }
+                                                root.pathBeingRenamed = ""
+                                                rubberBandArea.forceActiveFocus()
+                                            }
+                                            
+                                            onActiveFocusChanged: {
+                                                if (!activeFocus && root.pathBeingRenamed !== "") {
+                                                    commit() // Commit on blur
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 
                                 HoverHandler { id: hoverHandler }
@@ -146,7 +275,9 @@ Item {
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             hoverEnabled: true
-            // z: 0 (Default is on top of siblings defined before it)
+            focus: true // Required for Key handling
+            
+            // F2 moved to Root Item
             
             property point startPoint
             property string startPath: "" // If pressed on an item, this holds its path
