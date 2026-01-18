@@ -91,10 +91,11 @@ python3 main.py ~/Pictures
 ## Roadmap
 
 ```
-Phase 1 ███████████████████████████████████████░░░░░░░░  [DONE]  Native Shell
-Phase 2 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  [NEXT]  Masonry Engine
-Phase 3 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  [    ]  Thumbnails
-Phase 4 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  [    ]  Polish
+Phase 1 ███████████████████████████████████████  [DONE]  Native Shell
+Phase 2 ███████████████████████████████████████  [DONE]  Masonry Engine
+Phase 3 ███████████████████████████████████████  [DONE]  Thumbnails (GNOME)
+Phase 4 ███████████████████████████████████████  [DONE]  Async I/O & Tabs
+Phase 5 ████████████████████░░░░░░░░░░░░░░░░░░░  [BUSY]  Interactions
 ```
 
 <br/>
