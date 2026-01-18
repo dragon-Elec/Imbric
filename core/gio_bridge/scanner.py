@@ -3,7 +3,6 @@ gi.require_version('Gio', '2.0')
 from gi.repository import Gio, GLib
 
 from PySide6.QtCore import QObject, Signal, Slot
-from PySide6.QtGui import QImageReader
 
 class FileScanner(QObject):
     """
@@ -92,20 +91,17 @@ class FileScanner(QObject):
                 
                 is_dir = info.get_file_type() == Gio.FileType.DIRECTORY
                 
+                # NOTE: We deliberately do NOT read image dimensions here.
+                # QImageReader is synchronous and blocks the main thread.
+                # For folders with 1000s of files, this causes multi-second UI freezes.
+                # 
+                # Instead, width/height are set to 0 and the QML delegate uses:
+                # 1. A placeholder aspect ratio (1:1) initially
+                # 2. The actual dimensions from the loaded thumbnail later
+                #
+                # This makes the scan near-instant at the cost of initial layout jumps.
                 width = 0
                 height = 0
-                
-                if not is_dir:
-                    # Try to read dimensions for potential images
-                    try:
-                        reader = QImageReader(full_path)
-                        if reader.canRead():
-                            size = reader.size()
-                            if size.isValid():
-                                width = size.width()
-                                height = size.height()
-                    except Exception:
-                        pass # Ignore reading errors, dimensions will handle gracefully in UI
                 
                 batch.append({
                     "name": name,

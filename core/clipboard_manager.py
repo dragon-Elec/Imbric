@@ -79,14 +79,20 @@ class ClipboardManager(QObject):
         """
         mime_data = self._clipboard.mimeData()
         if not mime_data:
+            print("[CLIPBOARD] isCut: No mime data")
             return False
         
-        # Check GNOME-style marker
+        # Check GNOME-style marker (persists in system clipboard)
         if mime_data.hasFormat(self.GNOME_COPIED_FILES):
             data = bytes(mime_data.data(self.GNOME_COPIED_FILES)).decode('utf-8')
-            return data.startswith("cut")
+            is_cut = data.startswith("cut")
+            print(f"[CLIPBOARD] isCut from GNOME marker: {is_cut}")
+            return is_cut
         
-        return self._is_cut
+        # Fallback: If no GNOME marker, assume copy (safer than using instance var)
+        # This handles clipboard data from other apps that don't use GNOME format
+        print("[CLIPBOARD] isCut: No GNOME marker, defaulting to copy")
+        return False
     
     @Slot(result=bool)
     def hasFiles(self) -> bool:
