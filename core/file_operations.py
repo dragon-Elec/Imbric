@@ -203,7 +203,7 @@ class FileOperations(QObject):
     # Public signals (connect to these in UI)
     operationStarted = Signal(str, str)       # (operation_type, path)
     operationProgress = Signal(str, 'qint64', 'qint64') # (path, current_bytes, total_bytes)
-    operationCompleted = Signal(str, str)     # (operation_type, path)
+    operationCompleted = Signal(str, str, str)     # (operation_type, path, result_data)
     operationError = Signal(str, str, str)    # (operation_type, path, error_message)
 
     # Internal signals to trigger worker (Cross-thread communication)
@@ -241,7 +241,7 @@ class FileOperations(QObject):
     def _on_worker_finished(self, op_type: str, path: str, success: bool, message: str):
         """Route worker finished signal to appropriate public signal."""
         if success:
-            self.operationCompleted.emit(op_type, path)
+            self.operationCompleted.emit(op_type, path, message)
         else:
             self.operationError.emit(op_type, path, message)
     

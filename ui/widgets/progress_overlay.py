@@ -128,8 +128,8 @@ class ProgressOverlay(QFrame):
             mb_total = total / (1024 * 1024)
             self.detail_label.setText(f"{mb_current:.1f} / {mb_total:.1f} MB")
     
-    @Slot(str, str)
-    def onOperationCompleted(self, op_type: str, path: str):
+    @Slot(str, str, str)
+    def onOperationCompleted(self, op_type: str, path: str, result_data: str):
         """Called when operation completes successfully."""
         self._pending_show = False
         self._show_timer.stop()

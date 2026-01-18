@@ -3,21 +3,17 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QToolBar, QHBo
 from PySide6.QtCore import QUrl, Slot, Qt, QDir
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 
-
-
 from pathlib import Path
 import os
 
-# Import our core logic
-from core.gio_bridge.scanner import FileScanner
-from ui.models.column_splitter import ColumnSplitter
-from core.image_providers.thumbnail_provider import ThumbnailProvider
-from core.selection_helper import SelectionHelper
+# Import core logic (shared across tabs)
 from core.file_operations import FileOperations
 from core.clipboard_manager import ClipboardManager
 from core.file_monitor import FileMonitor
 from ui.widgets.progress_overlay import ProgressOverlay
 from ui.widgets.status_bar import StatusBar
+from ui.widgets.tab_manager import TabManager
+
 
 class MainWindow(QMainWindow):
     def __init__(self, start_path=None):
@@ -25,18 +21,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Imbric")
         self.resize(1200, 800)
         
-        # 1. Init Core Logic
-        self.scanner = FileScanner()
-        self.splitter = ColumnSplitter()
-        self.thumbnail_provider = ThumbnailProvider()
-        self.selection_helper = SelectionHelper()
+        # 1. Init SHARED Core Logic (used by all tabs)
+        # Note: ThumbnailProvider is now per-tab (Qt takes ownership on addImageProvider)
         self.file_ops = FileOperations()
         self.clipboard = ClipboardManager()
         self.file_monitor = FileMonitor()
-        
-        # Connect logic
-        self.scanner.filesFound.connect(self.splitter.appendFiles)
-        self.splitter.columnsChanged.connect(self._on_columns_changed)
         
         # Auto-refresh: When files change in the watched directory, rescan
         self.file_monitor.directoryChanged.connect(self._on_directory_changed)
@@ -44,17 +33,14 @@ class MainWindow(QMainWindow):
         # 2. UI Setup
         self.setup_ui()
         
-        # 3. Start
+        # 3. Start with first tab
         initial_path = start_path if start_path else QDir.homePath()
-        self.navigate_to(initial_path)
+        self.tab_manager.add_tab(initial_path)
 
     def setup_ui(self):
         # --- Status Bar ---
         self.status_bar = StatusBar()
         self.setStatusBar(self.status_bar)
-        
-        # Connect scanner to update status when files are loaded
-        self.scanner.filesFound.connect(self.status_bar.updateItemCount)
         
         # --- Toolbar ---
         self.toolbar = QToolBar("Navigation")
@@ -75,28 +61,46 @@ class MainWindow(QMainWindow):
         # Copy (Ctrl+C)
         self.act_copy = QAction("Copy", self)
         self.act_copy.setShortcut(QKeySequence.Copy)
+        self.act_copy.setShortcutContext(Qt.ApplicationShortcut)
         self.act_copy.triggered.connect(self._on_copy_triggered)
         self.addAction(self.act_copy)
         
         # Cut (Ctrl+X)
         self.act_cut = QAction("Cut", self)
         self.act_cut.setShortcut(QKeySequence.Cut)
+        self.act_cut.setShortcutContext(Qt.ApplicationShortcut)
         self.act_cut.triggered.connect(self._on_cut_triggered)
         self.addAction(self.act_cut)
         
         # Paste (Ctrl+V)
         self.act_paste = QAction("Paste", self)
         self.act_paste.setShortcut(QKeySequence.Paste)
+        self.act_paste.setShortcutContext(Qt.ApplicationShortcut)
         self.act_paste.triggered.connect(self._on_paste_triggered)
         self.addAction(self.act_paste)
         
         # Trash (Delete)
         self.act_trash = QAction("Move to Trash", self)
         self.act_trash.setShortcut(QKeySequence.Delete)
+        self.act_trash.setShortcutContext(Qt.ApplicationShortcut)
         self.act_trash.triggered.connect(self._on_trash_triggered)
         self.addAction(self.act_trash)
+        
+        # New Tab (Ctrl+T)
+        act_new_tab = QAction("New Tab", self)
+        act_new_tab.setShortcut("Ctrl+T")
+        act_new_tab.setShortcutContext(Qt.ApplicationShortcut)
+        act_new_tab.triggered.connect(lambda: self.tab_manager.add_tab())
+        self.addAction(act_new_tab)
+        
+        # Close Tab (Ctrl+W)
+        act_close_tab = QAction("Close Tab", self)
+        act_close_tab.setShortcut("Ctrl+W")
+        act_close_tab.setShortcutContext(Qt.ApplicationShortcut)
+        act_close_tab.triggered.connect(lambda: self.tab_manager._close_tab(self.tab_manager.currentIndex()))
+        self.addAction(act_close_tab)
 
-        # Spacer to push Zoom buttons to the right (Optional, but looks better)
+        # Spacer to push Zoom buttons to the right
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.toolbar.addWidget(spacer)
@@ -113,7 +117,6 @@ class MainWindow(QMainWindow):
         self.btn_zoom_out.setToolTip("Zoom Out (Ctrl+-)")
         self.btn_zoom_out.setAutoRaise(True)
         self.btn_zoom_out.clicked.connect(lambda: self.change_zoom(1))
-        # Add Shortcut via QAction (since button doesn't own shortcuts globally like QAction)
         zoom_out_act = QAction(self)
         zoom_out_act.setShortcut("Ctrl+-")
         zoom_out_act.triggered.connect(lambda: self.change_zoom(1))
@@ -125,7 +128,6 @@ class MainWindow(QMainWindow):
         self.btn_zoom_in.setToolTip("Zoom In (Ctrl+=)")
         self.btn_zoom_in.setAutoRaise(True)
         self.btn_zoom_in.clicked.connect(lambda: self.change_zoom(-1))
-        # Add Shortcut
         zoom_in_act = QAction(self)
         zoom_in_act.setShortcut("Ctrl+=")
         zoom_in_act.triggered.connect(lambda: self.change_zoom(-1))
@@ -155,243 +157,198 @@ class MainWindow(QMainWindow):
         self.progress_overlay.cancelRequested.connect(self.file_ops.cancel)
         central_layout.addWidget(self.progress_overlay)
         
+        # Connect operation completion to logic (e.g. selection persistence)
+        self.file_ops.operationCompleted.connect(self._on_op_completed)
+        
         self.setCentralWidget(central_widget)
         
         # Sidebar (Native QTreeView with QFileSystemModel)
-        # We use QFileSystemModel for standard "native" file browsing behavior in sidebar
         self.fs_model = QFileSystemModel()
         self.fs_model.setRootPath(QDir.rootPath())
-        # Filter to show only dirs in the tree if desired, or all files. 
-        # Standard file managers usually show dirs in tree.
         self.fs_model.setFilter(QDir.NoDotAndDotDot | QDir.AllDirs)
         
         self.sidebar_tree = QTreeView()
         self.sidebar_tree.setObjectName("SidebarTree")
         self.sidebar_tree.setModel(self.fs_model)
-        self.sidebar_tree.setRootIndex(self.fs_model.index(QDir.homePath())) # Start at home
+        self.sidebar_tree.setRootIndex(self.fs_model.index(QDir.homePath()))
         self.sidebar_tree.clicked.connect(self._on_sidebar_clicked)
         self.sidebar_tree.setHeaderHidden(True)
-        # Hide extra columns (Size, Type, Date) - keep only Name
         for i in range(1, 4):
             self.sidebar_tree.hideColumn(i)
             
         self.main_splitter.addWidget(self.sidebar_tree)
-        self.main_splitter.setStretchFactor(0, 0) # Sidebar doesn't stretch much
+        self.main_splitter.setStretchFactor(0, 0)
         
-        # --- Central Content (Optimized Embedding) ---
-        # We use QQuickView + createWindowContainer for native GPU performance.
-        # This avoids the "jitter" of QQuickWidget (which uses software copying).
-        from PySide6.QtQuick import QQuickView
+        # --- TAB MANAGER (replaces single QQuickView) ---
+        self.tab_manager = TabManager(self)
+        self.tab_manager.currentPathChanged.connect(self._on_tab_path_changed)
         
-        self.qml_view = QQuickView()
-        self.qml_view.setResizeMode(QQuickView.SizeRootObjectToView)
+        self.main_splitter.addWidget(self.tab_manager)
+        self.main_splitter.setStretchFactor(1, 1)
         
-        # Transparent background to blend with theme (optional, can be removed if performance hints strict opacity)
-        self.qml_view.setColor(Qt.transparent)
-        
-        # Expose Python objects to QML
-        root_ctx = self.qml_view.engine().rootContext()
-        root_ctx.setContextProperty("fileScanner", self.scanner)
-        root_ctx.setContextProperty("columnSplitter", self.splitter)
-        
-        # Bridge
-        from ui.models.app_bridge import AppBridge
-        
-        self.bridge = AppBridge(self)
-        root_ctx.setContextProperty("appBridge", self.bridge)
-        root_ctx.setContextProperty("selectionHelper", self.selection_helper)
-        
-        # Image Provider
-        self.qml_view.engine().addImageProvider("thumbnail", self.thumbnail_provider)
-        
-        # Add import path for shared QML components
-        qml_dir = Path(__file__).parent / "qml"
-        self.qml_view.engine().addImportPath(str(qml_dir))
-        
-        # Load QML
-        qml_path = Path(__file__).parent / "qml" / "views" / "MasonryView.qml"
-        self.qml_view.setSource(QUrl.fromLocalFile(str(qml_path)))
-        
-        # Wrap as a Widget
-        container = QWidget.createWindowContainer(self.qml_view, self)
-        # Important: set Focus Policy so QML can receive keys if needed
-        container.setFocusPolicy(Qt.TabFocus)
-        container.setMinimumSize(100, 100)
-        
-        self.main_splitter.addWidget(container)
-        self.main_splitter.setStretchFactor(1, 1) # Content takes rest of space
-        
-        # Keep reference for resize logic
-        self.qml_container = container
-        
-        # Responsive Grid Logic
-        self.target_column_width = 75 # Initial "Zoom Level" (px) - User Default
-        self.bridge.targetCellWidth = self.target_column_width # Sync initial
-        
-        # Install Event Filter to track resize of the view container
-        self.qml_container.installEventFilter(self)
-
         # Initial splitter sizes
         self.main_splitter.setSizes([250, 950])
 
+    # --- NAVIGATION (delegates to current tab) ---
+    
     def navigate_to(self, path):
-        path = str(path) # Ensure string
+        """Navigate the current tab to a path."""
+        path = str(path)
         if not os.path.exists(path):
             return
             
         print(f"Navigating to: {path}")
-        self.current_path = path
-        self.path_edit.setText(path)
-        self.bridge.pathChanged.emit(path)
+        self.tab_manager.navigate_to(path)
         
-        # 1. Update Scanner (Content)
-        self.status_bar.resetCounts()  # Reset before new scan
-        self.splitter.setFiles([]) # Clear old
-        self.scanner.scan_directory(path)
-        
-        # 2. Start watching this directory for changes
+        # Update file monitor
         self.file_monitor.watch(path)
         
-        # 2. Update Sidebar Selection (Sync)
+        # Sync sidebar
         index = self.fs_model.index(path)
         if index.isValid():
             self.sidebar_tree.setCurrentIndex(index)
             self.sidebar_tree.scrollTo(index)
 
     def go_up(self):
-        parent = os.path.dirname(self.current_path)
-        if parent and os.path.exists(parent):
-            self.navigate_to(parent)
+        """Navigate current tab to parent directory."""
+        tab = self.tab_manager.current_tab
+        if tab:
+            parent = os.path.dirname(tab.current_path)
+            if parent and os.path.exists(parent):
+                self.navigate_to(parent)
 
     def _on_sidebar_clicked(self, index):
         path = self.fs_model.filePath(index)
         self.navigate_to(path)
+    
+    def _on_tab_path_changed(self, path):
+        """Sync path bar with current tab's path."""
+        self.path_edit.setText(path)
+        self.status_bar.resetCounts()
+        
+        # Update status bar with current tab's scanner
+        tab = self.tab_manager.current_tab
+        if tab:
+            tab.scanner.filesFound.connect(self.status_bar.updateItemCount)
+    
+    def _on_directory_changed(self):
+        """Called by FileMonitor when the watched directory changes."""
+        tab = self.tab_manager.current_tab
+        if tab:
+            tab.navigate_to(tab.current_path)
+
+    # --- PROPERTY ACCESSORS (for AppBridge compatibility) ---
+    
+    @property
+    def current_path(self):
+        """Current path of active tab."""
+        tab = self.tab_manager.current_tab
+        return tab.current_path if tab else str(Path.home())
+    
+    @property
+    def bridge(self):
+        """Bridge of active tab."""
+        tab = self.tab_manager.current_tab
+        return tab.bridge if tab else None
+    
+    @property
+    def qml_view(self):
+        """QML view of active tab."""
+        tab = self.tab_manager.current_tab
+        return tab.qml_view if tab else None
+    
+    @property
+    def splitter(self):
+        """Column splitter of active tab."""
+        tab = self.tab_manager.current_tab
+        return tab.splitter if tab else None
+
+    # --- COPY / CUT / PASTE / TRASH ---
 
     @Slot()
     def _on_copy_triggered(self):
-        root = self.qml_view.rootObject()
-        if not root: return
-        selection = root.property("currentSelection")
+        tab = self.tab_manager.current_tab
+        if not tab:
+            print("[SHORTCUT] Copy: No active tab")
+            return
         
-        # Convert QJSValue to Python list if needed
-        if hasattr(selection, "toVariant"):
-            selection = selection.toVariant()
+        selection = tab.selection
+        if not selection:
+            print("[SHORTCUT] Copy: No items selected")
+            return
             
-        if selection:
-            self.clipboard.copy(selection)
+        print(f"[SHORTCUT] Copy: {len(selection)} items")
+        self.clipboard.copy(selection)
             
     @Slot()
     def _on_cut_triggered(self):
-        root = self.qml_view.rootObject()
-        if not root: return
-        selection = root.property("currentSelection")
+        tab = self.tab_manager.current_tab
+        if not tab:
+            print("[SHORTCUT] Cut: No active tab")
+            return
         
-        if hasattr(selection, "toVariant"):
-            selection = selection.toVariant()
+        selection = tab.selection
+        if not selection:
+            print("[SHORTCUT] Cut: No items selected")
+            return
             
-        if selection:
-            self.clipboard.cut(selection)
+        print(f"[SHORTCUT] Cut: {len(selection)} items")
+        self.clipboard.cut(selection)
             
+    @Slot(str, str, str)
+    def _on_op_completed(self, op_type, path, result_data):
+        """
+        Called when a file operation completes.
+        Used for logic that depends on the result (e.g. re-selecting renamed files).
+        """
+        if op_type == "rename":
+            new_path = result_data
+            tab = self.tab_manager.current_tab
+            if tab and tab.bridge:
+                # We need to wait for the file monitor to detect the new file
+                # and add it to the model. Then we can select it.
+                # However, since FileMonitor is async and scanner is async, 
+                # immediate selection might fail if the item isn't in the model yet.
+                # But QML Property changes are usually instant if the model updates.
+                # Let's try selecting immediately. If it fails, we might need a delay.
+                print(f"[MainWindow] Re-selecting renamed file: {new_path}")
+                tab.bridge.selectPath(new_path)
+
     @Slot()
     def _on_paste_triggered(self):
-        # Delegate to bridge to ensure consistent behavior with context menu
-        if self.bridge:
-            self.bridge.paste()
+        tab = self.tab_manager.current_tab
+        if tab and tab.bridge:
+            print("[SHORTCUT] Paste triggered")
+            tab.bridge.paste()
+        else:
+            print("[SHORTCUT] Paste: No active tab/bridge")
 
     @Slot()
     def _on_trash_triggered(self):
-        root = self.qml_view.rootObject()
-        if not root: return
-        selection = root.property("currentSelection")
+        tab = self.tab_manager.current_tab
+        if not tab:
+            print("[SHORTCUT] Trash: No active tab")
+            return
         
-        if hasattr(selection, "toVariant"):
-            selection = selection.toVariant()
+        selection = tab.selection
+        if not selection:
+            print("[SHORTCUT] Trash: No items selected")
+            return
             
-        if selection:
-            self.file_ops.trashMultiple(selection)
+        print(f"[SHORTCUT] Trash: {len(selection)} items")
+        self.file_ops.trashMultiple(selection)
 
-    def _on_path_entered(self):
-        pass
-        
-    def _on_columns_changed(self):
-        pass
-    
-    @Slot()
-    def _on_directory_changed(self):
-        """
-        Called by FileMonitor when the watched directory changes.
-        Triggers a rescan of the current directory.
-        """
-        if hasattr(self, 'current_path') and self.current_path:
-            print(f"Directory changed, rescanning: {self.current_path}")
-            self.splitter.setFiles([])
-            self.scanner.scan_directory(self.current_path)
-        
-    def eventFilter(self, obj, event):
-        """
-        Detect resize of the QML container to adjust column count dynamically.
-        """
-        if obj == self.qml_container and event.type() == event.Type.Resize:
-            self._recalc_columns()
-            
-        return super().eventFilter(obj, event)
-        
-    def _recalc_columns(self):
-        """
-        Calculates optimal column count based on available width and target column width.
-        Effect: Rigid Grid (Nemo-style). Columns are fixed width.
-        Formula: (N * Width) + ((N-1) * Spacing) <= AvailableWidth
-        """
-        available_width = self.qml_container.width()
-        if available_width <= 0: return
-        
-        spacing = 10 # Must match QML spacing
-        
-        # Solve for N:
-        # N * W + N * S - S <= Available
-        # N (W + S) <= Available + S
-        # N <= (Available + S) / (W + S)
-        
-        numerator = available_width + spacing
-        denominator = self.target_column_width + spacing
-        
-        if denominator == 0: return # Avoid div zero
-        
-        count = int(numerator / denominator)
-        
-        # Ensure at least 1 column, max 24 (increased from 12)
-        count = max(1, min(24, count))
-        
-        self.splitter.setColumnCount(count)
+    # --- ZOOM ---
 
     def change_zoom(self, delta):
-        """
-        Adjusts target column size (Zoom Level).
-        delta: +1 (Zoom Out / Smaller items via smaller target), -1 (Zoom In / Larger items via larger target)
-        """
-        # Logic: 
-        # Zoom In (-1) -> We want LARGER items -> INCREASE target_column_width
-        # Zoom Out (+1) -> We want SMALLER items -> DECREASE target_column_width
-        
-        step = 25 # Smaller step for smoother control
-        
-        if delta < 0: # Zoom In
-            self.target_column_width += step
-        else: # Zoom Out
-            self.target_column_width -= step
-            
-        # Clamp
-        # Lowered min to 50 (extra zoom out) and default is 75
-        self.target_column_width = max(50, min(800, self.target_column_width))
-        
-        # Update Bridge so QML updates width
-        self.bridge.targetCellWidth = self.target_column_width
-        
-        # Trigger update of column count
-        self._recalc_columns()
-    
+        """Adjust zoom for the current tab."""
+        tab = self.tab_manager.current_tab
+        if tab:
+            tab.change_zoom(delta)
+
+    # --- SHUTDOWN ---
+
     def closeEvent(self, event):
         """Clean shutdown of worker threads."""
         self.file_ops.shutdown()
         super().closeEvent(event)
-
