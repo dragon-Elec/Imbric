@@ -118,7 +118,15 @@ class BrowserTab(QWidget):
     
     def _on_scan_finished(self):
         """Called when directory scan completes."""
-        pass
+        # Check if there are pending paths to select (e.g., from paste)
+        pending = self.bridge.selectPendingPaths()
+        if pending:
+            # Access QML root and call selectPaths function
+            root = self.qml_view.rootObject()
+            if root:
+                # Use QMetaObject to invoke the QML function
+                from PySide6.QtCore import QMetaObject, Q_ARG
+                QMetaObject.invokeMethod(root, "selectPaths", Q_ARG("QVariant", pending))
     
     def eventFilter(self, obj, event):
         """Track resize for column recalculation."""

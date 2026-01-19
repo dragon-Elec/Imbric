@@ -8,11 +8,24 @@ class AppBridge(QObject):
     pathChanged = Signal(str)
     targetCellWidthChanged = Signal(int)
     renameRequested = Signal(str)
+    cutPathsChanged = Signal()  # Emitted when clipboard cut state changes
     
     def __init__(self, main_window):
         super().__init__()
         self.mw = main_window
         self._target_cell_width = 75
+        self._pending_select_paths = []  # Paths to select after next directory refresh
+        
+        # Connect to clipboard changes
+        self.mw.clipboard.clipboardChanged.connect(self._on_clipboard_changed)
+    
+    def _on_clipboard_changed(self):
+        self.cutPathsChanged.emit()
+    
+    @Property(list, notify=cutPathsChanged)
+    def cutPaths(self):
+        """Returns list of paths currently in cut state."""
+        return self.mw.clipboard.getCutPaths()
 
     @Slot(list)
     def startDrag(self, paths):
@@ -75,6 +88,11 @@ class AppBridge(QObject):
         for src in paths:
             # Calculate destination path
             dest = os.path.join(target_dir, os.path.basename(src))
+            
+            # Skip if dropping file onto itself
+            if os.path.abspath(src) == os.path.abspath(dest):
+                print(f"[DROP] Skipped: Same file {os.path.basename(src)}")
+                continue
             
             # Resolve conflict (shows dialog if dest exists)
             action, final_dest = resolver.resolve(src, dest)
@@ -170,17 +188,23 @@ class AppBridge(QObject):
         menu.addSeparator()
         
         act_new_folder = menu.addAction(QIcon.fromTheme("folder-new"), "New Folder")
-        act_new_folder.triggered.connect(lambda: self.mw.file_ops.createFolder(self.mw.current_path))
-        
-        # Select All
-        act_select_all = menu.addAction("Select All")
-        act_select_all.triggered.connect(lambda: self.selectPath("ALL")) # "ALL" handling in QML bridge?
-        # Actually QML handles select all via shortcuts usually, but here we can't easily reach QML. 
-        # For now let's omit Select All or implement it if requested. 
-        # User only mentioned Paste/New Folder usually.
-        # Let's stick to Paste/New Folder to be safe.
+        act_new_folder.triggered.connect(lambda: self._create_new_folder())
         
         menu.exec_(QCursor.pos())
+    
+    def _create_new_folder(self):
+        """Create a new folder with unique name (Untitled Folder, Untitled Folder (2), etc.)"""
+        base_name = "Untitled Folder"
+        folder_path = os.path.join(self.mw.current_path, base_name)
+        
+        # Auto-number if exists
+        counter = 2
+        while os.path.exists(folder_path):
+            folder_path = os.path.join(self.mw.current_path, f"{base_name} ({counter})")
+            counter += 1
+        
+        self.queueSelectionAfterRefresh([folder_path])
+        self.mw.file_ops.createFolder(folder_path)
     
     @Slot(str, str)
     def renameFile(self, old_path, new_name):
@@ -229,6 +253,7 @@ class AppBridge(QObject):
         skipped_count = 0
         failed_files = []
         cancelled = False
+        pasted_paths = []  # Track destination paths for post-paste selection
         
         for src in files:
             # Check if source file still exists
@@ -258,7 +283,12 @@ class AppBridge(QObject):
             else:
                 self.mw.file_ops.copy(src, final_dest)
             
+            pasted_paths.append(final_dest)  # Track for selection
             successful_count += 1
+        
+        # Queue paths for selection after directory refreshes
+        if pasted_paths:
+            self.queueSelectionAfterRefresh(pasted_paths)
         
         # Clear clipboard only if cut mode, not cancelled, and no failures
         if is_cut and not cancelled and len(failed_files) == 0:
@@ -268,6 +298,16 @@ class AppBridge(QObject):
             print(f"[PASTE] Partial: {successful_count} moved, {skipped_count} skipped, {len(failed_files)} failed")
         else:
             print(f"[PASTE] Complete: {successful_count} copied, {skipped_count} skipped")
+    
+    def queueSelectionAfterRefresh(self, paths):
+        """Queue paths to be selected after the next directory refresh."""
+        self._pending_select_paths = paths
+    
+    def selectPendingPaths(self):
+        """Called after directory refresh to select queued files. Returns and clears the queue."""
+        paths = self._pending_select_paths
+        self._pending_select_paths = []
+        return paths
         
     @Property(int, notify=targetCellWidthChanged)
     def targetCellWidth(self):
