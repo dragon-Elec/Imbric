@@ -21,11 +21,107 @@ QtObject {
     id: root
     
     // --- Selection State ---
-    // We store selected items as an array of keys (strings or numbers).
-    // QML auto-generates 'onSelectionChanged' signal for this property.
     property var selection: []
     
-    // --- API ---
+    // Anchor for Shift+Click range selection
+    property string anchorPath: ""
+    
+    /**
+     * Handles a click with modifier support.
+     * Matches Nautilus / Windows Explorer behavior:
+     *   - Click:            Select single, clear rest
+     *   - Ctrl+Click:       Toggle item, keep rest
+     *   - Shift+Click:      Select range [anchor → target], clear rest
+     *   - Ctrl+Shift+Click: ADD range [anchor → target] to current selection
+     *
+     * @param path - The clicked item
+     * @param ctrl - Ctrl key is held (bitmask, truthy if held)
+     * @param shift - Shift key is held (bitmask, truthy if held)
+     * @param allItems - Array of all items in order (from ColumnSplitter.getAllItems())
+     */
+    function handleClick(path, ctrl, shift, allItems) {
+        var ctrlHeld = !!ctrl
+        var shiftHeld = !!shift
+        
+        if (shiftHeld && anchorPath) {
+            // Shift+Click or Ctrl+Shift+Click: Range selection
+            var range = _computeRange(anchorPath, path, allItems)
+            
+            if (ctrlHeld) {
+                // Ctrl+Shift: ADD range to existing selection (union)
+                var newSel = selection.slice()
+                for (var i = 0; i < range.length; i++) {
+                    if (newSel.indexOf(range[i]) === -1) {
+                        newSel.push(range[i])
+                    }
+                }
+                selection = newSel
+            } else {
+                // Shift only: REPLACE selection with range
+                selection = range
+            }
+            // Note: Do NOT update anchorPath on Shift+Click (anchor stays fixed)
+            
+        } else if (ctrlHeld) {
+            // Ctrl+Click: Toggle this item, keep everything else
+            var idx = selection.indexOf(path)
+            var newSel = selection.slice()
+            if (idx === -1) {
+                newSel.push(path)
+            } else {
+                newSel.splice(idx, 1)
+            }
+            selection = newSel
+            anchorPath = path // Update anchor for future Shift+Clicks
+            
+        } else {
+            // Normal Click: Single select, clear rest
+            anchorPath = path
+            selection = [path]
+        }
+    }
+    
+    /**
+     * Computes the range of paths between start and end (inclusive).
+     * @private
+     */
+    function _computeRange(startPath, endPath, allItems) {
+        if (!allItems || allItems.length === 0) return [endPath]
+        
+        var startIdx = -1, endIdx = -1
+        for (var i = 0; i < allItems.length; i++) {
+            if (allItems[i].path === startPath) startIdx = i
+            if (allItems[i].path === endPath) endIdx = i
+        }
+        
+        if (startIdx === -1 || endIdx === -1) return [endPath]
+        
+        // Ensure startIdx <= endIdx
+        if (startIdx > endIdx) {
+            var tmp = startIdx
+            startIdx = endIdx
+            endIdx = tmp
+        }
+        
+        var range = []
+        for (var j = startIdx; j <= endIdx; j++) {
+            range.push(allItems[j].path)
+        }
+        return range
+    }
+    
+    /**
+     * Selects range from anchor to target.
+     * @deprecated Use handleClick with shift=true instead.
+     */
+    function selectToAnchor(targetPath, allItems) {
+        if (!anchorPath || !allItems || allItems.length === 0) {
+            selection = [targetPath]
+            anchorPath = targetPath
+            return
+        }
+        selection = _computeRange(anchorPath, targetPath, allItems)
+    }
     
     /**
      * Checks if a key is currently selected.
@@ -45,10 +141,11 @@ QtObject {
     }
     
     /**
-     * Clears all selection.
+     * Clears all selection AND resets anchor.
      */
     function clear() {
         selection = []
+        anchorPath = "" // Reset anchor so next Shift+Click acts as normal click
     }
     
     /**
