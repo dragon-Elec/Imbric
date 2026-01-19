@@ -448,14 +448,24 @@ Dependencies flow **downwards** only.
 | **Undo / Redo** | MED | ❌ MISSING |
 | **Inline Rename F2 Focus** | LOW | ⚠️ WONTFIX — See [BUG-F2-Focus-Loss.md](BUG-F2-Focus-Loss.md) |
 | **Cut Dimming + Paste Highlight** | LOW | ✅ IMPLEMENTED |
+| **New Folder + Auto-Select** | LOW | ✅ IMPLEMENTED |
 | Drag Cursor Feedback (+/→) | LOW | ✅ Qt handles automatically |
 | File Preview (Spacebar/Click) | LOW | ⏳ TODO |
 | Move directory over directory | MED | 🐛 OPEN |
+| Symlink Thumbnail Icons | LOW | ⏳ TODO (Nautilus shows link overlay) |
+
+### 6.3.1. Pending Tests (Next Session)
+
+- [ ] **Drag & Drop**: Verify DnD still works after input refactor
+- [ ] **Rubberband Selection**: Verify marquee selection on empty space
+- [ ] **Right-Click Menus**: Context menu on items and background
+- [ ] **Dir-over-Dir Bug**: Reproduce and investigate
 
 ### 6.4. Session History
 
 | Date | Focus | Changes |
 |:-----|:------|:--------|
+| 2026-01-19 | **New Folder** | Fixed path, added auto-numbering, auto-select after creation |
 | 2026-01-19 | **Paste Highlight** | Pasted files now auto-selected after operation completes |
 | 2026-01-19 | **Multi-Select Fix** | Moved click handling to MouseArea (modifier visibility), refactored SelectionModel (Nautilus-style logic), fixed anchor reset on clear |
 | 2026-01-19 | **Quick Wins** | Cut Dimming (partial), Shift-Click (broken), F2 debug cleanup |
