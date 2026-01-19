@@ -61,6 +61,15 @@ class SimpleListModel(QAbstractListModel):
         self._items.extend(new_items)
         self.endInsertRows()
 
+    @Slot(int, result=dict)
+    def get(self, row):
+        """
+        Expose item data to QML by index.
+        """
+        if 0 <= row < len(self._items):
+            return self._items[row]
+        return {}
+
 
 class ColumnSplitter(QObject):
     """

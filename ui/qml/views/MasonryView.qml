@@ -14,6 +14,11 @@ Item {
     // EXPOSED PROPERTY: For Python Key Shortcuts (Copy/Cut/Trash)
     property alias currentSelection: selectionModel.selection
     
+    // EXPOSED FUNCTION: For Python to set selection (e.g., after paste)
+    function selectPaths(paths) {
+        selectionModel.selection = paths
+    }
+    
     // STATE: Inverse of SelectionModel, tracks which ONE file is being renamed
     property string pathBeingRenamed: ""
     
@@ -38,22 +43,17 @@ Item {
         color: activePalette.base
         focus: true // Root container takes focus by default if nothing else has it
 
-        // Global Key Handler (F2) - Catches events bubbling from TextArea or MouseArea
+        // Global Key Handler (F2)
         Keys.onPressed: (event) => {
+            if (event.isAutoRepeat) return
+            
             if (event.key === Qt.Key_F2) {
                 var sel = selectionModel.selection
                 if (sel.length === 1) {
                     if (root.pathBeingRenamed === sel[0]) {
-                        // Toggle OFF if already renaming this file
-                        console.log("[QML_DEBUG] (Root) F2 pressed: Toggling OFF rename")
                         root.pathBeingRenamed = ""
-                        // Force focus back to specific interaction area if needed, 
-                        // but Root having focus is usually enough. 
-                        // Actually, give it to rubberBandArea to be safe for mouse interaction.
                         rubberBandArea.forceActiveFocus()
                     } else {
-                        // Enable rename
-                        console.log("[QML_DEBUG] (Root) F2 pressed: Starting rename for " + sel[0])
                         root.pathBeingRenamed = sel[0]
                     }
                     event.accepted = true
@@ -104,7 +104,8 @@ Item {
                             readonly property int footerHeight: 36
                             height: imgHeight + footerHeight
                             
-                            readonly property bool selected: selectionModel.isSelected(model.path)
+                            // Fix reactivity: Direct binding is safer than function call which might hide dependency
+                            readonly property bool selected: selectionModel.selection.indexOf(model.path) !== -1
 
                             Rectangle {
                                 anchors.fill: parent
@@ -121,6 +122,10 @@ Item {
                                     if (hoverHandler.hovered) return Qt.rgba(activePalette.text.r, activePalette.text.g, activePalette.text.b, 0.1)
                                     return "transparent"
                                 }
+                                
+                                // Dim items that are in "cut" state (pending move)
+                                // Safety check: appBridge might be null during shutdown
+                                opacity: (appBridge && appBridge.cutPaths && appBridge.cutPaths.indexOf(model.path) >= 0) ? 0.5 : 1.0
                                 
                                 // Drop Area for Folders (Allows dragging files INTO a folder)
                                 DropArea {
@@ -233,33 +238,36 @@ Item {
                                             }
                                             
                                             function commit() {
-                                                console.log("[QML_DEBUG] commit() called")
-                                                // ... (logging omitted for brevity, keeping original logic if preferred or replace all)
-                                                // Actually let's keep the logging short or remove if we trust it now.
-                                                // Let's keep it but just add the focus call.
-                                                
                                                 if (text !== model.name) {
-                                                    console.log("[QML_DEBUG]   Name changed, calling appBridge.renameFile...")
                                                     appBridge.renameFile(model.path, text)
-                                                } else {
-                                                    console.log("[QML_DEBUG]   Name unchanged, skipping.")
                                                 }
                                                 root.pathBeingRenamed = ""
-                                                rubberBandArea.forceActiveFocus()
                                             }
                                             
-                                            onActiveFocusChanged: {
-                                                if (!activeFocus && root.pathBeingRenamed !== "") {
-                                                    commit() // Commit on blur
-                                                }
-                                            }
+                                            // No onActiveFocusChanged - commit only via Enter, cancel via Escape
+                                            // This avoids QML focus system bugs with Loader
                                         }
                                     }
                                 }
                                 
                                 HoverHandler { id: hoverHandler }
                                 
-                                // Item Click & Context Menu -> Handled by Global MouseArea now
+                                // TapHandler removed: Logic moved to global MouseArea for reliable modifier support
+                                // DragHandler remains for Drag-and-Drop (handled separately)
+                                DragHandler {
+                                    id: delegateDragHandler
+                                    target: null // Don't move the visual
+                                    
+                                    onActiveChanged: {
+                                        if (active) {
+                                            // Ensure item is selected before starting drag
+                                            if (!delegateItem.selected) {
+                                                selectionModel.select(model.path)
+                                            }
+                                            appBridge.startDrag(selectionModel.selection)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -267,27 +275,22 @@ Item {
             }
         }
         
-        // Layer 2: RubberBand Interaction Overlay
-        // HANDLES EVERYTHING: Clicks, drags, double-clicks.
-        // Solves z-order issues by being the only top-level input handler.
+        // Layer 2: Background Interaction (ON TOP but passes item events through)
+        // Handles: Rubberband selection, background clicks, zoom
         MouseArea {
             id: rubberBandArea
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             hoverEnabled: true
-            focus: true // Required for Key handling
-            
-            // F2 moved to Root Item
             
             property point startPoint
-            property string startPath: "" // If pressed on an item, this holds its path
             property bool isDragging: false
-            property bool wasDragging: false 
+            property bool wasMarqueeSelecting: false // Survives release-click sequence
+            property bool isOnItem: false // Track if press was on an item
 
             // Zoom Support (Ctrl+Scroll)
             onWheel: (wheel) => {
                 if (wheel.modifiers & Qt.ControlModifier) {
-                    // Scroll up = zoom in (larger icons), scroll down = zoom out (smaller icons)
                     var delta = wheel.angleDelta.y > 0 ? -1 : 1
                     appBridge.zoom(delta)
                     wheel.accepted = true
@@ -297,148 +300,152 @@ Item {
             }
 
             onPressed: (mouse) => {
-                // Don't block scrollbar interaction (right 20px)
-                if (mouse.x > scrollView.width - 20) {
+                wasMarqueeSelecting = false
+                
+                // --- 1. Accurate Hit-Test using QML ---
+                // We ask the specific ListView column: "Is there an item under this pixel?"
+                // This handles padding, margins, and exact rendering perfectly.
+                isOnItem = false
+                
+                // Map global mouse to the Row (which handles the scrolling offset)
+                var rowPt = columnsRow.mapFromItem(root, mouse.x, mouse.y)
+                
+                // Find which column we are over
+                // (Assuming equal width + spacing)
+                var totalColWidth = root.columnWidth + columnsRow.spacing
+                var colIndex = Math.floor(rowPt.x / totalColWidth)
+                
+                if (colIndex >= 0 && colIndex < columnRepeater.count) {
+                    var targetListView = columnRepeater.itemAt(colIndex)
+                    if (targetListView) {
+                        // Map Row point to ListView (should be just local X adjustment)
+                        var lvPt = targetListView.mapFromItem(columnsRow, rowPt.x, rowPt.y)
+                        
+                        // Check indexAt in the ListView
+                        // Note: MasonryView uses expanded ListView (non-interactive), 
+                        // so contentY is effectively 0 relative to the Item itself,
+                        // but let's be safe and use standard lookup.
+                        var idx = targetListView.indexAt(lvPt.x, lvPt.y)
+                        
+                        if (idx !== -1) {
+                            // WE HIT AN ITEM!
+                            isOnItem = true
+                            
+                            // Retrieve Data from Python Model
+                            var itemData = targetListView.model.get(idx)
+                            if (itemData && itemData.path) {
+                                if (mouse.button === Qt.RightButton) {
+                                    // Right Click Logic
+                                    if (!selectionModel.isSelected(itemData.path)) {
+                                        selectionModel.select(itemData.path)
+                                    }
+                                    appBridge.showContextMenu(selectionModel.selection)
+                                } else {
+                                    // Left Click Logic
+                                    // Using mouse.modifiers directly from the MouseArea (Reliable!)
+                                    var ctrl = (mouse.modifiers & Qt.ControlModifier)
+                                    var shift = (mouse.modifiers & Qt.ShiftModifier)
+                                    selectionModel.handleClick(itemData.path, ctrl, shift, columnSplitter.getAllItems())
+                                }
+                            }
+                            
+                            mouse.accepted = true // Consume event
+                            return
+                        }
+                    }
+                }
+                
+                // --- 2. Background Interaction ---
+                // If we got here, we clicked the background (gaps or empty space)
+                
+                // Don't start marquee if renaming
+                if (root.pathBeingRenamed !== "") {
+                    // If renaming, background click should confirm (or cancel?)
+                    // Currently handled by TextField focus loss or other logic, 
+                    // but let's consume it to be safe.
+                     // Actually, we want to let the focus change happen?
+                     // Let's consume it to prevent clearing selection immediately 
+                     // if that is desired, OR let it clear.
+                     // Standard behavior: Click outside -> Commit & Deselect?
+                     // For now, let's just NOT start marquee.
                     mouse.accepted = false
                     return
                 }
                 
+                // Start marquee on empty space
                 startPoint = Qt.point(mouse.x, mouse.y)
                 isDragging = false
-                wasDragging = false
-                mouse.accepted = true 
-                startPath = ""
-                
-                // Identify if we pressed on an item
-                var mappedPt = columnsRow.mapFromItem(root, mouse.x, mouse.y)
-                var hits = selectionHelper.getMasonrySelection(
-                    columnSplitter, 
-                    root.columnCount, 
-                    root.columnWidth, 
-                    10,
-                    mappedPt.x, 
-                    mappedPt.y, 
-                    1, 1 
-                )
-                
-                if (hits.length > 0) {
-                    startPath = hits[0]
-                    // Do NOT select immediately on press if it's potentially a drag start
-                    // We handle selection in onClicked or on drag start
-                }
             }
 
             onPositionChanged: (mouse) => {
+                if (isOnItem) return // Item is handling this
                 if (!(mouse.buttons & Qt.LeftButton)) return
                 
-                if (!isDragging && (Math.abs(mouse.x - startPoint.x) > 10 || Math.abs(mouse.y - startPoint.y) > 10)) {
+                // Start marquee after small movement
+                if (!isDragging && (Math.abs(mouse.x - startPoint.x) > 5 || Math.abs(mouse.y - startPoint.y) > 5)) {
                     isDragging = true
+                    rubberBand.show()
+                }
+
+                if (isDragging) {
+                    rubberBand.update(startPoint.x, startPoint.y, mouse.x, mouse.y)
                     
-                    // DECISION: Drag Items OR RubberBand?
-                    if (startPath !== "") {
-                        // START SYSTEM DRAG
-                        // Ensure item is selected before dragging
-                        if (!selectionModel.isSelected(startPath)) {
-                            selectionModel.select(startPath)
-                        }
-                        
-                        // Start blocking system drag
-                        appBridge.startDrag(selectionModel.selection)
-                        
-                        // Drag finished (because startDrag blocks)
-                        isDragging = false 
-                        wasDragging = true // suppress click
-                    } else {
-                        // START RUBBERBAND
-                        rubberBand.show()
-                    }
-                }
-
-                if (isDragging) {
-                    // Only update rubberband if we are in rubberband mode (startPath is empty)
-                    if (startPath === "") {
-                        rubberBand.update(startPoint.x, startPoint.y, mouse.x, mouse.y)
-                        
-                        var rect = rubberBand.getRect()
-                        var mappedPt = columnsRow.mapFromItem(root, rect.x, rect.y)
-                        
-                        var hits = selectionHelper.getMasonrySelection(
-                            columnSplitter, 
-                            root.columnCount, 
-                            root.columnWidth, 
-                            10,
-                            mappedPt.x, 
-                            mappedPt.y, 
-                            rect.width, 
-                            rect.height
-                        )
-                        selectionModel.selectRange(hits, (mouse.modifiers & Qt.ControlModifier))
-                    }
-                }
-            }
-
-            onReleased: (mouse) => {
-                if (isDragging) {
-                    rubberBand.hide()
-                    wasDragging = true // Mark that we just finished dragging
-                    isDragging = false
-                }
-            }
-
-            onClicked: (mouse) => {
-                if (isDragging || wasDragging) return
-                
-                // Get item at click position
-                // We use a 1x1 rect to query the specific point
-                var mappedPt = columnsRow.mapFromItem(root, mouse.x, mouse.y)
-                var hits = selectionHelper.getMasonrySelection(
-                    columnSplitter, 
-                    root.columnCount, 
-                    root.columnWidth, 
-                    10,
-                    mappedPt.x, 
-                    mappedPt.y, 
-                    1, 1 
-                )
-                
-                var clickedPath = hits.length > 0 ? hits[0] : null
-                
-                if (mouse.button === Qt.RightButton) {
-                    if (clickedPath) {
-                        if (!selectionModel.isSelected(clickedPath)) {
-                            selectionModel.select(clickedPath)
-                        }
-                        appBridge.showContextMenu(selectionModel.selection)
-                    } else {
-                         // Right click on empty space -> show background menu (Paste, New Folder)
-                         selectionModel.clear()
-                         appBridge.showBackgroundContextMenu()
-                    }
-                } else {
-                     if (clickedPath) {
-                         selectionModel.toggle(clickedPath, (mouse.modifiers & Qt.ControlModifier))
-                     } else {
-                         selectionModel.clear()
-                     }
-                }
-            }
-            
-            onDoubleClicked: (mouse) => {
-                // Double click to open
-                if (mouse.button === Qt.LeftButton) {
-                     var mappedPt = columnsRow.mapFromItem(root, mouse.x, mouse.y)
-                     var hits = selectionHelper.getMasonrySelection(
+                    var rect = rubberBand.getRect()
+                    var mappedPt = columnsRow.mapFromItem(root, rect.x, rect.y)
+                    
+                    var hits = selectionHelper.getMasonrySelection(
                         columnSplitter, 
                         root.columnCount, 
                         root.columnWidth, 
                         10,
                         mappedPt.x, 
                         mappedPt.y, 
-                        1, 1 
+                        rect.width, 
+                        rect.height
                     )
-                    
-                    if (hits.length > 0) {
-                        appBridge.openPath(hits[0])
+                    selectionModel.selectRange(hits, (mouse.modifiers & Qt.ControlModifier))
+                }
+            }
+
+            onReleased: (mouse) => {
+                rubberBand.hide()
+                if (isDragging) {
+                    wasMarqueeSelecting = true // Mark that we just did a marquee
+                }
+                isDragging = false
+            }
+
+            onClicked: (mouse) => {
+                // Skip if we just finished marquee selection or if we're on an item
+                if (wasMarqueeSelecting || isOnItem) return
+                
+                // Click on empty space (not a drag, not on item)
+                if (mouse.button === Qt.RightButton) {
+                    selectionModel.clear()
+                    appBridge.showBackgroundContextMenu()
+                } else {
+                    selectionModel.clear()
+                }
+            }
+            
+            onDoubleClicked: (mouse) => {
+                // Replicate Hit-Test logic for Open action
+                var rowPt = columnsRow.mapFromItem(root, mouse.x, mouse.y)
+                var totalColWidth = root.columnWidth + columnsRow.spacing
+                var colIndex = Math.floor(rowPt.x / totalColWidth)
+                
+                if (colIndex >= 0 && colIndex < columnRepeater.count) {
+                    var targetListView = columnRepeater.itemAt(colIndex)
+                    if (targetListView) {
+                        var lvPt = targetListView.mapFromItem(columnsRow, rowPt.x, rowPt.y)
+                        var idx = targetListView.indexAt(lvPt.x, lvPt.y)
+                        
+                        if (idx !== -1) {
+                            var itemData = targetListView.model.get(idx)
+                            if (itemData && itemData.path && mouse.button === Qt.LeftButton) {
+                                appBridge.openPath(itemData.path)
+                            }
+                        }
                     }
                 }
             }
