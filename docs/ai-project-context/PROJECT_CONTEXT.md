@@ -27,7 +27,7 @@
 **Critical Patterns:**
 - **"Lens, not Engine":** Defer I/O to `Gio`, thumbnails to `GnomeDesktop`
 - **Masonry:** "Card Dealing" round-robin into N columns (not position math)
-- **Input:** "God Object" single global MouseArea handles all clicks/drags
+- **Input:** Hybrid — per-delegate `TapHandler`/`DragHandler` + global `MouseArea` for marquee selection
 - **Menus:** Hybrid — QML emits signal → Python shows native `QMenu`
 
 **Dependencies:** `PySide6`, `PyGObject`, `gir1.2-gnomedesktop-3.0`
@@ -245,10 +245,10 @@ Modal dialog for paste/drop/rename conflicts.
 #### `ui/qml/views/MasonryView.qml` — GPU Grid
 Main photo grid with N `ListView` columns.
 
-- **"God Object" MouseArea:** handles clicks, drags, rubberband, zoom
+- **Input Model:** Hybrid — per-delegate `TapHandler`/`DragHandler` + global `MouseArea` for marquee
 - Binds to `ColumnSplitter.getModels()`
-- Signals to `AppBridge`: `contextMenuRequested`, `startDrag`, `handleDrop`
-- **Inline Rename:** `F2` triggers `Loader` (Text -> TextField)
+- Signals to `AppBridge`: `showContextMenu`, `startDrag`, `handleDrop`
+- **Inline Rename:** `F2` triggers `Loader` (Text -> TextArea). Commit via Enter only. See [BUG-F2-Focus-Loss.md](BUG-F2-Focus-Loss.md)
 - **Properties:** `currentSelection` (exposed to Python), `pathBeingRenamed`
 
 ---
@@ -443,11 +443,12 @@ Dependencies flow **downwards** only.
 
 | Issue | Severity | Status |
 |:------|:---------|:-------|
-| **Shift-Click Range Selection** | MED | ❌ MISSING |
+| **Shift-Click Range Selection** | MED | ✅ IMPLEMENTED |
+| **Ctrl-Click Multi-Select** | MED | ✅ IMPLEMENTED |
 | **Undo / Redo** | MED | ❌ MISSING |
-| **Inline Rename F2 Focus** | LOW | ⚠️ QUIRKY (Random focus loss) |
-| **Visual Feedack for Cut (Dimming)** | LOW | ❌ MISSING |
-| Drag Cursor Feedback (+/→) | LOW | ❌ MISSING |
+| **Inline Rename F2 Focus** | LOW | ⚠️ WONTFIX — See [BUG-F2-Focus-Loss.md](BUG-F2-Focus-Loss.md) |
+| **Cut Dimming + Paste Highlight** | LOW | ✅ IMPLEMENTED |
+| Drag Cursor Feedback (+/→) | LOW | ✅ Qt handles automatically |
 | File Preview (Spacebar/Click) | LOW | ⏳ TODO |
 | Move directory over directory | MED | 🐛 OPEN |
 
@@ -455,6 +456,10 @@ Dependencies flow **downwards** only.
 
 | Date | Focus | Changes |
 |:-----|:------|:--------|
+| 2026-01-19 | **Paste Highlight** | Pasted files now auto-selected after operation completes |
+| 2026-01-19 | **Multi-Select Fix** | Moved click handling to MouseArea (modifier visibility), refactored SelectionModel (Nautilus-style logic), fixed anchor reset on clear |
+| 2026-01-19 | **Quick Wins** | Cut Dimming (partial), Shift-Click (broken), F2 debug cleanup |
+| 2026-01-19 | **Input Refactor** | Per-delegate TapHandler/DragHandler, simplified marquee, F2 workaround (Enter-only) |
 | 2026-01-18 | **Inline Rename** | F2 Rename, Smart Conflict Logic, Async Verification, Context Menu Fixes |
 | 2026-01-18 | **Multi-Tab** | TabManager, Separation of Concerns, Crash Fixes |
 | 2026-01-18 | **Layout** | Fixed Masonry aspect ratio (square icons) |
