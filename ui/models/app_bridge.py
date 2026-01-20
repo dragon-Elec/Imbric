@@ -15,6 +15,7 @@ class AppBridge(QObject):
         self.mw = main_window
         self._target_cell_width = 75
         self._pending_select_paths = []  # Paths to select after next directory refresh
+        self._pending_rename_path = None  # Path to trigger rename after createFolder completes
         
         # Connect to clipboard changes
         self.mw.clipboard.clipboardChanged.connect(self._on_clipboard_changed)
@@ -204,6 +205,7 @@ class AppBridge(QObject):
             counter += 1
         
         self.queueSelectionAfterRefresh([folder_path])
+        self._pending_rename_path = folder_path  # Trigger rename after folder is created
         self.mw.file_ops.createFolder(folder_path)
     
     @Slot(str, str)

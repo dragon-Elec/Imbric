@@ -299,20 +299,26 @@ class MainWindow(QMainWindow):
     def _on_op_completed(self, op_type, path, result_data):
         """
         Called when a file operation completes.
-        Used for logic that depends on the result (e.g. re-selecting renamed files).
+        Used for logic that depends on the result (e.g. re-selecting renamed files, triggering rename on new folder).
         """
+        tab = self.tab_manager.current_tab
+        if not tab or not tab.bridge:
+            return
+            
         if op_type == "rename":
             new_path = result_data
-            tab = self.tab_manager.current_tab
-            if tab and tab.bridge:
-                # We need to wait for the file monitor to detect the new file
-                # and add it to the model. Then we can select it.
-                # However, since FileMonitor is async and scanner is async, 
-                # immediate selection might fail if the item isn't in the model yet.
-                # But QML Property changes are usually instant if the model updates.
-                # Let's try selecting immediately. If it fails, we might need a delay.
-                print(f"[MainWindow] Re-selecting renamed file: {new_path}")
-                tab.bridge.selectPath(new_path)
+            # Re-select renamed file
+            print(f"[MainWindow] Re-selecting renamed file: {new_path}")
+            tab.bridge.selectPath(new_path)
+        
+        elif op_type == "createFolder":
+            # Check if we should trigger inline rename for this new folder
+            pending_path = tab.bridge._pending_rename_path
+            if pending_path and pending_path == path:
+                tab.bridge._pending_rename_path = None  # Clear flag
+                # Trigger rename after a short delay to allow FileMonitor to refresh
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(100, lambda: tab.bridge.renameRequested.emit(path))
 
     @Slot()
     def _on_paste_triggered(self):
