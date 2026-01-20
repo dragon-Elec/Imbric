@@ -111,9 +111,75 @@ class _FileOperationWorker(QObject):
             print(f"[FILE_OPS] move SUCCESS: {dest_path}")
             self.finished.emit("move", source_path, True, dest_path)
         except GLib.Error as e:
-            msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
-            print(f"[FILE_OPS] move FAILED: {msg}")
-            self.finished.emit("move", source_path, False, msg)
+            # Handle Directory Merge Scenario (Error 29: WOULD_MERGE)
+            # This happens when moving a directory over an existing directory.
+            if e.code == Gio.IOErrorEnum.WOULD_MERGE or e.code == 29:
+                print(f"[FILE_OPS] move WOULD_MERGE: Falling back to recursive merge")
+                try:
+                    self._recursive_move_merge(source, dest, self._cancellable)
+                    self.finished.emit("move", source_path, True, dest_path)
+                except GLib.Error as merge_e:
+                    msg = "Cancelled" if merge_e.code == Gio.IOErrorEnum.CANCELLED else str(merge_e)
+                    print(f"[FILE_OPS] move merge FAILED: {msg}")
+                    self.finished.emit("move", source_path, False, msg)
+            else:
+                msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
+                print(f"[FILE_OPS] move FAILED: {msg}")
+                self.finished.emit("move", source_path, False, msg)
+
+    def _recursive_move_merge(self, source, dest, cancellable):
+        """
+        Manually move a directory into an existing directory by moving children.
+        Equivalent to a 'Merge' operation.
+        """
+        # 1. Ensure destination exists (it handles being a dir)
+        # If dest is a file, we can't merge into it, but we are in OVERWRITE mode,
+        # so maybe we should replace it? But if move() failed with WOULD_MERGE, dest IS a dir.
+        
+        # 2. Iterate children
+        enumerator = source.enumerate_children(
+            "standard::name,standard::type",
+            Gio.FileQueryInfoFlags.NONE,
+            cancellable
+        )
+        
+        for child_info in enumerator:
+            child_name = child_info.get_name()
+            child_source = source.get_child(child_name)
+            child_dest = dest.get_child(child_name)
+            
+            # Recurse logic:
+            # If child_source is dir and child_dest exists -> Recurse Merge
+            # Else -> Just Move (Overwrite enabled)
+            
+            child_type = child_info.get_file_type()
+            dest_exists = child_dest.query_exists(cancellable)
+            
+            if child_type == Gio.FileType.DIRECTORY and dest_exists:
+                # Need to verify if dest IS actually a directory before merging
+                # If it's a file, we overwrite it with a directory? (Gio might fail here too)
+                # But let's assume standard merge logic.
+                child_dest_info = child_dest.query_info(
+                    "standard::type", Gio.FileQueryInfoFlags.NONE, cancellable
+                )
+                if child_dest_info.get_file_type() == Gio.FileType.DIRECTORY:
+                    # Both are directories: RECURSE
+                    self._recursive_move_merge(child_source, child_dest, cancellable)
+                    continue
+            
+            # Standard Move for this child
+            # If dest exists (file), OVERWRITE will replace it.
+            child_source.move(
+                child_dest,
+                Gio.FileCopyFlags.OVERWRITE,
+                cancellable,
+                self._progress_callback,
+                None
+            )
+        
+        # 3. After all children moved successfully, delete the empty source folder
+        # We use delete() because it should be empty now.
+        source.delete(cancellable)
     
     @Slot(str)
     def do_trash(self, path: str):

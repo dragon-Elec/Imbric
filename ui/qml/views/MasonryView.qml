@@ -192,60 +192,21 @@ Item {
                                     
                                     Component {
                                         id: renameComponent
-                                        TextArea { // Use TextArea or TextField
-                                            id: renameField
-                                            text: model.name
-                                            font.pixelSize: 12
+                                        Components.RenameField {
+                                            originalName: model.name
                                             
-                                            // Style to match native look
-                                            background: Rectangle {
-                                                color: activePalette.base
-                                                border.color: activePalette.highlight
-                                                border.width: 1
-                                                radius: 2
-                                            }
-                                            color: activePalette.text
-                                            selectedTextColor: activePalette.highlightedText
-                                            selectionColor: activePalette.highlight
-                                            
-                                            verticalAlignment: Text.AlignVCenter
-                                            horizontalAlignment: Text.AlignHCenter
-                                            
-                                            focus: true // Auto-focus when loaded
-                                            selectByMouse: true
-                                            
-                                            Component.onCompleted: {
-                                                forceActiveFocus()
-                                                // Select filename without extension
-                                                var name = text
-                                                var lastDot = name.lastIndexOf(".")
-                                                if (lastDot > 0) {
-                                                    select(0, lastDot)
-                                                } else {
-                                                    selectAll()
-                                                }
-                                            }
-                                            
-                                            Keys.onPressed: (event) => {
-                                                if (event.key === Qt.Key_Enter || event.key === Qt.Key_Return) {
-                                                    commit()
-                                                    event.accepted = true
-                                                } else if (event.key === Qt.Key_Escape) {
-                                                    root.pathBeingRenamed = ""
-                                                    rubberBandArea.forceActiveFocus()
-                                                    event.accepted = true
-                                                }
-                                            }
-                                            
-                                            function commit() {
-                                                if (text !== model.name) {
-                                                    appBridge.renameFile(model.path, text)
+                                            onCommit: (newName) => {
+                                                if (newName !== model.name) {
+                                                    appBridge.renameFile(model.path, newName)
                                                 }
                                                 root.pathBeingRenamed = ""
                                             }
                                             
-                                            // No onActiveFocusChanged - commit only via Enter, cancel via Escape
-                                            // This avoids QML focus system bugs with Loader
+                                            onCancel: {
+                                                root.pathBeingRenamed = ""
+                                                // Return focus to rubberBandArea (global handler)
+                                                rubberBandArea.forceActiveFocus()
+                                            }
                                         }
                                     }
                                 }

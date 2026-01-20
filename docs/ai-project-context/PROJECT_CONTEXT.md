@@ -61,6 +61,7 @@ Non-blocking file ops via QThread + Gio.Cancellable. Progress throttled 10Hz.
 - `_FileOperationWorker` (QThread):
   - `do_copy()`, `do_move()`, `do_trash()`, `do_rename()`, `do_create_folder()`
   - `_recursive_copy()` — manual folder recursion with progress
+  - `_recursive_move_merge()` — manual folder merge (fallback for Error 29 WOULD_MERGE)
   - `_progress_callback()` — throttled to 10Hz
 - **Signals:** `operationStarted`, `operationProgress(qint64)`, `operationCompleted(type, path, result)`, `operationError`
 
@@ -248,7 +249,7 @@ Main photo grid with N `ListView` columns.
 - **Input Model:** Hybrid — per-delegate `TapHandler`/`DragHandler` + global `MouseArea` for marquee
 - Binds to `ColumnSplitter.getModels()`
 - Signals to `AppBridge`: `showContextMenu`, `startDrag`, `handleDrop`
-- **Inline Rename:** `F2` triggers `Loader` (Text -> TextArea). Commit via Enter only. See [BUG-F2-Focus-Loss.md](BUG-F2-Focus-Loss.md)
+- **Inline Rename:** `F2` triggers `Loader` using reusable `RenameField.qml`.
 - **Properties:** `currentSelection` (exposed to Python), `pathBeingRenamed`
 
 ---
@@ -346,6 +347,7 @@ Dependencies flow **downwards** only.
 |:----------|:-----|:-----------|
 | `Gio.File.trash()` | MED | Uses Trash (recoverable) |
 | File Move/Copy | MED | ConflictDialog (Skip/Overwrite/Rename) |
+| Directory Merge | HIGH | `do_move` catches `WOULD_MERGE` -> Recursive Merge |
 | File Delete | HIGH | **Not implemented.** Trash only. |
 
 ### 3.2. Conflict Resolution
