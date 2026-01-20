@@ -453,7 +453,7 @@ Dependencies flow **downwards** only.
 | **New Folder + Auto-Select** | LOW | ✅ IMPLEMENTED |
 | Drag Cursor Feedback (+/→) | LOW | ✅ Qt handles automatically |
 | File Preview (Spacebar/Click) | LOW | ⏳ TODO |
-| Move directory over directory | MED | 🐛 OPEN |
+| Move directory over directory | MED | ✅ FIXED |
 | Symlink Thumbnail Icons | LOW | ⏳ TODO (Nautilus shows link overlay) |
 
 ### 6.3.1. Pending Tests (Next Session)
