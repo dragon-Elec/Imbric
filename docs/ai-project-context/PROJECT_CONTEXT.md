@@ -34,6 +34,32 @@
 
 ---
 
+## Development Approach: Stub-First / API-First
+
+> **What is a Stub?** A stub file contains the **complete structure** (classes, functions, docstrings, type hints) but **no implementation** (just `pass` or `raise NotImplementedError`). The API is defined, the "contract" is clear, but the logic is empty.
+
+**Why We Use This:**
+- **See all the pieces** — Every helper file exists in the codebase, even if not implemented yet
+- **One thing at a time** — Implement one file, test it thoroughly, mark as done, move on
+- **Self-documenting** — Docstrings explain what each function should do
+- **No surprises** — The interface is stable before implementation
+- **Isolation** — Each file does one thing and does it well
+
+**File Status Markers:**
+
+| Status | Meaning |
+|:-------|:--------|
+| `[STUB]` | Structure defined, no implementation yet (raises `NotImplementedError`) |
+| `[WIP]` | Implementation in progress, not fully tested |
+| `[DONE]` | Implemented, tested, battle-tested — don't touch unless broken |
+
+**Stub File Convention:**
+- Each stub has a docstring header: `"""[STUB] Description..."""`
+- All public methods raise `NotImplementedError("TODO: Implement")`
+- When fully implemented and tested, change to `"""[DONE] Description..."""`
+
+---
+
 ## Table of Contents
 
 1. [File Reference (All Modules)](#1-file-reference)
@@ -128,6 +154,54 @@ Hit-testing for Masonry layout selection.
 - `watch(path)` — start monitoring
 - `stop()` — cancel monitoring
 - **Signals:** `fileCreated`, `fileDeleted`, `fileChanged`, `fileRenamed`, `directoryChanged`
+
+---
+
+#### `core/undo_manager.py` — Undo/Redo Stack `[STUB]`
+Tracks file operations for undo/redo capability.
+
+- `push(operation)` — record operation after completion
+- `undo()` / `redo()` — reverse/replay last operation
+- `canUndo()` / `canRedo()` — check stack availability
+- **Signals:** `undoAvailable(bool)`, `redoAvailable(bool)`
+
+---
+
+#### `core/sorter.py` — File Sorting `[STUB]`
+Sorts file lists by name, date, size, or type.
+
+- `sort(files, key, ascending)` → sorted list
+- `setKey(SortKey)` / `setAscending(bool)`
+- `SortKey` enum: `NAME`, `DATE_MODIFIED`, `SIZE`, `TYPE`
+
+---
+
+#### `core/search.py` — File Search `[STUB]`
+Async file search with glob patterns.
+
+- `search(directory, pattern, recursive)` — async search
+- `filter(files, pattern)` → sync in-memory filter
+- **Signals:** `resultsFound(list)`, `searchFinished(count)`
+
+---
+
+#### `core/file_properties.py` — File Metadata `[STUB]`
+Reads detailed file properties (size, dates, permissions).
+
+- `get_properties(path)` → `FileInfo` dict
+- `format_size(bytes)` → "1.2 MB"
+- `is_symlink(path)`, `get_symlink_target(path)`
+
+---
+
+#### `core/shortcuts.py` — Keyboard Shortcuts `[STUB]`
+Centralized shortcut management with customization support.
+
+- `setup(window)` — create all shortcuts
+- `connect(action, handler)` — bind handler to action
+- `set(action, key_sequence)` — change binding
+- `ShortcutAction` enum: all standard file manager shortcuts
+- Default mappings: Ctrl+A (Select All), Backspace (Go Up), etc.
 
 ---
 
