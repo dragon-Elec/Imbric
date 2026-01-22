@@ -83,11 +83,12 @@ class FileScanner(QObject):
                 
                 name = info.get_name()
                 
-                # Construct FULL PATH
-                # Simply joining paths. (Gio paths strictly strings here)
-                # Ensure parent_path doesn't double slash if already ends with /
-                import os
-                full_path = os.path.join(parent_path, name)
+                # Construct FULL PATH using string concat (non-blocking)
+                # Gio paths are clean strings; avoid os.path.join in async
+                if parent_path.endswith('/'):
+                    full_path = parent_path + name
+                else:
+                    full_path = parent_path + '/' + name
                 
                 is_dir = info.get_file_type() == Gio.FileType.DIRECTORY
                 
