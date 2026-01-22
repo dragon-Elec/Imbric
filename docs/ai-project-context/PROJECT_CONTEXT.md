@@ -354,6 +354,21 @@ Visual rubber band rectangle.
 
 ---
 
+### 1.8. Reference: Dragonfly Helpers (`assets/dflynav-src/`)
+
+Legacy patterns for future adaptation. **Not active code.**
+
+| File | Pattern | Adapt For |
+|:-----|:--------|:----------|
+| `Df_Job.py` | Job queue + history | Operation log UI |
+| `Df_Find.py` | Threaded search | `search.py` stub |
+| `Df_Config.py` | QSettings persistence | Window state save |
+| `Df_Panel.py:559-636` | History stack | Back/Forward nav |
+
+See `usefulness.md` for full analysis.
+
+---
+
 ## 2. Architecture Overview
 
 ### 2.1. Component Hierarchy
