@@ -19,6 +19,7 @@
 - [ ] Keyboard Navigation (Arrow keys in grid)
 - [ ] EXIF/Metadata Panel
 - [ ] Symlink overlay icons
+- [ ] Column-Major layout option (Pinterest-style, post-alpha)
 
 ### Dragonfly Adaptations (post-bugfix)
 - [ ] Search impl (`Df_Find.py` → `search.py`)

@@ -42,26 +42,6 @@ Fix: Replaced with string concatenation in `_on_files_retrieved()`.
 
 ---
 
-## 🟠 Layout & Visual
-
-### BUG-003: `ColumnSplitter` Naive Round-Robin
-
-- **Severity:** MEDIUM (UX)
-- **Location:** `ui/models/column_splitter.py` → `_redistribute()`
-- **What:** Distributes `index % columns`. Sorting breaks visual order (A→Col1, B→Col2).
-- **Why:** Simple algorithm, didn't account for "fill-first" expectation.
-- **Impact:** Users expect sorted items to flow down columns, not across.
-- **Depends On:** `BUG-002` (scan perf affects perceived layout speed).
-- **Resolution Path:**
-  
-  1. Scan `sorter.py` stub for future integration points.
-  
-  2. Scan Nautilus/Finder behavior for expected layout.
-  
-  3. Options: Fill-first, Snake, Height-balanced.
-
----
-
 ## 🟡 Interaction & Responsiveness
 
 ### BUG-004: `AppBridge` Blocking Drag
