@@ -73,33 +73,67 @@ class ThumbnailRunnable(QRunnable):
         target_size = requested_size if requested_size.isValid() else QSize(128, 128)
         
         # --- Symlink Resolution ---
-        # Resolve symlinks to get the actual target path
         is_symlink = os.path.islink(file_path)
         resolved_path = os.path.realpath(file_path) if is_symlink else file_path
         
-        # Check if target exists (handles broken symlinks)
+        # --- 1. HANDLE BROKEN SYMLINKS ---
         if not os.path.exists(resolved_path):
-            # Broken symlink or missing file
-            img = self._get_themed_icon("emblem-symbolic-link" if is_symlink else "dialog-error", target_size)
+            # Broken Symlink: Base=Link Arrow, Emblem=Unavailable/X
+            # User wants to see it looks like a LINK first, then broken.
+            img = self._get_emblemed_icon(
+                "emblem-symbolic-link",  # Base: Symlink Arrow
+                "emblem-unreadable",     # Overlay: X (Error)
+                target_size
+            )
             self._response.set_image(img)
             return
-        
-        # Directories: Return folder icon
+
+        # --- 2. HANDLE DIRECTORIES ---
         if os.path.isdir(resolved_path):
-            img = self._get_themed_icon("folder", target_size)
+            base_icon = "folder"
+            # Check permissions (Locked Folder)
+            if not os.access(resolved_path, os.W_OK):
+                img = self._get_emblemed_icon(base_icon, "emblem-readonly", target_size)
+            else:
+                img = self._get_themed_icon(base_icon, target_size)
             self._response.set_image(img)
             return
         
-        # Check file extension (use RESOLVED path for correct extension)
+        # --- 3. HANDLE FILES (Images & Others) ---
         ext = os.path.splitext(resolved_path)[1].lower()
         
-        # Non-image files: Get MIME-based icon from desktop theme
+        # Special Case: Locked File (Non-Image)
+        # Verify read/write access. If read-only, we might want a lock emblem.
+        is_locked = not os.access(resolved_path, os.W_OK)
+        
+        # Non-image files: Get MIME-based icon [+ Lock if needed]
         if ext not in IMAGE_EXTENSIONS:
+            if is_locked:
+                # We need to get the MIME icon first, then composite. 
+                # _get_mime_icon returns QImage, so we can't easily pass it to _get_emblemed_icon (which takes str).
+                # Modification: We'll modify _get_emblemed_icon to accept QImage or handle this locally.
+                # For now, let's just stick to a simple lock on generic mime types if possible, 
+                # or we just rely on _get_mime_icon returning the base and we manually composite.
+                # Let's simple it: Just use _get_mime_icon for now, handling lock is complex for MIME types without retrieving name.
+                # ACTUALLY: Let's extract the mime icon name logic to a helper so we can reuse it.
+                
+                # For this iteration, let's prioritize the MIME icon. 
+                # If the user really wants the lock on MIME files, we'd need to refactor _get_mime_icon to return the name.
+                # Let's try to get the icon image, then overlay lock manually here? 
+                # No, let's keep it simple for this step and just fix Broken Link + Dir Lock.
+                pass 
+            
             img = self._get_mime_icon(resolved_path, target_size)
+            
+            # Post-process: Add Lock Emblem if needing
+            if is_locked:
+                img = self._overlay_emblem(img, "emblem-readonly", target_size)
+                
             self._response.set_image(img)
             return
         
-        # Try GNOME thumbnail cache (use RESOLVED path for URI)
+        # --- 4. HANDLE IMAGES ---
+        # Try GNOME thumbnail cache
         uri = "file://" + urllib.parse.quote(resolved_path)
         try:
             mtime = int(os.path.getmtime(resolved_path))
@@ -127,21 +161,24 @@ class ThumbnailRunnable(QRunnable):
                     factory.save_thumbnail(pixbuf, uri, mtime)
                     thumb_path = factory.lookup(uri, mtime)
             except Exception:
-                pass  # Silent fail, fallback to original
+                pass 
         
         # Load from thumbnail or original
         if thumb_path and os.path.exists(thumb_path):
             img = QImage(thumb_path)
         else:
-            # Fallback: Load original image
-            img = QImage(file_path)
+            img = QImage(resolved_path) # Fallback to original
         
         if img.isNull():
             img = self._get_themed_icon("image-x-generic", target_size)
         elif requested_size.isValid():
             from PySide6.QtCore import Qt
             img = img.scaled(requested_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        
+            
+        # Add Lock Emblem if needed (even on thumbnails!)
+        if is_locked:
+            img = self._overlay_emblem(img, "emblem-readonly", target_size)
+            
         self._response.set_image(img)
     
     def _get_themed_icon(self, icon_name: str, target_size: QSize) -> QImage:
@@ -181,6 +218,41 @@ class ThumbnailRunnable(QRunnable):
         
         # Fallback to generic file icon
         return self._get_themed_icon("application-x-generic", target_size)
+    def _get_emblemed_icon(self, base_icon_name: str, emblem_icon_name: str, target_size: QSize) -> QImage:
+        """
+        Get an icon with an emblem overlay.
+        Wrapper helper that loads base icon and calls _overlay_emblem.
+        """
+        base_img = self._get_themed_icon(base_icon_name, target_size)
+        return self._overlay_emblem(base_img, emblem_icon_name, target_size)
+    
+    def _overlay_emblem(self, base_image: QImage, emblem_name: str, target_size: QSize) -> QImage:
+        """
+        Overlay an emblem onto an existing QImage.
+        """
+        from PySide6.QtGui import QPainter, QIcon
+        from PySide6.QtCore import Qt
+        
+        # Create a copy to draw on
+        result = base_image.copy()
+        if result.isNull():
+             return result
+
+        # Get emblem icon
+        emblem_size = QSize(target_size.width() // 2, target_size.height() // 2)
+        emblem_icon = QIcon.fromTheme(emblem_name)
+        
+        if not emblem_icon.isNull():
+            emblem_pixmap = emblem_icon.pixmap(emblem_size)
+            
+            # Composite (Bottom-Right)
+            painter = QPainter(result)
+            emblem_x = target_size.width() - emblem_size.width()
+            emblem_y = target_size.height() - emblem_size.height()
+            painter.drawPixmap(emblem_x, emblem_y, emblem_pixmap)
+            painter.end()
+            
+        return result
 
 
 class ThumbnailProvider(QQuickAsyncImageProvider):
