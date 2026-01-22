@@ -52,12 +52,46 @@
 
 ## Technical Debt
 
-| Item | Note |
-|:-----|:-----|
 | Icon theming | Non-image items need proper icons |
 | Error fallbacks | Scanner/Provider graceful degradation |
 | Unit tests | None yet |
 | Aspect cache | Read dimensions before layout |
+
+---
+
+## 🏗️ Backend Core Overhaul (From Audit)
+
+### Active GitHub Issues (v0.5.0)
+- [ ] **Sorting Logic** (#6) - Implement `core/sorter.py`
+- [ ] **Async Thumbnails** (#7) - Non-blocking generation
+- [ ] **UI Error Feedback** (#8) - Visual alerts for failures (partial skips)
+
+### Critical Infrastructure
+- [ ] **Job System Refactor** (`file_operations.py`)
+    - [ ] Create `Job` class (UUID, progress tracking)
+    - [ ] Create `JobManager` (Queueing, Global Progress)
+    - [ ] Convert `FileOperations` to use Jobs (enables batching)
+- [ ] **Trash Management**
+    - [ ] Implement `restoreFile()` logic
+    - [ ] Implement `emptyTrash()`
+
+### Missing Core Stubs
+- [ ] `core/file_properties.py` (Properties Dialog backend)
+- [ ] `core/search.py` (Async recursive search)
+- [ ] `core/shortcuts.py` (Centralized keybinds)
+- [ ] `core/undo_manager.py` (Depends on Job System)
+
+---
+
+## 📉 Low Priority / Nice-to-Have
+
+- [ ] **Templates Support** (`~/Templates` → Context Menu)
+- [ ] Archive Management (Zip/Tar support)
+
+## 🚫 Out of Scope
+
+- [ ] Drive Management (Mounting/Unmounting/Formatting) - *Use GNOME Disks*
+
 
 ---
 

@@ -116,3 +116,24 @@ Add `getSortedItems()` method to `ColumnSplitter` that returns `self._sorter.sor
 - BUG-001: FileOps Silent Fail
 - BUG-002: FileScanner Sync I/O in Async Loop
 - BUG-005: Dir-Over-Dir Paste (verified working, no code change needed)
+### BUG-008: Symlink Thumbnail Failure
+
+Files: [thumbnail_provider.py](file:///home/ray/Desktop/files/wrk/Imbric/core/image_providers/thumbnail_provider.py)  
+Severity: LOW | Status: OPEN
+
+Symptom:
+Log error: `QML QQuickImage: Failed to get image from provider: image://thumbnail//.../Link to data copy`.
+Thumbnails for symlinks (or copies of symlinks) fail to generate or load, showing a broken image or empty space.
+
+Root Cause Analysis:
+1. `ThumbnailProvider` may not be dereferencing symlinks correctly before passing path to `common_factory.lookup/save`.
+2. GNOME Thumbnail Factory expects a canonical URI/path.
+3. If the symlink points to a directory or a non-image, the provider might be trying to thumb the link itself instead of the target owner or falling back to a mime-type icon.
+
+Investigation Required:
+- Check `thumbnail_provider.py` requestImage method.
+- Does it use `os.path.realpath(path)`?
+- Verify if `GnomeDesktop.DesktopThumbnailFactory` handles symlinks automatically or needs manual dereference.
+
+Proposed Fix:
+Ensure `path` is resolved to absolute target path before requesting thumbnail, OR handle `GLib.Error` gracefully and fallback to generic icon.
