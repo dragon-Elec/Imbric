@@ -46,5 +46,4 @@ Thumbs.db
 # Project specific
 *.log
 .cache/
-assets/dflynav-src/
 assets/template/
