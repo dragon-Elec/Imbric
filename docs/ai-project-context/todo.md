@@ -21,6 +21,14 @@
 - [ ] Symlink overlay icons
 - [ ] Column-Major layout option (Pinterest-style, post-alpha)
 
+### Conflict Dialog Improvements (post-alpha)
+- [ ] Replace "Overwrite" with "Merge Folders" + "Replace Folder" options
+- [ ] Show file count preview ("Folder contains N files, M will conflict")
+- [ ] Add "Keep Both" option (auto-rename to "A (1)")
+- [ ] Clarify "Apply to all" checkbox behavior (folders vs files)
+- [ ] Show file-level conflicts for transparency
+- [ ] Add expandable "Show Details" for granular control
+
 ### Dragonfly Adaptations (post-bugfix)
 - [ ] Search impl (`Df_Find.py` → `search.py`)
 - [ ] Job history UI (`Df_Job.py` patterns)
