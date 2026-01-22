@@ -116,10 +116,10 @@ Add `getSortedItems()` method to `ColumnSplitter` that returns `self._sorter.sor
 - BUG-001: FileOps Silent Fail
 - BUG-002: FileScanner Sync I/O in Async Loop
 - BUG-005: Dir-Over-Dir Paste (verified working, no code change needed)
-### BUG-008: Symlink Thumbnail Failure
+### ✅ BUG-008: Symlink Thumbnail Failure
 
 Files: [thumbnail_provider.py](file:///home/ray/Desktop/files/wrk/Imbric/core/image_providers/thumbnail_provider.py)  
-Severity: LOW | Status: OPEN
+Severity: LOW | Status: FIXED (2026-01-23)
 
 Symptom:
 Log error: `QML QQuickImage: Failed to get image from provider: image://thumbnail//.../Link to data copy`.

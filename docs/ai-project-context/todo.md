@@ -62,8 +62,8 @@
 ## 🏗️ Backend Core Overhaul (From Audit)
 
 ### Active GitHub Issues (v0.5.0)
-- [ ] **Sorting Logic** (#6) - Implement `core/sorter.py`
-- [ ] **Async Thumbnails** (#7) - Non-blocking generation
+- [x] **Sorting Logic** (#6) - Implemented in `core/sorter.py`
+- [x] **Async Thumbnails** (#7) - Implemented via `QQuickAsyncImageProvider`
 - [ ] **UI Error Feedback** (#8) - Visual alerts for failures (partial skips)
 
 ### Critical Infrastructure
