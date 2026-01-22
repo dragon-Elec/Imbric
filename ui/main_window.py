@@ -54,7 +54,7 @@ class MainWindow(QMainWindow):
         # Path Bar
         self.path_edit = QLineEdit()
         self.path_edit.setObjectName("PathBar")
-        self.path_edit.returnPressed.connect(lambda: self.navigate_to(self.path_edit.text()))
+        self.path_edit.returnPressed.connect(self._on_path_bar_submit)
         self.toolbar.addWidget(self.path_edit)
         
         # --- Standard Actions (Global Shortcuts) ---
@@ -216,6 +216,44 @@ class MainWindow(QMainWindow):
             parent = os.path.dirname(tab.current_path)
             if parent and os.path.exists(parent):
                 self.navigate_to(parent)
+
+    def _on_path_bar_submit(self):
+        """Handle Enter press in path bar with error feedback."""
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QToolTip
+        from PySide6.QtGui import QCursor
+        
+        path = self.path_edit.text().strip()
+        previous_path = self.current_path
+        
+        if not path:
+            return
+            
+        if os.path.exists(path) and os.path.isdir(path):
+            # Valid directory - navigate
+            self.navigate_to(path)
+        else:
+            # Invalid path - show error feedback
+            error_msg = "Path does not exist" if not os.path.exists(path) else "Not a directory"
+            
+            # Show tooltip near path bar
+            QToolTip.showText(
+                self.path_edit.mapToGlobal(self.path_edit.rect().bottomLeft()),
+                f"⚠ {error_msg}: {path}",
+                self.path_edit,
+                self.path_edit.rect(),
+                2000  # 2 second timeout
+            )
+            
+            # Visual feedback - red border
+            self.path_edit.setStyleSheet("QLineEdit { border: 2px solid #d32f2f; }")
+            
+            # Reset after delay
+            def reset_style():
+                self.path_edit.setStyleSheet("")
+                self.path_edit.setText(previous_path)
+            
+            QTimer.singleShot(1500, reset_style)
 
     def _on_sidebar_clicked(self, index):
         path = self.fs_model.filePath(index)
