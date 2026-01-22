@@ -42,39 +42,14 @@ Fix: Replaced with string concatenation in `_on_files_retrieved()`.
 
 ---
 
-## 🟡 Interaction & Responsiveness
-
-### BUG-004: `AppBridge` Blocking Drag
-
-- **Severity:** MEDIUM (Responsiveness)
-- **Location:** `ui/models/app_bridge.py` → `startDrag()`
-- **What:** `drag.exec()` blocks main thread. Icon pixmap generated sync.
-- **Why:** Standard Qt DnD pattern; pixmap generation overlooked.
-- **Impact:** UI freezes during drag until drop completes.
-- **Depends On:** None.
-- **Resolution Path:**
-  
-  1. Scan Qt docs for async drag patterns.
-  
-  2. Pre-cache drag pixmap on selection change.
-  
-  3. Consider `QTimer.singleShot(0, drag.exec)` deferral.
+## ✅ Verified Working (No Code Change Needed)
 
 ### BUG-005: Dir-Over-Dir Paste Failure
 
-- **Severity:** MEDIUM (Data Safety)
-- **Location:** `core/file_operations.py` → `do_move()`
-- **What:** Pasting directory over existing same-name directory may fail silently.
-- **Why:** `WOULD_MERGE` error handler exists but may not cover all cases.
-- **Impact:** User expects merge dialog; gets error or nothing.
-- **Depends On:** `BUG-001` (error aggregation needed for proper reporting).
-- **Resolution Path:**
-  
-  1. Reproduce: Create `A/x.txt`, `B/A/y.txt`, cut A from root, paste into B.
-  
-  2. Scan `_recursive_move_merge()` for edge cases.
-  
-  3. Scan `ConflictResolver` for missing "Merge" vs "Replace" option.
+[file_operations.py](file:///home/ray/Desktop/files/wrk/Imbric/core/file_operations.py) | MEDIUM | Verified 2026-01-22
+Was: Concern that pasting directory over existing directory may fail silently.
+Status: **Already working correctly** - `_recursive_move_merge()` properly handles WOULD_MERGE errors.
+Note: Dialog shows "Overwrite" button which is confusing for folders. Future enhancement: Add explicit "Merge folders" option.
 
 ---
 
@@ -103,3 +78,4 @@ Fix: Replaced with string concatenation in `_on_files_retrieved()`.
 
 - BUG-001: FileOps Silent Fail
 - BUG-002: FileScanner Sync I/O in Async Loop
+- BUG-005: Dir-Over-Dir Paste (verified working, no code change needed)
