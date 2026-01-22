@@ -53,6 +53,21 @@ Note: Dialog shows "Overwrite" button which is confusing for folders. Future enh
 
 ---
 
+## 💤 Dormant / Platform Specific
+
+### BUG-004: `AppBridge` Blocking Drag
+
+- **Severity:** MEDIUM (Windows Only)
+- **Location:** `ui/models/app_bridge.py` → `startDrag()`
+- **Status:** DORMANT (2026-01-22)
+- **What:** `drag.exec()` blocks event loop on Windows.
+- **Why:** Qt design behavior. On Linux/macOS, it does *not* block the event loop (per Qt 6.8 docs).
+- **Resolution Path:**
+  1. Ignore for Linux release.
+  2. If Windows build is prioritized later, investigate `QTimer` deferral or threaded approaches.
+
+---
+
 ## 🟢 Polish & Edge Cases
 
 ### BUG-006: F2 Inline Rename Focus Loss
