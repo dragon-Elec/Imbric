@@ -31,6 +31,7 @@ class _FileOperationWorker(QObject):
         self._cancellable = None
         self._current_path = ""
         self._last_progress_time = 0
+        self._skipped_files = []  # Accumulator for failed files in batch ops
     
     @Slot(str, str)
     def do_copy(self, source_path: str, dest_path: str):
@@ -43,8 +44,18 @@ class _FileOperationWorker(QObject):
         dest = Gio.File.new_for_path(dest_path)
         
         try:
+            self._skipped_files = []  # Reset for this operation
             self._recursive_copy(source, dest, self._cancellable)
-            self.finished.emit("copy", source_path, True, dest_path)
+            
+            # Report result with skipped count
+            if self._skipped_files:
+                skipped_count = len(self._skipped_files)
+                print(f"[FILE_OPS] copy PARTIAL: {skipped_count} files skipped")
+                for sf in self._skipped_files[:5]:  # Log first 5
+                    print(f"  - {sf}")
+                self.finished.emit("copy", source_path, True, f"{dest_path}|PARTIAL:{skipped_count}")
+            else:
+                self.finished.emit("copy", source_path, True, dest_path)
         except GLib.Error as e:
             msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
             print(f"[FILE_OPS] copy FAILED: {msg}")
@@ -76,19 +87,32 @@ class _FileOperationWorker(QObject):
                 child_source = source.get_child(child_name)
                 child_dest = dest.get_child(child_name)
                 
-                # Recurse
-                QThread.msleep(1) # Yield to main thread (prevent GUI freeze)
-                self._recursive_copy(child_source, child_dest, cancellable)
+                # Recurse with error handling per-child
+                QThread.msleep(1)  # Yield to main thread (prevent GUI freeze)
+                try:
+                    self._recursive_copy(child_source, child_dest, cancellable)
+                except GLib.Error as e:
+                    if e.code == Gio.IOErrorEnum.CANCELLED:
+                        raise  # Propagate cancellation
+                    # Log and continue
+                    print(f"[FILE_OPS] SKIP copy child: {child_name} - {e}")
+                    self._skipped_files.append(child_source.get_path())
                 
         else:
             # Regular file copy
-            source.copy(
-                dest,
-                Gio.FileCopyFlags.OVERWRITE,
-                cancellable,
-                self._progress_callback,
-                None
-            )
+            try:
+                source.copy(
+                    dest,
+                    Gio.FileCopyFlags.OVERWRITE,
+                    cancellable,
+                    self._progress_callback,
+                    None
+                )
+            except GLib.Error as e:
+                if e.code == Gio.IOErrorEnum.CANCELLED:
+                    raise  # Propagate cancellation
+                print(f"[FILE_OPS] SKIP copy file: {source.get_path()} - {e}")
+                self._skipped_files.append(source.get_path())
     
     @Slot(str, str)
     def do_move(self, source_path: str, dest_path: str):
@@ -116,8 +140,16 @@ class _FileOperationWorker(QObject):
             if e.code == Gio.IOErrorEnum.WOULD_MERGE or e.code == 29:
                 print(f"[FILE_OPS] move WOULD_MERGE: Falling back to recursive merge")
                 try:
+                    self._skipped_files = []  # Reset for merge operation
                     self._recursive_move_merge(source, dest, self._cancellable)
-                    self.finished.emit("move", source_path, True, dest_path)
+                    
+                    # Report result with skipped count
+                    if self._skipped_files:
+                        skipped_count = len(self._skipped_files)
+                        print(f"[FILE_OPS] move merge PARTIAL: {skipped_count} files skipped")
+                        self.finished.emit("move", source_path, True, f"{dest_path}|PARTIAL:{skipped_count}")
+                    else:
+                        self.finished.emit("move", source_path, True, dest_path)
                 except GLib.Error as merge_e:
                     msg = "Cancelled" if merge_e.code == Gio.IOErrorEnum.CANCELLED else str(merge_e)
                     print(f"[FILE_OPS] move merge FAILED: {msg}")
@@ -157,25 +189,34 @@ class _FileOperationWorker(QObject):
             
             if child_type == Gio.FileType.DIRECTORY and dest_exists:
                 # Need to verify if dest IS actually a directory before merging
-                # If it's a file, we overwrite it with a directory? (Gio might fail here too)
-                # But let's assume standard merge logic.
                 child_dest_info = child_dest.query_info(
                     "standard::type", Gio.FileQueryInfoFlags.NONE, cancellable
                 )
                 if child_dest_info.get_file_type() == Gio.FileType.DIRECTORY:
-                    # Both are directories: RECURSE
-                    self._recursive_move_merge(child_source, child_dest, cancellable)
+                    # Both are directories: RECURSE with error handling
+                    try:
+                        self._recursive_move_merge(child_source, child_dest, cancellable)
+                    except GLib.Error as e:
+                        if e.code == Gio.IOErrorEnum.CANCELLED:
+                            raise
+                        print(f"[FILE_OPS] SKIP move merge child: {child_name} - {e}")
+                        self._skipped_files.append(child_source.get_path())
                     continue
             
-            # Standard Move for this child
-            # If dest exists (file), OVERWRITE will replace it.
-            child_source.move(
-                child_dest,
-                Gio.FileCopyFlags.OVERWRITE,
-                cancellable,
-                self._progress_callback,
-                None
-            )
+            # Standard Move for this child with error handling
+            try:
+                child_source.move(
+                    child_dest,
+                    Gio.FileCopyFlags.OVERWRITE,
+                    cancellable,
+                    self._progress_callback,
+                    None
+                )
+            except GLib.Error as e:
+                if e.code == Gio.IOErrorEnum.CANCELLED:
+                    raise
+                print(f"[FILE_OPS] SKIP move child: {child_name} - {e}")
+                self._skipped_files.append(child_source.get_path())
         
         # 3. After all children moved successfully, delete the empty source folder
         # We use delete() because it should be empty now.
