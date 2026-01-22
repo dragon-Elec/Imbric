@@ -44,6 +44,7 @@ class BrowserTab(QWidget):
         # Connect scanner to splitter
         self.scanner.filesFound.connect(self.splitter.appendFiles)
         self.scanner.scanFinished.connect(self._on_scan_finished)
+        self.scanner.fileAttributeUpdated.connect(self.splitter.updateItem)
         
         # Layout
         layout = QVBoxLayout(self)

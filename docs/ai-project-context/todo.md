@@ -7,9 +7,22 @@
 
 ## Active
 
-- [ ] Sorting logic (`sorter.py` stub → impl)
+- [x] Sorting logic (`sorter.py` — implemented with natural sort, folders-first)
+- [ ] Sorting UI — Add sort options to right-click background menu
+- [ ] Fix BUG-007: Rubberband selection ignores sort order
 - [ ] Async thumbnail generation (background thread)
 - [ ] UI Error Feedback — `ProgressOverlay` show `PARTIAL:N` skipped files
+
+---
+
+## Refactor: Status Bar + Folder Selection
+
+**Goal:** When selecting a folder, show its child count in status bar (Nautilus-style).
+
+- [ ] Refactor `StatusBar.updateSelection` to accept item metadata (not just paths)
+- [ ] When a single folder is selected, display: `"'FolderName' selected (containing N items)"`
+- [ ] Connect `scanner.fileAttributeUpdated` to update status bar when count arrives
+- [ ] Backend (`count_worker.py`) is already done — just needs UI wiring
 
 ---
 
@@ -45,6 +58,17 @@
 | Error fallbacks | Scanner/Provider graceful degradation |
 | Unit tests | None yet |
 | Aspect cache | Read dimensions before layout |
+
+---
+
+## Missing File Manager Features
+
+- [ ] Back/Forward navigation buttons
+- [ ] Free space indicator in status bar
+- [ ] Tooltip on folder hover (show child count)
+- [ ] List view (alternative to grid)
+- [ ] Undo/Redo for file operations
+- [ ] Search within folder
 
 ---
 
