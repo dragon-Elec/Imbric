@@ -2,6 +2,7 @@ from PySide6.QtCore import QObject, Signal, Property, Slot, QUrl, QMimeData, Qt
 from PySide6.QtWidgets import QMenu
 from PySide6.QtGui import QCursor, QIcon, QDrag
 from ui.dialogs.conflict_dialog import ConflictResolver, ConflictAction
+from core.search_worker import SearchWorker
 import os
 
 class AppBridge(QObject):
@@ -10,12 +11,23 @@ class AppBridge(QObject):
     renameRequested = Signal(str)
     cutPathsChanged = Signal()  # Emitted when clipboard cut state changes
     
+    # Search signals
+    searchResultsFound = Signal(list)   # Batch of paths
+    searchFinished = Signal(int)         # Total count
+    searchError = Signal(str)            # Error message
+    
     def __init__(self, main_window):
         super().__init__()
         self.mw = main_window
         self._target_cell_width = 75
         self._pending_select_paths = []  # Paths to select after next directory refresh
         self._pending_rename_path = None  # Path to trigger rename after createFolder completes
+        
+        # Initialize search worker
+        self._search_worker = SearchWorker(self)
+        self._search_worker.resultsFound.connect(self.searchResultsFound)
+        self._search_worker.searchFinished.connect(self.searchFinished)
+        self._search_worker.searchError.connect(self.searchError)
         
         # Connect to clipboard changes
         self.mw.clipboard.clipboardChanged.connect(self._on_clipboard_changed)
@@ -328,4 +340,27 @@ class AppBridge(QObject):
         delta: positive = zoom out (more columns), negative = zoom in (fewer columns)
         """
         self.mw.change_zoom(delta)
+    
+    # -------------------------------------------------------------------------
+    # SEARCH API
+    # -------------------------------------------------------------------------
+    
+    @Slot(str, str, bool)
+    def startSearch(self, directory: str, pattern: str, recursive: bool = True):
+        """
+        Start a file search in the background.
+        
+        Results are emitted via searchResultsFound signal in batches.
+        """
+        self._search_worker.start_search(directory, pattern, recursive)
+    
+    @Slot()
+    def cancelSearch(self):
+        """Cancel the current search."""
+        self._search_worker.cancel()
+    
+    @Property(str, constant=True)
+    def searchEngineName(self) -> str:
+        """Returns the name of the current search engine (fd or scandir)."""
+        return self._search_worker.engine_name
 

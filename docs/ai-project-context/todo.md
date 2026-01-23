@@ -71,13 +71,41 @@
     - [ ] Create `Job` class (UUID, progress tracking)
     - [ ] Create `JobManager` (Queueing, Global Progress)
     - [ ] Convert `FileOperations` to use Jobs (enables batching)
+- [ ] **Parallelize File Ops (FLAW-003):** Refactor `FileOperations.py` to support multiple concurrent operations (e.g., copy + delete simultaneously).
+- [ ] **Address Bar:**
+- [x] **Search Engine Implementation (fd + Gio)**
+    - **Status:** Core backend implemented in `core/search.py` and `core/search_worker.py`.
+    - **Architecture:**
+        - **Primary Engine (`fd`/`fdfind`):** Rust-based, 10-50x faster than `os.walk`. Returns paths via subprocess streaming.
+        - **Fallback Engine (`os.scandir`):** Pure Python, works on Android/Termux when `fd` unavailable.
+        - **Metadata Hydration:** Gio `query_info()` fetches size/date/icon lazily (only for visible items).
+        - **Integration:** `AppBridge.startSearch()` / `cancelSearch()` slots wired to QML.
+    - **Remaining:**
+        - [ ] QML Search Bar UI component
+        - [ ] Progressive loading (Phase 1: names, Phase 2: metadata, Phase 3: thumbnails)
+- [ ] **RapidFuzz Fuzzy Matching (Backlog)**
+    - **What:** Fuzzy string matching library for "fzf-style" search (e.g., typing `"img prov"` finds `"ImageProvider.py"`).
+    - **Benefits:**
+        - Matches partial words, abbreviations, and typos.
+        - Returns results ranked by similarity score.
+        - Power-user feature loved by devs (VS Code Ctrl+P, fzf).
+    - **Cons:**
+        - Slower than exact match (must score all filenames).
+        - May return unexpected results (`cat` matches `concatenate.py`).
+        - Adds dependency (~2MB).
+    - **Implementation:**
+        1. Add `rapidfuzz` to `requirements.txt`.
+        2. Modify `SearchWorker`: if pattern has no wildcards (`*`, `?`), treat as fuzzy query.
+        3. Run `fd` with empty pattern → Get all filenames → `process.extract(query, names)` → Return top N.
+        4. Add toggle in UI: "Fuzzy mode" checkbox or auto-detect.
+    - **Priority:** LOW — Nice-to-have, not critical for photo browsing. Excellent for codebase navigation.
 - [ ] **Trash Management**
     - [ ] Implement `restoreFile()` logic
     - [ ] Implement `emptyTrash()`
 
 ### Missing Core Stubs
 - [ ] `core/file_properties.py` (Properties Dialog backend)
-- [ ] `core/search.py` (Async recursive search)
+- [x] `core/search.py` (Implemented: FdSearchEngine, ScandirSearchEngine, SearchWorker)
 - [ ] `core/shortcuts.py` (Centralized keybinds)
 - [ ] `core/undo_manager.py` (Depends on Job System)
 
@@ -118,3 +146,43 @@ def get_apps_for_file(path: str) -> list[dict]:
     apps = Gio.AppInfo.get_all_for_type(info.get_content_type())
     return [{"name": a.get_name(), "app_info": a} for a in apps]
 ```
+
+Benefits of the Current Approach
+Benefit	Explanation
+True Masonry Layout	Each item has its own height based on aspect ratio — visually appealing, like Pinterest.
+Reactive Zoom	Changing columnWidth instantly updates all items — no manual refresh needed.
+Simple Code	Everything is declarative QML — no complex imperative logic.
+Fallbacks	Handles loading states (placeholder), missing dimensions, and directories gracefully.
+Can We Offload Calculations to Python/Rust/Go?
+Short answer: Not easily, and it wouldn't help much.
+
+Here's why:
+
+Approach	Feasibility	Why It Doesn't Help
+Python	✅ Possible	Python is slower than QML's JavaScript. The binding recalculation happens in Qt's C++ engine; moving it to Python would add IPC overhead and be slower.
+Rust/Go	⚠️ Complex	Requires FFI bindings to Qt. Even if you compute heights in Rust, you still need to pass them back to QML and trigger a model update — same layout churn.
+C++ (QML Plugin)	✅ Best Option	You can write a C++ helper that computes all heights once and exposes them as a role in the model. But this is significant effort.
+The Real Fix: Avoid Per-Delegate Bindings
+The issue isn't where the calculation happens — it's how often it runs. The current approach recalculates imgHeight for every delegate on every resize.
+
+Cython vs PyO3 for QML Integration
+
+Aspect	Cython	PyO3 (Rust)
+Language	Python-like (.pyx)	Rust
+Learning Curve	Low (if you know Python)	Higher (new language)
+Speedup	10-100x for numeric code	100-1000x (true native)
+Qt Integration	❌ No native Qt bindings	⚠️ Possible via cxx-qt (experimental)
+PySide6 Compatibility	✅ Seamless (same runtime)	⚠️ Tricky (need to pass data across FFI)
+Build Complexity	Low (cythonize in setup.py)	Medium (need Rust toolchain + maturin)
+Memory Safety	Python's GC	Rust's ownership (no GC)
+
+Better Strategies:
+
+Pre-compute aspect ratios in Python:
+In FileScanner, calculate height / width once and store it as aspectRatio in the model.
+QML just does: height: model.aspectRatio * width (one multiplication, no conditionals).
+Debounce column width changes:
+Instead of instantly updating columnWidth, use a Timer to delay the update until resize stops.
+Use cacheBuffer on ListView:
+Qt's ListView can pre-render items outside the viewport (cacheBuffer: 100). This reduces pop-in but doesn't fix resize jitter.
+Recommendation: Pre-compute aspectRatio in Python (option 1). It's the cleanest fix with minimal code changes.
