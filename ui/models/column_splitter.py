@@ -143,6 +143,7 @@ class ColumnSplitter(QObject):
         self._column_count = 3
         self._column_models: list[SimpleListModel] = []
         self._all_items: list[dict] = []  # Master list (unsorted)
+        self._sorted_items: list[dict] = []  # Cached sorted list (for SelectionHelper)
         self._path_index: dict[str, tuple[int, int]] = {}  # path -> (col_idx, row_idx)
         
         # Sorter instance
@@ -203,17 +204,18 @@ class ColumnSplitter(QObject):
         
         This is the core 'Dealing' logic:
         1. Sort all items using current sort settings
-        2. Deal items round-robin into N columns
-        3. Update column models
+        2. Cache sorted list for SelectionHelper
+        3. Deal items round-robin into N columns
+        4. Update column models
         """
-        # Sort first
-        sorted_items = self._sorter.sort(self._all_items)
+        # Sort first and cache for SelectionHelper
+        self._sorted_items = self._sorter.sort(self._all_items)
         
         # Create N empty lists
         columns: list[list[dict]] = [[] for _ in range(self._column_count)]
         
         # Deal items round-robin
-        for i, item in enumerate(sorted_items):
+        for i, item in enumerate(self._sorted_items):
             col_idx = i % self._column_count
             columns[col_idx].append(item)
         
@@ -242,11 +244,14 @@ class ColumnSplitter(QObject):
     @Slot(result=list)
     def getAllItems(self) -> list[dict]:
         """
-        Get the master list of all items (unsorted).
+        Get the sorted list of all items.
         
+        Returns cached sorted list that matches the visual display order.
         Used by SelectionHelper for rubberband geometry calculation.
+        
+        Note: Previously returned unsorted _all_items, causing BUG-007.
         """
-        return self._all_items
+        return self._sorted_items
 
     @Slot(result="QObject*")
     def getSorter(self) -> Sorter:
