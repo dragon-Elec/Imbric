@@ -72,7 +72,7 @@ Path: 1. Monitor Qt updates. 2. Scan Qt forums for Loader solutions.
 ### BUG-007: Rubberband Selection Ignores Sort Order
 
 **Files:** [column_splitter.py](file:///home/ray/Desktop/files/wrk/Imbric/ui/models/column_splitter.py)  
-**Severity:** MEDIUM | **Status:** 🚧 IMPLEMENTED (pending verification)
+**Severity:** MEDIUM | **Status:** ✅ FIXED (2026-01-25)
 
 **Symptom:**  
 Rubberband (marquee) selection highlighted wrong items when sorting was enabled.
@@ -86,7 +86,7 @@ Rubberband (marquee) selection highlighted wrong items when sorting was enabled.
 - `getAllItems()` returns cached sorted list instead of raw unsorted list
 - Zero performance impact (sorting happens once during redistribute, not on every rubberband drag)
 
----
+- Zero performance impact (sorting happens once during redistribute, not on every rubberband drag)
 
 ## ✅ Resolved
 
