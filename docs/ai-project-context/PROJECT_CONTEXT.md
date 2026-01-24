@@ -13,7 +13,7 @@
 >
 > **Update Rules:** Session notes → Section 8 only. No changelog prose.
 
-> **Version:** 0.3-alpha | **Updated:** 2026-01-18 | **Status:** Active  
+> **Version:** 0.4-alpha | **Updated:** 2026-01-24 | **Status:** Active  
 > **Target:** Linux (GNOME) | **Stack:** Python 3.10+ / PySide6 / QML / Gio / GnomeDesktop
 
 ---
@@ -75,21 +75,29 @@
 
 ### 1.1. Core Layer (`core/`)
 
-#### `core/file_operations.py` — Async File I/O (315 lines)
-Non-blocking file ops via QThread + Gio.Cancellable. Progress throttled 10Hz.
-**Feature:** Return path/message in `operationCompleted` for post-op logic (e.g. selection).
+#### `core/file_operations.py` — Parallel File I/O (~575 lines) `[DONE]`
+True parallel file operations via QThreadPool + QRunnable. Each operation runs independently.
 
+- `FileJob` (dataclass): Per-operation tracking (UUID, status, cancellable)
+- `FileOperationSignals` (QObject): Thread-safe signal hub for runnables
+- Runnables (QRunnable subclasses):
+  - `CopyRunnable` — recursive copy with progress
+  - `MoveRunnable` — move with auto directory merge
+  - `TrashRunnable` — Gio trash integration
+  - `RenameRunnable` — display name change
+  - `CreateFolderRunnable` — mkdir
 - `FileOperations` (Controller):
-  - `copy(src, dest)`, `move(src, dest)`, `trash(path)`, `trashMultiple(paths)`
-  - `rename(path, name)` — smart rename flow handled by bridge
-  - `createFolder(path)`, `cancel()`, `shutdown()`
+  - `copy(src, dest)` → returns `job_id`
+  - `move(src, dest)`, `trash(path)`, `trashMultiple(paths)`
+  - `rename(path, name)`, `createFolder(path)`
+  - `cancel(job_id=None)` — cancel specific or all ops
+  - `activeJobCount()`, `jobStatus(job_id)` — status queries
   - `openWithDefaultApp(path)` — sync, launches via `Gio.AppInfo`
-- `_FileOperationWorker` (QThread):
-  - `do_copy()`, `do_move()`, `do_trash()`, `do_rename()`, `do_create_folder()`
-  - `_recursive_copy()` — manual folder recursion with progress
-  - `_recursive_move_merge()` — manual folder merge (fallback for Error 29 WOULD_MERGE)
-  - `_progress_callback()` — throttled to 10Hz
-- **Signals:** `operationStarted`, `operationProgress(qint64)`, `operationCompleted(type, path, result)`, `operationError`
+- **Signals:** 
+  - `operationStarted(job_id, op_type, path)`
+  - `operationProgress(job_id, current, total)`
+  - `operationCompleted(op_type, path, result)` — compat with old API
+  - `operationError(op_type, path, error)`
 
 ---
 
@@ -157,17 +165,18 @@ Hit-testing for Masonry layout selection.
 
 ---
 
-#### `core/undo_manager.py` — Undo/Redo Stack `[STUB]`
+#### `core/undo_manager.py` — Undo/Redo Stack `[DONE]`
 Tracks file operations for undo/redo capability.
 
 - `push(operation)` — record operation after completion
 - `undo()` / `redo()` — reverse/replay last operation
 - `canUndo()` / `canRedo()` — check stack availability
 - **Signals:** `undoAvailable(bool)`, `redoAvailable(bool)`
+- **Note:** Trash restore not yet implemented.
 
 ---
 
-#### `core/sorter.py` — File Sorting `[STUB]`
+#### `core/sorter.py` — File Sorting `[DONE]`
 Sorts file lists by name, date, size, or type.
 
 - `sort(files, key, ascending)` → sorted list
@@ -498,7 +507,62 @@ Dependencies flow **downwards** only.
 - **Split-Column Layout:** True Masonry slow in Python → Round-robin is instant
 - **"God Object" MouseArea:** Per-item handlers caused z-order conflicts
 - **GnomeDesktop Thumbnails:** Shared cache with Nautilus, faster
-- **QThread over asyncio:** Proper cancellation via `Gio.Cancellable` (verified)
+- **QThreadPool over asyncio:** Gio uses GLib's event loop (not asyncio). Python asyncio doesn't help.
+
+---
+
+## 5.1. Threading & Async Patterns
+
+> **Key Insight:** Gio's `*_async()` methods use GLib's event loop, NOT Python's asyncio.
+> Since Qt runs its own event loop, we use Qt threading primitives with synchronous Gio calls.
+
+### Pattern Matrix
+
+| Component | Pattern | Why |
+|:----------|:--------|:----|
+| `FileOperations` | QThreadPool + QRunnable | Parallel ops, per-job cancel |
+| `ThumbnailProvider` | QThreadPool + QRunnable | Many concurrent thumbs |
+| `ItemCountWorker` | QThreadPool + QRunnable | Background counting |
+| `FileScanner` | Gio.enumerate_children_async | True GLib async (works via callback) |
+| `SearchWorker` | QThread (subclass) | Long-running subprocess (`fd`) |
+
+### Why Not Python asyncio?
+
+```
+Qt Event Loop ──→ Active (QApplication.exec())
+GLib Event Loop ──→ NOT running (callbacks never fire)
+asyncio Event Loop ──→ NOT running (would need integration)
+```
+
+**Result:** Gio's `copy_async()`, `move_async()` callbacks never fire in a Qt app.
+
+### Why Not gbulb (GLib+asyncio bridge)?
+
+Possible but adds dependency. Current approach is simpler:
+- Use synchronous Gio in worker threads
+- Qt handles thread management via QThreadPool
+
+### Signal Emission from Threads
+
+Use `QMetaObject.invokeMethod()` with `Qt.QueuedConnection` for thread-safe signals:
+
+```python
+QMetaObject.invokeMethod(
+    self.signals, "finished",
+    Qt.QueuedConnection,
+    Q_ARG(str, job_id),
+    Q_ARG(bool, success)
+)
+```
+
+### Search Architecture (Planned)
+
+| Engine | Use Case | Status |
+|:-------|:---------|:-------|
+| `fd` (Rust) | Fast path discovery | ✅ Implemented |
+| `os.scandir` | Fallback (Termux) | ✅ Implemented |
+| `ripgrep` | Content search | 📋 Planned |
+| `rapidfuzz` | Fuzzy matching | 📋 Planned |
 - **Inline Rename in QML:** Used QML `TextInput` over Widget to maintain scroller sync and visual cohesion.
 - **Smart Rename Logic:** Windows-style numbering `(2)` for renames vs `(Copy)` for duplicates.
 

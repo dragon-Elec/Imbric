@@ -7,6 +7,35 @@
 
 ## Active
 
+### 🚀 Android Device Integration (Experimental Alpha v0.6.0)
+
+**Goal:** MTP device support via `android-file-transfer-linux` Python bindings.
+
+- [ ] **Phase 1: Foundation** (Read-only device browsing)
+  - [ ] Install & verify `android-file-transfer-linux` with Python bindings
+  - [ ] Test thumbnail support: `ObjectInfo.ThumbFormat`, `ThumbPixWidth`, `ThumbPixHeight`
+  - [ ] Create `core/mtp_bridge/` module structure
+  - [ ] Implement `MTPDeviceManager` (device detection)
+  - [ ] Implement `MTPScanner` (file listing compatible with `FileScanner` API)
+  - [ ] Implement `MTPThumbnailProvider` (`get_thumb()` integration)
+  - [ ] Modify `MainWindow` for `mtp://` path detection + scanner switching
+  - [ ] Modify `SidebarModel` to show "Devices" section
+  - [ ] Test with real Android device
+- [ ] **Phase 2: Photo Transfer** (v0.7.0)
+  - [ ] Implement `MTPFileOperations` (copy from device)
+  - [ ] Wire up clipboard operations for MTP → Local copy
+  - [ ] Progress tracking for large transfers
+- [ ] **Phase 3: Advanced** (Backlog)
+  - [ ] Bi-directional sync (upload to device)
+  - [ ] Auto-detection on device plug-in
+  - [ ] DCIM quick-import ("Import all photos" button)
+
+**Why This Is Unique:** First Linux photo manager with native Android device browsing in same UI as local files!
+
+---
+
+### General Maintenance
+
 - [x] Sorting logic (`sorter.py` — implemented with natural sort, folders-first)
 - [ ] Sorting UI — Add sort options to right-click background menu
 - [ ] Fix BUG-007: Rubberband selection ignores sort order
@@ -83,6 +112,22 @@
     - **Remaining:**
         - [ ] QML Search Bar UI component
         - [ ] Progressive loading (Phase 1: names, Phase 2: metadata, Phase 3: thumbnails)
+- [ ] **Search Backend Testing (Pending)**
+    - **What Was Tested:**
+        - ✅ Engine Detection: `get_search_engine()` correctly returns `FdSearchEngine` when `fd` is installed.
+        - ✅ FdSearchEngine: Streams results via `python3 -m core.search_worker ~ ".py$"`.
+        - ✅ Batched Emission: Confirmed batches of 50 items emitted.
+        - ✅ Import Chain: `AppBridge` imports `SearchWorker` successfully.
+    - **What Is NOT Tested:**
+        - [ ] **ScandirSearchEngine Fallback:** Simulate missing `fd` and verify `os.scandir` fallback works.
+        - [ ] **Cancel Mid-Search:** Start a long search, call `.cancel()`, verify it stops immediately.
+        - [ ] **Special Characters:** Filenames with spaces, unicode (e.g., `photo 日本.jpg`), and quotes.
+        - [ ] **Permission Errors:** Scanning `/root` or locked folders — should skip gracefully, not crash.
+        - [ ] **Empty Results:** Pattern that matches nothing — should emit `searchFinished(0)`.
+        - [ ] **Broken Symlinks:** Should not crash, should skip or report error.
+        - [ ] **Very Large Directories:** Performance test on `~` (100k+ files) — verify UI doesn't freeze.
+        - [ ] **Unit Tests:** Create `tests/test_search.py` with automated pytest cases.
+    - **Priority:** HIGH — Should be tested before shipping QML Search Bar.
 - [ ] **RapidFuzz Fuzzy Matching (Backlog)**
     - **What:** Fuzzy string matching library for "fzf-style" search (e.g., typing `"img prov"` finds `"ImageProvider.py"`).
     - **Benefits:**
@@ -99,6 +144,35 @@
         3. Run `fd` with empty pattern → Get all filenames → `process.extract(query, names)` → Return top N.
         4. Add toggle in UI: "Fuzzy mode" checkbox or auto-detect.
     - **Priority:** LOW — Nice-to-have, not critical for photo browsing. Excellent for codebase navigation.
+- [ ] **Content Search (ripgrep Integration) — Backlog**
+    - **What:** Search *inside* text files for content (like `grep`). Nemo has this feature.
+    - **Why ripgrep:**
+        - Rust-based, extremely fast (faster than `grep`).
+        - Available on Linux (`apt install ripgrep`) and Termux (`pkg install ripgrep`).
+        - Same "subprocess stdout" integration pattern as `fd`.
+    - **Python Options:**
+        1. **`python-ripgrep`** — PyPI binding, last updated 2021 (possibly stale).
+        2. **`ripgrepy`** — Newer wrapper, but still just subprocess under the hood.
+        3. **Direct subprocess** (Recommended) — Same approach as `fd`. Run `rg "query" /path`, parse stdout.
+    - **Implementation:**
+        1. Create `ContentSearchEngine` in `core/search.py`.
+        2. Wrap `rg` subprocess, fallback to `grep` if `rg` not found.
+        3. Add `content_search()` slot to `AppBridge`.
+        4. Add UI toggle: "Search in file contents" checkbox.
+    - **Priority:** LOW — Most file managers don't have this. Power-user feature.
+- [ ] **Date/Size Filter Support — Backlog**
+    - **What:** Filter search results by file size or modification date.
+    - **Why:** `fd` already supports this natively (`--size +10M`, `--changed-within 1week`).
+    - **Implementation:**
+        1. Extend `FdSearchEngine.search()` to accept `size_filter` and `date_filter` params.
+        2. Add UI controls (dropdown/input) in Search Bar for size/date constraints.
+    - **Priority:** LOW — Nice-to-have, easy to add later.
+- [ ] **Search Within Specific Folder — Backlog**
+    - **What:** Allow user to pick a starting folder for search (not always current path).
+    - **Implementation:**
+        1. Add folder picker button next to search bar.
+        2. Pass selected folder to `SearchWorker.start_search()`.
+    - **Priority:** LOW — Current behavior (search from current path) is reasonable default.
 - [ ] **Trash Management**
     - [ ] Implement `restoreFile()` logic
     - [ ] Implement `emptyTrash()`

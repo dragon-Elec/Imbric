@@ -137,3 +137,21 @@ Investigation Required:
 
 Proposed Fix:
 Ensure `path` is resolved to absolute target path before requesting thumbnail, OR handle `GLib.Error` gracefully and fallback to generic icon.
+### ✅ FLAW-003: Sequential File Operations (Single Worker Thread)
+
+Files: [file_operations.py](file:///home/ray/Desktop/files/wrk/Imbric/core/file_operations.py)  
+Severity: MEDIUM | Status: **FIXED (2026-01-24)**
+
+Symptom:
+Initiating a long-running operation (e.g., copying 10GB) blocks subsequent operations (e.g., trashing a file) until the first one completes.
+
+Root Cause:
+`FileOperations` used a single `QThread` and `_FileOperationWorker`. Signals were processed sequentially.
+
+Fix Applied:
+Refactored to QThreadPool + QRunnable pattern:
+- `CopyRunnable`, `MoveRunnable`, `TrashRunnable`, `RenameRunnable`, `CreateFolderRunnable`
+- Each operation runs as independent QRunnable with its own `Gio.Cancellable`
+- Added `FileJob` dataclass for per-operation tracking (UUID, status)
+- Per-operation cancellation supported via `cancel(job_id)`
+- Signals updated to include `job_id` for tracking
