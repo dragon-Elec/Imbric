@@ -286,28 +286,12 @@ class MoveRunnable(FileOperationRunnable):
 
 
 # =============================================================================
-# TRASH RUNNABLE
+# NOTE: Trash operations are handled by TrashManager (core/trash_manager.py)
+# FileOperations.trash() and restore_from_trash() delegate to TrashManager
+# when available, or use a simple inline implementation as fallback.
 # =============================================================================
-class TrashRunnable(FileOperationRunnable):
-    """Quick trash operation."""
-    
-    def run(self):
-        self.emit_started()
-        gfile = Gio.File.new_for_path(self.job.source)
-        
-        try:
-            gfile.trash(self.job.cancellable)
-            print(f"[FILE_OPS:{self.job.id[:8]}] trash SUCCESS: {self.job.source}")
-            self.emit_finished(True, "")
-        except GLib.Error as e:
-            msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
-            print(f"[FILE_OPS:{self.job.id[:8]}] trash FAILED: {msg}")
-            self.emit_finished(False, msg)
 
 
-# =============================================================================
-# RENAME RUNNABLE
-# =============================================================================
 class RenameRunnable(FileOperationRunnable):
     """Quick rename operation."""
     
@@ -345,6 +329,7 @@ class CreateFolderRunnable(FileOperationRunnable):
             self.emit_finished(False, msg)
 
 
+
 # =============================================================================
 # CONTROLLER (Main thread interface)
 # =============================================================================
@@ -372,8 +357,8 @@ class FileOperations(QObject):
         super().__init__(parent)
         
         # Undo Manager reference
-        self._undo_manager = None
-        
+        self._undo_manager = None  # Injected via setUndoManager()
+        self._trash_manager = None  # Injected via setTrashManager()
         # Thread pool (uses global instance for efficiency)
         self._pool = QThreadPool.globalInstance()
         
@@ -388,8 +373,12 @@ class FileOperations(QObject):
         self._signals.finished.connect(self._on_finished)
     
     def setUndoManager(self, undo_manager):
-        """Set the UndoManager to record operations to."""
+        """Inject an UndoManager to automatically record operations."""
         self._undo_manager = undo_manager
+    
+    def setTrashManager(self, trash_manager):
+        """Inject a TrashManager to delegate trash operations."""
+        self._trash_manager = trash_manager
     
     # -------------------------------------------------------------------------
     # INTERNAL SIGNAL HANDLERS
@@ -429,6 +418,10 @@ class FileOperations(QObject):
                 
                 if op_type == "createFolder":
                     op_record["dest"] = path
+                elif op_type == "restoreTrash":
+                    # For restore, 'path' is the original path, 'message' is also the original path
+                    op_record["src"] = path
+                    op_record["dest"] = "" # No specific 'dest' for restore, it goes back to 'src'
                 
                 self._undo_manager.push(op_record)
         else:
@@ -461,13 +454,23 @@ class FileOperations(QObject):
     
     @Slot(str, result=str)
     def trash(self, path: str) -> str:
-        """Move a file to trash asynchronously. Returns job_id."""
-        job = FileJob(
-            id=str(uuid4()),
-            op_type="trash",
-            source=path
-        )
-        return self._submit(job, TrashRunnable)
+        """
+        Move a file to trash asynchronously. Returns job_id.
+        Delegates to TrashManager if available.
+        """
+        if self._trash_manager:
+            return self._trash_manager.trash(path)
+        else:
+            # Inline fallback: direct Gio.File.trash()
+            # Note: This doesn't have the graceful error handling of TrashManager
+            gfile = Gio.File.new_for_path(path)
+            try:
+                gfile.trash(None)
+                self.operationCompleted.emit("trash", path, "")
+                return "inline-trash"
+            except GLib.Error as e:
+                self.operationError.emit("trash", path, str(e))
+                return "inline-trash-error"
     
     @Slot(list)
     def trashMultiple(self, paths: list):
@@ -504,6 +507,20 @@ class FileOperations(QObject):
         runnable = runnable_class(job, self._signals)
         self._pool.start(runnable)
         return job.id
+
+    @Slot(str, result=str)
+    def restore_from_trash(self, original_path_to_restore: str) -> str:
+        """
+        Attempts to find a file in trash:/// that matches the given original path
+        and restores it. Returns job_id.
+        Delegates to TrashManager if available.
+        """
+        if self._trash_manager:
+            return self._trash_manager.restore(original_path_to_restore)
+        else:
+            # No TrashManager available - cannot restore without it
+            self.operationError.emit("restoreTrash", original_path_to_restore, "TrashManager not configured")
+            return "no-trash-manager"
     
     # -------------------------------------------------------------------------
     # CANCELLATION

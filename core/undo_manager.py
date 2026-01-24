@@ -243,6 +243,17 @@ class UndoManager(QObject):
                 "type": "trash",
                 "src": src
             }
+
+        elif op_type == "trash":
+            # Reverse: Restore file from trash
+            # op: {type: trash, src: /path/file.txt}
+            # rev: {type: restore_trash, src: /path/file.txt}
+            # Note: We rely on FileOperations to find the item in trash:/// 
+            # that matches this original source path.
+            return {
+                "type": "restore_trash",
+                "src": src
+            }
             
         return None
     
@@ -263,6 +274,12 @@ class UndoManager(QObject):
             # If the operation fails, the redo stack will have a bad entry.
             # TODO: Implement proper async completion tracking.
             self._file_ops.rename(src, dest)
+            return True
+            
+        elif op_type == "restore_trash":
+            # Special operation to find and restore a file from trash
+            # src is the ORIGINAL path where it should go back to
+            self._file_ops.restore_from_trash(src)
             return True
             
         elif op_type == "move":
