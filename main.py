@@ -17,6 +17,7 @@ from ui.main_window import MainWindow
 def parse_args():
     parser = argparse.ArgumentParser(description="Imbric Photo Manager")
     parser.add_argument("path", nargs="?", help="Folder to open", default=None)
+    parser.add_argument("--profile", action="store_true", help="Enable cProfile performance profiling")
     return parser.parse_args()
 
 def main():
@@ -63,7 +64,25 @@ def main():
     window = MainWindow(start_path=args.path)
     window.show()
 
-    sys.exit(app.exec())
+    # Profiling Wrapper
+    if args.profile:
+        import cProfile
+        import pstats
+        print("Profiling enabled...")
+        profiler = cProfile.Profile()
+        profiler.enable()
+
+    ret_code = app.exec()
+
+    if args.profile:
+        profiler.disable()
+        print("\n--- Profiling Stats (Top 20 by Cumulative Time) ---")
+        stats = pstats.Stats(profiler).sort_stats("cumulative")
+        stats.print_stats(20)
+        stats.dump_stats("imbric.prof")
+        print(f"Profile data saved to '{os.path.abspath('imbric.prof')}'")
+
+    sys.exit(ret_code)
 
 if __name__ == "__main__":
     main()
