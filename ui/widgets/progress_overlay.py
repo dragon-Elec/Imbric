@@ -23,7 +23,7 @@ class ProgressOverlay(QFrame):
     Place at the bottom of your main window.
     """
     
-    cancelRequested = Signal()
+    cancelRequested = Signal(str)  # (job_id) for targeted cancel
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,11 +73,12 @@ class ProgressOverlay(QFrame):
         self.cancel_btn.setIcon(QIcon.fromTheme("process-stop"))
         self.cancel_btn.setToolTip("Cancel")
         self.cancel_btn.setFlat(True)
-        self.cancel_btn.clicked.connect(self.cancelRequested.emit)
+        self.cancel_btn.clicked.connect(self._on_cancel_clicked)
         layout.addWidget(self.cancel_btn)
         
         # State
         self._operation_type = ""
+        self._current_job_id = ""  # Track current job for cancel
         self._show_timer = QTimer(self)
         self._show_timer.setSingleShot(True)
         self._show_timer.timeout.connect(self._do_show)
@@ -87,9 +88,10 @@ class ProgressOverlay(QFrame):
         self.setVisible(False)
         self.setMaximumHeight(0)
     
-    @Slot(str, str)
-    def onOperationStarted(self, op_type: str, path: str):
+    @Slot(str, str, str)
+    def onOperationStarted(self, job_id: str, op_type: str, path: str):
         """Called when a file operation starts."""
+        self._current_job_id = job_id
         self._operation_type = op_type
         self._pending_show = True
         
@@ -117,8 +119,8 @@ class ProgressOverlay(QFrame):
         # Delay show by 300ms (balanced)
         self._show_timer.start(300)
     
-    @Slot(str, 'qint64', 'qint64')
-    def onOperationProgress(self, path: str, current: int, total: int):
+    @Slot(str, int, int)
+    def onOperationProgress(self, job_id: str, current: int, total: int):
         """Called during file operation progress."""
         if total > 0:
             percent = int((current / total) * 100)
@@ -162,3 +164,8 @@ class ProgressOverlay(QFrame):
         """Hide the overlay."""
         self.setVisible(False)
         self.setMaximumHeight(0)
+    
+    def _on_cancel_clicked(self):
+        """Handle cancel button click."""
+        if self._current_job_id:
+            self.cancelRequested.emit(self._current_job_id)
