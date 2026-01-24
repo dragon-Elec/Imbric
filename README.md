@@ -1,5 +1,5 @@
 ```
-        █ █▀▄▀█ █▄▄ █▀█ █ █▀▀s
+        █ █▀▄▀█ █▄▄ █▀█ █ █▀▀
         █ █░▀░█ █▄█ █▀▄ █ █▄▄ 
  Your Photos. Your Filesystem. Zero Lag.
 ```
@@ -30,6 +30,17 @@ Imbric treats them like **what they are**: visual objects with shape, color, and
 │                                                               │
 └───────────────────────────────────────────────────────────────┘
 ```
+
+<table>
+  <tr>
+    <td align="center"><strong>Traditional Grid (Nemo)</strong></td>
+    <td align="center"><strong>Imbric Masonry</strong></td>
+  </tr>
+  <tr>
+    <td><img src="assets/nemo.png" alt="Nemo" width="100%"/></td>
+    <td><img src="assets/imbric_pre_alpha.png" alt="Imbric Prealpha" width="100%"/></td>
+  </tr>
+</table>
 
 ## How It Works
 
