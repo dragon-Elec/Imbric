@@ -37,10 +37,18 @@
 ### General Maintenance
 
 - [x] Sorting logic (`sorter.py` — implemented with natural sort, folders-first)
+- [x] Parallel file operations (FLAW-003 fixed via QThreadPool)
 - [ ] Sorting UI — Add sort options to right-click background menu
 - [ ] Fix BUG-007: Rubberband selection ignores sort order
 - [ ] Async thumbnail generation (background thread)
 - [ ] UI Error Feedback — `ProgressOverlay` show `PARTIAL:N` skipped files
+
+### Pending Tests
+
+- [ ] **Drag & Drop**: Verify DnD works with refactored input handlers
+- [ ] **Rubberband Selection**: Verify marquee selection on empty space
+- [ ] **Right-Click Menus**: Context menu on items and background
+- [ ] **Parallel Ops Manual**: Copy large file + trash small file simultaneously
 
 ---
 
@@ -96,11 +104,11 @@
 - [ ] **UI Error Feedback** (#8) - Visual alerts for failures (partial skips)
 
 ### Critical Infrastructure
-- [ ] **Job System Refactor** (`file_operations.py`)
-    - [ ] Create `Job` class (UUID, progress tracking)
-    - [ ] Create `JobManager` (Queueing, Global Progress)
-    - [ ] Convert `FileOperations` to use Jobs (enables batching)
-- [ ] **Parallelize File Ops (FLAW-003):** Refactor `FileOperations.py` to support multiple concurrent operations (e.g., copy + delete simultaneously).
+- [x] **Job System Refactor** (`file_operations.py`) — Implemented via QThreadPool
+    - [x] Create `FileJob` dataclass (UUID, status, cancellable)
+    - [x] Per-operation Runnables (`CopyRunnable`, etc.)
+    - [x] `activeJobCount()`, `jobStatus()` queries
+- [x] **Parallelize File Ops (FLAW-003):** Refactored to QThreadPool + QRunnable pattern.
 - [ ] **Address Bar:**
 - [x] **Search Engine Implementation (fd + Gio)**
     - **Status:** Core backend implemented in `core/search.py` and `core/search_worker.py`.
@@ -181,7 +189,8 @@
 - [ ] `core/file_properties.py` (Properties Dialog backend)
 - [x] `core/search.py` (Implemented: FdSearchEngine, ScandirSearchEngine, SearchWorker)
 - [ ] `core/shortcuts.py` (Centralized keybinds)
-- [ ] `core/undo_manager.py` (Depends on Job System)
+- [x] `core/undo_manager.py` (Implemented: undo/redo logic, trash restore pending)
+- [/] `core/transaction_manager.py` (Stub created, not implemented)
 
 ---
 
@@ -203,8 +212,8 @@
 - [ ] Free space indicator in status bar
 - [ ] Tooltip on folder hover (show child count)
 - [ ] List view (alternative to grid)
-- [ ] Undo/Redo for file operations
-- [ ] Search within folder
+- [/] Undo/Redo for file operations (backend done, UI pending)
+- [x] Search within folder (backend done, UI pending)
 
 ---
 

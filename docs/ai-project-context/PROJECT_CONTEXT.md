@@ -398,7 +398,7 @@ See `usefulness.md` for full analysis.
    ↓
 [CORE] Backend (Shared)
    ├── I/O: GioBridge (Scanner, Volumes, Bookmarks)
-   ├── Ops: FileOperations (QThread + Gio.Cancellable)
+   ├── Ops: FileOperations (QThreadPool + QRunnable)
    └── Media: ThumbnailProvider (GnomeDesktop)
 ```
 
@@ -419,13 +419,15 @@ Dependencies flow **downwards** only.
 | ProgressOverlay | `ui/widgets/` | ✅ VERIFIED |
 | StatusBar | `ui/widgets/` | ✅ VERIFIED |
 | ConflictDialog | `ui/dialogs/` | 🚧 PENDING VERIFICATION |
-| FileOperations | `core/` | ✅ VERIFIED |
+| FileOperations | `core/` | ✅ VERIFIED (Parallel via QThreadPool) |
 | ClipboardManager | `core/` | ✅ VERIFIED |
 | FileScanner | `core/gio_bridge/` | ✅ VERIFIED |
 | ThumbnailProvider | `core/image_providers/` | ✅ VERIFIED |
+| SearchWorker | `core/search_worker.py` | ✅ IMPLEMENTED (UI pending) |
 | DetailView | `ui/qml/views/` | ⏳ TODO |
 | Inline Rename | `MasonryView.qml` / `AppBridge` | 🚧 PENDING VERIFICATION |
-| Undo/Redo | — | ⏳ TODO |
+| UndoManager | `core/undo_manager.py` | ✅ IMPLEMENTED (UI pending) |
+| TransactionManager | `core/transaction_manager.py` | ⏳ STUB |
 
 ---
 
@@ -594,27 +596,10 @@ QMetaObject.invokeMethod(
 - **Safety:** Explicit confirmation for overwrites, no silent failures.
 - **Architecture:** User is asking about splitting QML `delegate` code into separate files (concern about "God Object" files).
 
-### 6.3. Known Bugs & TODO
+### 6.3. Cross-Reference
 
-| Issue | Severity | Status |
-|:------|:---------|:-------|
-| **Shift-Click Range Selection** | MED | ✅ IMPLEMENTED |
-| **Ctrl-Click Multi-Select** | MED | ✅ IMPLEMENTED |
-| **Undo / Redo** | MED | ❌ MISSING |
-| **Inline Rename F2 Focus** | LOW | ⚠️ WONTFIX — See [BUG-F2-Focus-Loss.md](BUG-F2-Focus-Loss.md) |
-| **Cut Dimming + Paste Highlight** | LOW | ✅ IMPLEMENTED |
-| **New Folder + Auto-Select** | LOW | ✅ IMPLEMENTED |
-| Drag Cursor Feedback (+/→) | LOW | ✅ Qt handles automatically |
-| File Preview (Spacebar/Click) | LOW | ⏳ TODO |
-| Move directory over directory | MED | ✅ FIXED |
-| Symlink Thumbnail Icons | LOW | ⏳ TODO (Nautilus shows link overlay) |
-
-### 6.3.1. Pending Tests (Next Session)
-
-- [ ] **Drag & Drop**: Verify DnD still works after input refactor
-- [ ] **Rubberband Selection**: Verify marquee selection on empty space
-- [ ] **Right-Click Menus**: Context menu on items and background
-- [ ] **Dir-over-Dir Bug**: Reproduce and investigate
+> **Bugs:** See [BUGS_AND_FLAWS.md](./BUGS_AND_FLAWS.md)  
+> **TODOs:** See [todo.md](./todo.md)
 
 ### 6.4. Session History
 
