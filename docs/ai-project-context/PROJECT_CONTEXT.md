@@ -46,12 +46,9 @@
 - **Isolation** — Each file does one thing and does it well
 
 **File Status Markers:**
-
-| Status | Meaning |
-|:-------|:--------|
-| `[STUB]` | Structure defined, no implementation yet (raises `NotImplementedError`) |
-| `[WIP]` | Implementation in progress, not fully tested |
-| `[DONE]` | Implemented, tested, battle-tested — don't touch unless broken |
+- `[STUB]` — Structure defined, no implementation (raises `NotImplementedError`)
+- `[WIP]` — Implementation in progress, not fully tested
+- `[DONE]` — Implemented, tested, battle-tested — don't touch unless broken
 
 **Stub File Convention:**
 - Each stub has a docstring header: `"""[STUB] Description..."""`
@@ -172,7 +169,19 @@ Tracks file operations for undo/redo capability.
 - `undo()` / `redo()` — reverse/replay last operation
 - `canUndo()` / `canRedo()` — check stack availability
 - **Signals:** `undoAvailable(bool)`, `redoAvailable(bool)`
-- **Note:** Trash restore not yet implemented.
+- **Note:** Trash restore delegated to `TrashManager`.
+
+---
+
+#### `core/trash_manager.py` — Native Trash Handling `[DONE]`
+Freedeskop.org-compliant trash management using Gio/GVFS.
+
+- `trash(path)` — move file to trash, handles external drive errors gracefully
+- `restore(original_path)` — find file in `trash:///` by `trash::orig-path`, restore newest
+- `listTrash()` — enumerate all trash items with metadata
+- `emptyTrash()` — permanently delete all trash contents (recursive)
+- **Signals:** `operationFinished`, `itemListed`, `trashNotSupported`
+- **Data:** `TrashItem` dataclass (trash_name, display_name, original_path, deletion_date, size, is_dir)
 
 ---
 
@@ -407,27 +416,15 @@ Dependencies flow **downwards** only.
 - `ui/` → `ui/models/` → `core/`
 - No circular imports
 
-### 2.3. Component Status Map
+### 2.3. Component Status
 
-| Component | Location | Status |
-|:----------|:---------|:-------|
-| MainWindow | `ui/main_window.py` | ✅ VERIFIED |
-| TabManager | `ui/widgets/tab_manager.py` | ✅ VERIFIED |
-| MasonryView | `ui/qml/views/` | ✅ VERIFIED |
-| RubberBand | `ui/qml/components/` | ✅ VERIFIED |
-| SelectionModel | `ui/qml/components/` | ✅ VERIFIED |
-| ProgressOverlay | `ui/widgets/` | ✅ VERIFIED |
-| StatusBar | `ui/widgets/` | ✅ VERIFIED |
-| ConflictDialog | `ui/dialogs/` | 🚧 PENDING VERIFICATION |
-| FileOperations | `core/` | ✅ VERIFIED (Parallel via QThreadPool) |
-| ClipboardManager | `core/` | ✅ VERIFIED |
-| FileScanner | `core/gio_bridge/` | ✅ VERIFIED |
-| ThumbnailProvider | `core/image_providers/` | ✅ VERIFIED |
-| SearchWorker | `core/search_worker.py` | ✅ IMPLEMENTED (UI pending) |
-| DetailView | `ui/qml/views/` | ⏳ TODO |
-| Inline Rename | `MasonryView.qml` / `AppBridge` | 🚧 PENDING VERIFICATION |
-| UndoManager | `core/undo_manager.py` | ✅ IMPLEMENTED (UI pending) |
-| TransactionManager | `core/transaction_manager.py` | ⏳ STUB |
+- ✅ `MainWindow`, `TabManager`, `MasonryView`, `RubberBand`, `SelectionModel` — VERIFIED
+- ✅ `ProgressOverlay`, `StatusBar`, `ClipboardManager`, `FileScanner`, `ThumbnailProvider` — VERIFIED
+- ✅ `FileOperations` — VERIFIED (Parallel via QThreadPool)
+- ✅ `SearchWorker`, `UndoManager` — IMPLEMENTED (UI pending)
+- 🚧 `ConflictDialog`, `Inline Rename` — PENDING VERIFICATION
+- ⏳ `DetailView` — TODO
+- ⏳ `TransactionManager` — STUB
 
 ---
 
@@ -450,7 +447,7 @@ Dependencies flow **downwards** only.
 | Directory Merge | HIGH | `do_move` catches `WOULD_MERGE` -> Recursive Merge |
 | File Delete | HIGH | **Not implemented.** Trash only. |
 
-### 3.2. Conflict Resolution
+### 4.2. Conflict Resolution
 - **Where:** `ConflictResolver` in `conflict_dialog.py`
 - **When:** Before copy/move/rename if destination exists
 - **Options:** Skip / Overwrite / Rename / Cancel All + "Apply to all"
@@ -458,11 +455,11 @@ Dependencies flow **downwards** only.
   - Copy: `file (Copy).txt`
   - Rename: `file (2).txt`
 
-### 3.3. Error Handling
+### 4.3. Error Handling
 - Source missing → Skip with console log
 - Gio failure → `operationError` signal → shown in overlay
 
-### 3.4. Validation Gates
+### 4.4. Validation Gates
 
 | Gate | Purpose | Called Before |
 |:-----|:--------|:--------------|
@@ -471,7 +468,7 @@ Dependencies flow **downwards** only.
 | Permission check | Verify read/write access | Rename, Trash |
 | Destination Check | Prevent silent overwrite | Rename, Move, Copy |
 
-### 3.5. Privilege Escalation
+### 4.5. Privilege Escalation
 **None.** Imbric runs as user-level only. No sudo/pkexec.
 
 ---
@@ -601,21 +598,15 @@ QMetaObject.invokeMethod(
 > **Bugs:** See [BUGS_AND_FLAWS.md](./BUGS_AND_FLAWS.md)  
 > **TODOs:** See [todo.md](./todo.md)
 
-### 6.4. Session History
+### 6.4. Session History (Recent)
 
-| Date | Focus | Changes |
-|:-----|:------|:--------|
-| 2026-01-19 | **New Folder** | Fixed path, added auto-numbering, auto-select after creation |
-| 2026-01-19 | **Paste Highlight** | Pasted files now auto-selected after operation completes |
-| 2026-01-19 | **Multi-Select Fix** | Moved click handling to MouseArea (modifier visibility), refactored SelectionModel (Nautilus-style logic), fixed anchor reset on clear |
-| 2026-01-19 | **Quick Wins** | Cut Dimming (partial), Shift-Click (broken), F2 debug cleanup |
-| 2026-01-19 | **Input Refactor** | Per-delegate TapHandler/DragHandler, simplified marquee, F2 workaround (Enter-only) |
-| 2026-01-18 | **Inline Rename** | F2 Rename, Smart Conflict Logic, Async Verification, Context Menu Fixes |
-| 2026-01-18 | **Multi-Tab** | TabManager, Separation of Concerns, Crash Fixes |
-| 2026-01-18 | **Layout** | Fixed Masonry aspect ratio (square icons) |
-| 2026-01-18 | **I/O Logic** | Conflict dialog, shortcut/clipboard fixes |
-| 2026-01-17 | Async I/O | QThread file ops, ProgressOverlay |
-| 2026-01-17 | Interactions | Selection, DnD, Context Menu |
+- **2026-01-19** New Folder — Fixed path, auto-numbering, auto-select
+- **2026-01-19** Input Refactor — Per-delegate TapHandler/DragHandler, simplified marquee
+- **2026-01-18** Inline Rename — F2, Smart Conflict Logic, Context Menu Fixes
+- **2026-01-18** Multi-Tab — TabManager, Separation of Concerns, Crash Fixes
+- **2026-01-17** Async I/O — QThread file ops, ProgressOverlay
+
+> Older sessions archived. See git history for full changelog.
 
 ### 6.5. Session Retrospective (Lessons Learned)
 

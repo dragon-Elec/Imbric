@@ -39,7 +39,7 @@
 - [x] Sorting logic (`sorter.py` — implemented with natural sort, folders-first)
 - [x] Parallel file operations (FLAW-003 fixed via QThreadPool)
 - [ ] Sorting UI — Add sort options to right-click background menu
-- [ ] Fix BUG-007: Rubberband selection ignores sort order
+- [/] Fix BUG-007: Rubberband selection ignores sort order (implemented, pending test)
 - [ ] Async thumbnail generation (background thread)
 - [ ] UI Error Feedback — `ProgressOverlay` show `PARTIAL:N` skipped files
 
@@ -181,9 +181,18 @@
         1. Add folder picker button next to search bar.
         2. Pass selected folder to `SearchWorker.start_search()`.
     - **Priority:** LOW — Current behavior (search from current path) is reasonable default.
-- [ ] **Trash Management**
-    - [ ] Implement `restoreFile()` logic
-    - [ ] Implement `emptyTrash()`
+- [x] **Trash Management** (`core/trash_manager.py`)
+    - [x] Implement `trash()` with `NOT_SUPPORTED` / `PERMISSION_DENIED` graceful handling
+    - [x] Implement `restore()` (scan `trash:///`, match `trash::orig-path`, newest-first)
+    - [x] Implement `listTrash()` (enumerate with metadata)
+    - [x] Implement `emptyTrash()` (recursive delete)
+    - [x] `trashNotSupported` signal for UI fallback prompt
+- [ ] **Trash Management Testing**
+    - [x] Basic trash & restore (`tests/test_trash_behavior.py`)
+    - [x] Duplicate handling (restore newest by date)
+    - [ ] External drive trash (`.Trash-$UID` directory)
+    - [ ] Permission denied fallback prompt
+    - [ ] Empty trash performance (1000+ files)
 
 ### Missing Core Stubs
 - [ ] `core/file_properties.py` (Properties Dialog backend)
