@@ -132,9 +132,36 @@ class ProgressOverlay(QFrame):
     
     @Slot(str, str, str)
     def onOperationCompleted(self, op_type: str, path: str, result_data: str):
-        """Called when operation completes successfully."""
+        """Called when operation completes successfully (or partially)."""
         self._pending_show = False
         self._show_timer.stop()
+        
+        # Check for partial failure (e.g., "dest_path|PARTIAL:3")
+        if "|PARTIAL:" in result_data:
+            try:
+                # Parse count
+                parts = result_data.split("|PARTIAL:")
+                skipped_count = int(parts[1])
+                
+                # Show warning state
+                self.setVisible(True) # Ensure visible if it was pending
+                self.progress_bar.setVisible(False)
+                self.icon_label.setPixmap(QIcon.fromTheme("dialog-warning").pixmap(24, 24))
+                
+                self.title_label.setText(f"Done ({skipped_count} files skipped)")
+                self.title_label.setStyleSheet("font-weight: bold; color: #d03e3e;") # Red/Orange warning color
+                self.detail_label.setText("Check destination for missing files.")
+                
+                # Change Cancel button to Close
+                self.cancel_btn.setIcon(QIcon.fromTheme("window-close"))
+                self.cancel_btn.setToolTip("Dismiss")
+                self._current_job_id = "" # Clear job ID so cancel btn just closes
+                
+                # DO NOT auto-hide. User must dismiss.
+                return
+            except ValueError:
+                pass # Fallback to normal hide if parse fails
+        
         self._do_hide()
     
     @Slot(str, str, str)
@@ -166,6 +193,10 @@ class ProgressOverlay(QFrame):
         self.setMaximumHeight(0)
     
     def _on_cancel_clicked(self):
-        """Handle cancel button click."""
+        """Handle cancel/close button click."""
         if self._current_job_id:
+            # Active job: Cancel it
             self.cancelRequested.emit(self._current_job_id)
+        else:
+            # No active job (or finished with warning): Just close overlay
+            self._do_hide()
