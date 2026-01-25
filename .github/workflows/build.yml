@@ -131,9 +131,12 @@ jobs:
           chmod +x "${PKG_DIR}/usr/bin/${{ env.APP_NAME }}"
           
           # Create control file
+          # Remove 'v' prefix from version number for Debian
+          DEB_VERSION=$(echo "${{ env.APP_VERSION }}" | sed 's/^v//')
+          
           cat > "${PKG_DIR}/DEBIAN/control" << EOF
           Package: ${{ env.APP_NAME }}
-          Version: ${{ env.APP_VERSION }}
+          Version: ${DEB_VERSION}
           Section: graphics
           Priority: optional
           Architecture: amd64
