@@ -197,7 +197,7 @@ Sorts file lists by name, date, size, or type.
 #### `core/search.py` — File Search `[STUB]`
 Async file search with glob patterns.
 
-- `search(directory, pattern, recursive)` — async search
+- `search(directory, pattern, recursive)` — async search (migrating to `scandir-rs`)
 - `filter(files, pattern)` → sync in-memory filter
 - **Signals:** `resultsFound(list)`, `searchFinished(count)`
 
@@ -558,10 +558,16 @@ QMetaObject.invokeMethod(
 
 | Engine | Use Case | Status |
 |:-------|:---------|:-------|
-| `fd` (Rust) | Fast path discovery | ✅ Implemented |
+| `scandir-rs` (Rust/jwalk) | Fast path discovery | 📋 Planned (Replaces `fd`) |
 | `os.scandir` | Fallback (Termux) | ✅ Implemented |
-| `ripgrep` | Content search | 📋 Planned |
+| `python-ripgrep` | Content search | 📋 Planned (Wrapper around `rg`) |
 | `rapidfuzz` | Fuzzy matching | 📋 Planned |
+- **Decision:** Replace `fd` (subprocess) with `scandir-rs` (native bindings).
+  - **Why:** `scandir-rs` uses `jwalk` internally but exposes results as Python objects.
+  - **Benefit:** "Nautilus-like" search requires rich metadata (size, time) during the walk. `fd` requires parsing text output and separate `stat` calls (slow). `scandir-rs` provides this efficiently in-process.
+- **Regex Support:** `scandir-rs` handles fast traversal; Python's `re` module handles regex filtering on the returned objects.
+- **Content Search:** Dedicated `ripgrep` binding/binary for file content (too heavy for Python loop).
+
 - **Inline Rename in QML:** Used QML `TextInput` over Widget to maintain scroller sync and visual cohesion.
 - **Smart Rename Logic:** Windows-style numbering `(2)` for renames vs `(Copy)` for duplicates.
 

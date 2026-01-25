@@ -278,3 +278,23 @@ Instead of instantly updating columnWidth, use a Timer to delay the update until
 Use cacheBuffer on ListView:
 Qt's ListView can pre-render items outside the viewport (cacheBuffer: 100). This reduces pop-in but doesn't fix resize jitter.
 Recommendation: Pre-compute aspectRatio in Python (option 1). It's the cleanest fix with minimal code changes.
+
+Silent Partial Failure Fix
+Changes Implemented
+ui/widgets/progress_overlay.py
+Component	Change
+onOperationCompleted
+Added logic to parse `dest
+Visuals	Added Warning State: Red text, "dialog-warning" icon.
+Behavior	Auto-hide disabled when errors occur. Requires manual dismissal.
+Controls	Cancel button repurposes as "Dismiss" (Close) button in error state.
+Verification Steps (Manually)
+Preparation: Create a folder with one locked file (000 permissions) and one normal file.
+Action: Copy this folder to another location using Imbric.
+Observation:
+ Progress bar finishes.
+ Overlay remains visible (does not vanish).
+ Icon is a ⚠️ (Warning Triangle).
+ Text says: "Done (1 files skipped)" in red.
+ "Stop" button changes to a "Close" (X) button.
+Dismiss: Click the "X" button. The overlay should close.

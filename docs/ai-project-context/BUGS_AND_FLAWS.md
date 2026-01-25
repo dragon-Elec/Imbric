@@ -29,21 +29,26 @@
 ## 🔴 Backend Integrity
 
 ### ✅ BUG-001: FileOps Silent Fail
+[core/file_operations.py](file:///home/ray/Desktop/files/wrk/Imbric/core/file_operations.py) | CRITICAL | FIXED (2026-01-21)
+Was: Recursive ops aborted on 1st error, no aggregate reporting.
+Why: Exceptions halted execution immediately.
+Path: Added `_skipped_files[]` accumulator and `PARTIAL:N` signal flag.
 
-[file_operations.py](cci:7://file:///home/ray/Desktop/files/wrk/Imbric/core/file_operations.py:0:0-0:0) | CRIT | Fixed 2026-01-21
-Was: Recursive ops abort on 1st error, no aggregate. 
-Fix: `_skipped_files[]` accumulator, `finished.emit(..., "dest|PARTIAL:N")` in signal
+### 🔧 BUG-009: Silent Partial Failures (UI)
+[ui/widgets/progress_overlay.py](file:///home/ray/Desktop/files/wrk/Imbric/ui/widgets/progress_overlay.py) | CRITICAL | IMPLEMENTED (2026-01-25)
+Was: UI ignored `PARTIAL` signal, hiding progress bar on failure.
+Why: `onOperationCompleted` ignored `result_data`.
+Path: Added detection for `PARTIAL:` string, disabled auto-hide, and added warning state.
 
 ---
 
 ## ✅ Verified Working (No Code Change Needed)
 
-### BUG-005: Dir-Over-Dir Paste Failure
-
-[file_operations.py](file:///home/ray/Desktop/files/wrk/Imbric/core/file_operations.py) | MEDIUM | Verified 2026-01-22
-Was: Concern that pasting directory over existing directory may fail silently.
-Status: **Already working correctly** - `_recursive_move_merge()` properly handles WOULD_MERGE errors.
-Note: Dialog shows "Overwrite" button which is confusing for folders. Future enhancement: Add explicit "Merge folders" option.
+### ✅ BUG-005: Dir-Over-Dir Paste Failure
+[core/file_operations.py](file:///home/ray/Desktop/files/wrk/Imbric/core/file_operations.py) | MEDIUM | VERIFIED (2026-01-22)
+Was: Suspected failure when pasting directory over existing one.
+Why: Concern about `WOULD_MERGE` handling.
+Path: Verified `_recursive_move_merge()` handles this correctly. (Future: Add "Merge" button).
 
 ---
 
@@ -69,24 +74,11 @@ Path: 1. Monitor Qt updates. 2. Scan Qt forums for Loader solutions.
 
 ---
 
-### BUG-007: Rubberband Selection Ignores Sort Order
-
-**Files:** [column_splitter.py](file:///home/ray/Desktop/files/wrk/Imbric/ui/models/column_splitter.py)  
-**Severity:** MEDIUM | **Status:** ✅ FIXED (2026-01-25)
-
-**Symptom:**  
-Rubberband (marquee) selection highlighted wrong items when sorting was enabled.
-
-**Root Cause:**  
-`getAllItems()` returned `_all_items` (unsorted), but display used sorted items.
-
-**Fix Applied:**  
-- Added `_sorted_items` cache to `ColumnSplitter`
-- `_redistribute()` now caches sorted list during dealing
-- `getAllItems()` returns cached sorted list instead of raw unsorted list
-- Zero performance impact (sorting happens once during redistribute, not on every rubberband drag)
-
-- Zero performance impact (sorting happens once during redistribute, not on every rubberband drag)
+### ✅ BUG-007: Rubberband Selection Ignores Sort Order
+[ui/models/column_splitter.py](file:///home/ray/Desktop/files/wrk/Imbric/ui/models/column_splitter.py) | MEDIUM | FIXED (2026-01-25)
+Was: Marquee selection highlighted wrong items when sorting enabled.
+Why: Hit-testing used unsorted `_all_items` list while display was sorted.
+Path: Create `_sorted_items` cache in `ColumnSplitter` and use it for `getAllItems()`.
 
 ## ✅ Resolved
 
@@ -96,41 +88,78 @@ Rubberband (marquee) selection highlighted wrong items when sorting was enabled.
 - BUG-002: FileScanner Sync I/O in Async Loop
 - BUG-005: Dir-Over-Dir Paste (verified working, no code change needed)
 ### ✅ BUG-008: Symlink Thumbnail Failure
+[core/image_providers/thumbnail_provider.py](file:///home/ray/Desktop/files/wrk/Imbric/core/image_providers/thumbnail_provider.py) | LOW | FIXED (2026-01-23)
+Was: Thumbnails failed for symlinks ("Link to data copy" error).
+Why: GNOME Thumbnail Factory requires canonical paths, not symlink paths.
+Path: Resolved path via `os.path.realpath` before requesting thumbnail.
+### ✅ FLAW-003: Sequential File Operations
+[core/file_operations.py](file:///home/ray/Desktop/files/wrk/Imbric/core/file_operations.py) | MEDIUM | FIXED (2026-01-24)
+Was: Long ops blocked short ops (sequential queue).
+Why: Single `QThread` serialization.
+Path: Refactored to `QThreadPool` + `QRunnable` for parallel execution.
 
-Files: [thumbnail_provider.py](file:///home/ray/Desktop/files/wrk/Imbric/core/image_providers/thumbnail_provider.py)  
-Severity: LOW | Status: FIXED (2026-01-23)
+---
 
-Symptom:
-Log error: `QML QQuickImage: Failed to get image from provider: image://thumbnail//.../Link to data copy`.
-Thumbnails for symlinks (or copies of symlinks) fail to generate or load, showing a broken image or empty space.
+## 🆕 Unresolved Flaws (Jan 25 Analysis)
 
-Root Cause Analysis:
-1. `ThumbnailProvider` may not be dereferencing symlinks correctly before passing path to `common_factory.lookup/save`.
-2. GNOME Thumbnail Factory expects a canonical URI/path.
-3. If the symlink points to a directory or a non-image, the provider might be trying to thumb the link itself instead of the target owner or falling back to a mime-type icon.
+### 🔴 Critical (Data Integrity)
 
-Investigation Required:
-- Check `thumbnail_provider.py` requestImage method.
-- Does it use `os.path.realpath(path)`?
-- Verify if `GnomeDesktop.DesktopThumbnailFactory` handles symlinks automatically or needs manual dereference.
 
-Proposed Fix:
-Ensure `path` is resolved to absolute target path before requesting thumbnail, OR handle `GLib.Error` gracefully and fallback to generic icon.
-### ✅ FLAW-003: Sequential File Operations (Single Worker Thread)
+### BUG-010: Destructive Folder Overwrite
+**Files:** `ui/dialogs/conflict_dialog.py`
+**Severity:** HIGH
+**Symptom:** "Overwrite" action on a folder might replace the *entire* target folder structure instead of merging.
+**Path:** `ConflictResolver` needs specific `WOULD_MERGE` handling or a "Merge" option separate from "Overwrite" for directories.
 
-Files: [file_operations.py](file:///home/ray/Desktop/files/wrk/Imbric/core/file_operations.py)  
-Severity: MEDIUM | Status: **FIXED (2026-01-24)**
+### BUG-011: Incomplete Undo Stack
+**Files:** `core/undo_manager.py`
+**Severity:** MEDIUM
+**Symptom:** Trash and Restore operations cannot be undone. "Create Folder" undo is missing. History is lost on app exit.
+**Path:** Implement `restore` logic in UndoManager. Consider `QSettings` or a JSON log for persistence.
 
-Symptom:
-Initiating a long-running operation (e.g., copying 10GB) blocks subsequent operations (e.g., trashing a file) until the first one completes.
+### BUG-012: Race Condition in "New Folder"
+**Files:** `ui/models/app_bridge.py`
+**Severity:** MEDIUM
+**Symptom:** Rapidly clicking "New Folder" can cause backend errors if the second click happens before the first folder is physically created.
+**Path:** Add a "creating_folder" semaphore/flag in `AppBridge` to block subsequent requests until completion.
 
-Root Cause:
-`FileOperations` used a single `QThread` and `_FileOperationWorker`. Signals were processed sequentially.
+### 🟡 Performance & Events
 
-Fix Applied:
-Refactored to QThreadPool + QRunnable pattern:
-- `CopyRunnable`, `MoveRunnable`, `TrashRunnable`, `RenameRunnable`, `CreateFolderRunnable`
-- Each operation runs as independent QRunnable with its own `Gio.Cancellable`
-- Added `FileJob` dataclass for per-operation tracking (UUID, status)
-- Per-operation cancellation supported via `cancel(job_id)`
-- Signals updated to include `job_id` for tracking
+### BUG-013: Event Flooding
+**Files:** `core/file_monitor.py`
+**Severity:** HIGH (Performance)
+**Symptom:** Pasting 5,000 files triggers 5,000 individual UI refreshes, freezing the app.
+**Path:** Implement "Event Coalescing" (debounce timer). Wait 100-200ms after an event before emitting `directoryChanged`.
+
+### BUG-014: Stale Metadata
+**Files:** `core/file_monitor.py`
+**Severity:** LOW
+**Symptom:** Explicitly ignores `Gio.FileMonitorEvent.CHANGED`. File sizes/dates do not update if changed externally (e.g. by a download).
+**Path:** Enable `CHANGED` event handling but throttle it heavily to avoid spam.
+
+### BUG-015: Blind Status Bar
+**Files:** `ui/widgets/status_bar.py`
+**Severity:** LOW
+**Symptom:** Shows "0 items" during long directory scans with no "Loading..." indicator.
+**Path:** Add `onScanStarted` signal to `FileScanner` and connect to StatusBar to show a spinner or "Scanning..." text.
+
+### 🔵 Interaction Limitations
+
+### BUG-016: Search Blindness
+**Files:** `core/search_worker.py`
+**Severity:** MEDIUM
+**Symptom:** No progress feedback during search. Long searches look like the app has hung.
+**Path:** Emit periodic "progress" signals (e.g., "Scanned 1000 files...") or indefinite spinner state.
+
+### BUG-017: Focus Trap on Rename
+**Files:** `ui/qml/views/MasonryView.qml`
+**Severity:** MEDIUM
+**Symptom:** F2 rename relies on brittle `activeFocus` changes, leading to dead keys.
+**Path:** Centralize focus logic. Use `State` machine for "View Mode" vs "Edit Mode".
+
+### BUG-018: Missing "Open Terminal"
+**Files:** `ui/models/app_bridge.py`
+**Severity:** LOW (Power User Feature)
+**Symptom:** No ability to open a terminal in the current directory.
+**Path:** Add context menu action. Use `Gio.AppInfo.launch_default_for_uri` with a terminal URI or `subprocess` to launch default terminal.
+

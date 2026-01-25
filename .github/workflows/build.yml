@@ -1,0 +1,167 @@
+name: Build Release
+
+on:
+  release:
+    types: [published]
+
+env:
+  APP_NAME: imbric
+  APP_VERSION: ${{ github.ref_name }}
+
+jobs:
+  build-appimage:
+    runs-on: ubuntu-20.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-gi \
+            python3-gi-cairo \
+            gir1.2-gnomedesktop-3.0 \
+            gir1.2-glib-2.0 \
+            libcairo2-dev \
+            libgirepository1.0-dev \
+            fd-find \
+            fuse \
+            libfuse2 \
+            librsvg2-bin
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-python/releases/download/continuous/linuxdeploy-plugin-python-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+      
+      - name: Create AppDir structure
+        run: |
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          mkdir -p AppDir/usr/share/metainfo
+          
+          # Copy ONLY runtime application files (exclude docs, tests, scripts, assets)
+          cp -r core ui main.py qtquickcontrols2.conf AppDir/usr/
+          
+          # Copy only the icon from ui/ (convert SVG to PNG)
+          if [ -f "ui/icon.svg" ]; then
+            rsvg-convert -w 256 -h 256 ui/icon.svg -o AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png
+          elif [ -f "ui/icon.png" ]; then
+            cp ui/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png
+          fi
+          
+          # Copy desktop file from repo
+          cp ui/imbric.desktop AppDir/usr/share/applications/${{ env.APP_NAME }}.desktop
+          
+          # Create AppRun
+          cat > AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          export PATH="${HERE}/usr/bin:${PATH}"
+          export PYTHONPATH="${HERE}/usr:${PYTHONPATH}"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export GI_TYPELIB_PATH="${HERE}/usr/lib/girepository-1.0:${GI_TYPELIB_PATH}"
+          exec python3 "${HERE}/usr/main.py" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+          
+          # Copy desktop file to root (required by linuxdeploy)
+          cp AppDir/usr/share/applications/${{ env.APP_NAME }}.desktop AppDir/
+          
+          # Symlink icon to root
+          ln -sf usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png AppDir/${{ env.APP_NAME }}.png
+      
+      - name: Build AppImage
+        run: |
+          export DEPLOY_PYTHON_VERSION=3.11
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage || echo "AppImage build completed with warnings"
+      
+      - name: Upload AppImage to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: Imbric*.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-deb:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y librsvg2-bin
+      
+      - name: Create Debian package structure
+        run: |
+          PKG_DIR="dist/${{ env.APP_NAME }}_${{ env.APP_VERSION }}_amd64"
+          mkdir -p "${PKG_DIR}/DEBIAN"
+          mkdir -p "${PKG_DIR}/usr/lib/${{ env.APP_NAME }}"
+          mkdir -p "${PKG_DIR}/usr/bin"
+          mkdir -p "${PKG_DIR}/usr/share/applications"
+          mkdir -p "${PKG_DIR}/usr/share/icons/hicolor/256x256/apps"
+          mkdir -p "${PKG_DIR}/usr/share/icons/hicolor/scalable/apps"
+          
+          # Copy ONLY runtime application files (exclude docs, tests, scripts, assets)
+          cp -r core ui main.py qtquickcontrols2.conf "${PKG_DIR}/usr/lib/${{ env.APP_NAME }}/"
+          
+          # Create launcher script
+          cat > "${PKG_DIR}/usr/bin/${{ env.APP_NAME }}" << 'EOF'
+          #!/bin/bash
+          cd /usr/lib/imbric
+          exec python3 main.py "$@"
+          EOF
+          chmod +x "${PKG_DIR}/usr/bin/${{ env.APP_NAME }}"
+          
+          # Create control file
+          cat > "${PKG_DIR}/DEBIAN/control" << EOF
+          Package: ${{ env.APP_NAME }}
+          Version: ${{ env.APP_VERSION }}
+          Section: graphics
+          Priority: optional
+          Architecture: amd64
+          Depends: python3 (>= 3.10), python3-pyside6, python3-gi, gir1.2-gnomedesktop-3.0, python3-psutil
+          Maintainer: Imbric Developers <imbric@example.com>
+          Description: Photo-first file manager with Masonry layout
+           Imbric is a modern photo-focused file manager for GNOME with
+           a Pinterest-style masonry layout. Built with PySide6 and QML.
+          EOF
+          
+          # Copy desktop file from repo
+          cp ui/imbric.desktop "${PKG_DIR}/usr/share/applications/${{ env.APP_NAME }}.desktop"
+          
+          # Convert SVG icon to PNG, or copy PNG if available
+          if [ -f "ui/icon.svg" ]; then
+            rsvg-convert -w 256 -h 256 ui/icon.svg -o "${PKG_DIR}/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png"
+            cp ui/icon.svg "${PKG_DIR}/usr/share/icons/hicolor/scalable/apps/${{ env.APP_NAME }}.svg"
+          elif [ -f "ui/icon.png" ]; then
+            cp ui/icon.png "${PKG_DIR}/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png"
+          fi
+      
+      - name: Build .deb package
+        run: |
+          dpkg-deb --build "dist/${{ env.APP_NAME }}_${{ env.APP_VERSION }}_amd64"
+      
+      - name: Upload .deb to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*.deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

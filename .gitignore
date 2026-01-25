@@ -45,5 +45,14 @@ Thumbs.db
 
 # Project specific
 *.log
+*.csv
 .cache/
 assets/template/
+
+# Reference code (not part of project)
+assets/dflynav-src/
+assets/poc_*.py
+
+# Test artifacts
+test_*
+!tests/

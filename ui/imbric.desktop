@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.1
+Type=Application
+Name=Imbric
+GenericName=Photo Manager
+Comment=Photo-first file manager with Masonry layout
+Keywords=photos;images;gallery;file;manager;masonry;
+Exec=imbric %U
+Icon=imbric
+Terminal=false
+Categories=Graphics;Viewer;FileManager;Photography;
+MimeType=inode/directory;
+StartupNotify=true
+StartupWMClass=imbric
