@@ -91,6 +91,7 @@ jobs:
       
       - name: Build AppImage
         run: |
+          export ARCH=x86_64
           export DEPLOY_PYTHON_VERSION=3.11
           ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage || echo "AppImage build completed with warnings"
       
