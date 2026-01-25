@@ -1,0 +1,45 @@
+[project]
+name = "imbric"
+version = "0.5.0-alpha"
+description = "Photo-first file manager with Masonry layout for GNOME"
+authors = [{name = "Imbric Developers"}]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+keywords = ["file-manager", "photos", "gnome", "pyside6", "masonry"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Desktop Environment :: Gnome",
+]
+
+dependencies = [
+    "PySide6",
+    "psutil",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "flake8",
+]
+
+[project.scripts]
+imbric = "main:main"
+
+[project.urls]
+Homepage = "https://github.com/dragon-Elec/Imbric"
+Repository = "https://github.com/dragon-Elec/Imbric"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "ui*"]
