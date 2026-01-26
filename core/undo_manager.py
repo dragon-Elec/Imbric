@@ -1,39 +1,45 @@
 """
-[DONE] UndoManager — Undo/Redo Stack for File Operations
+[DONE] UndoManager — Async-Aware Undo/Redo Stack for File Operations
 
 Tracks file operations (copy, move, rename, trash, create) and allows
-reversing them. Each operation is recorded with enough info to undo it.
+reversing them. Uses event-driven pattern to properly handle async I/O.
+
+Architecture:
+    1. undo() pops from stack but DOESN'T push to redo yet
+    2. Queues operation and tracks it as "pending"
+    3. Waits for FileOperations.operationFinished signal
+    4. On success: pushes to redo stack
+    5. On failure: pushes back to undo stack
 
 Usage:
-    undo_mgr = UndoManager()
-    undo_mgr.push({"type": "rename", "old": "/path/old.txt", "new": "/path/new.txt"})
-    undo_mgr.undo()  # Renames back to old.txt
-    undo_mgr.redo()  # Renames back to new.txt
+    undo_mgr = UndoManager(file_operations=file_ops)
+    undo_mgr.undo()  # Async - will emit operationUndone when complete
     
 Integration:
-    - FileOperations should call undo_mgr.push() after each successful op
+    - TransactionManager pushes completed Transactions via historyCommitted signal
     - MainWindow connects Ctrl+Z to undo(), Ctrl+Shift+Z to redo()
 """
 
 from PySide6.QtCore import QObject, Signal, Slot
-from typing import Optional
+from typing import Optional, Dict, Any
+from enum import Enum
 import os
+
+
+class PendingMode(Enum):
+    """Tracks whether we're in an undo or redo operation."""
+    NONE = 0
+    UNDO = 1
+    REDO = 2
 
 
 class UndoManager(QObject):
     """
     Manages undo/redo stack for file operations.
     
-    Operation dict format:
-        {
-            "type": "copy" | "move" | "rename" | "trash" | "createFolder",
-            "src": str,       # Original path
-            "dest": str,      # Destination path (for copy/move/rename)
-            "timestamp": float
-        }
+    Async-aware: Waits for operation completion before transitioning stacks.
     """
     
-    # Emitted when a shortcut is triggered (we can reuse this pattern or specific signals)
     # Signals for UI buttons (enable/disable)
     undoAvailable = Signal(bool)
     redoAvailable = Signal(bool)
@@ -41,6 +47,12 @@ class UndoManager(QObject):
     # Signal when operation is undone/redone (for status bar)
     operationUndone = Signal(str)  # Description of what was undone
     operationRedone = Signal(str)  # Description of what was redone
+    
+    # Signal when undo/redo fails
+    undoFailed = Signal(str)  # Error message
+    
+    # Signal when busy (disable undo button during operation)
+    busyChanged = Signal(bool)
     
     def __init__(self, file_operations=None, parent=None):
         """
@@ -52,28 +64,56 @@ class UndoManager(QObject):
         self._redo_stack = []
         self._file_ops = file_operations
         self._max_history = 50  # Limit memory usage
+        
+        # Async state tracking
+        self._pending_operation = None  # The operation we're currently undoing/redoing
+        self._pending_mode = PendingMode.NONE
+        self._pending_job_ids = set()  # Track job IDs for this undo/redo
+        self._pending_success = True  # Track if any operation failed
+        self._expected_completions = 0  # How many ops we're waiting for
+        self._received_completions = 0
+        
+        # Connect to FileOperations signals if available
+        if self._file_ops:
+            self._file_ops.operationFinished.connect(self._on_operation_finished)
+    
+    def setFileOperations(self, file_ops):
+        """Set or update the FileOperations reference."""
+        # Disconnect from old
+        if self._file_ops:
+            try:
+                self._file_ops.operationFinished.disconnect(self._on_operation_finished)
+            except RuntimeError:
+                pass  # Was not connected
+        
+        self._file_ops = file_ops
+        
+        # Connect to new
+        if self._file_ops:
+            self._file_ops.operationFinished.connect(self._on_operation_finished)
     
     # -------------------------------------------------------------------------
     # PUBLIC API
     # -------------------------------------------------------------------------
     
-    @Slot(dict)
-    def push(self, operation: dict):
+    @Slot(object)
+    def push(self, operation):
         """
-        Record an operation for undo.
-        Call this AFTER a successful file operation.
+        Record a Transaction object for undo.
+        Call this AFTER a batch of operations (Transaction) is committed.
         
         Args:
-            operation: Dict with keys "type", "src", "dest" (optional), "timestamp"
+            operation: Transaction object or dict with keys "type", "src", "dest"
         """
         if not operation:
             return
 
-        # Simple validation
-        required_keys = ["type", "src"]
-        if not all(k in operation for k in required_keys):
-            print(f"[UndoManager] Invalid operation pushed: {operation}")
-            return
+        # Simple validation for dict
+        if isinstance(operation, dict):
+            required_keys = ["type", "src"]
+            if not all(k in operation for k in required_keys):
+                print(f"[UndoManager] Invalid operation pushed: {operation}")
+                return
 
         self._undo_stack.append(operation)
         
@@ -81,97 +121,202 @@ class UndoManager(QObject):
         if len(self._undo_stack) > self._max_history:
             self._undo_stack.pop(0)  # Remove oldest
             
-        # Clear redo stack on new action (standard undo/redo behavior)
+        # Clear redo stack on new action
         self._redo_stack.clear()
         
         self._emit_availability()
-        print(f"[UndoManager] Pushed: {operation['type']} {operation['src']}")
+        
+        # Log info
+        desc = operation.description if hasattr(operation, 'description') else str(operation)
+        print(f"[UndoManager] Pushed: {desc}")
     
-    @Slot()
+    @Slot(result=bool)
     def undo(self) -> bool:
         """
-        Undo the last operation.
+        Undo the last operation (async).
         
         Returns:
-            True if undo was successful, False if stack empty or failed
+            True if undo was started, False if stack empty or busy
         """
         if not self.canUndo():
             return False
-            
-        op = self._undo_stack.pop()
         
-        # Calculate inverse operation
-        inverse_op = self._reverse_operation(op)
-        if not inverse_op:
-            print(f"[UndoManager] Could not determine inverse for {op}")
-            # Put it back? Or just fail? For now, fail but keep state consistent?
-            # Actually, if we fail to reverse, it's safer to NOT put it back effectively "consuming" the undo.
-            self._emit_availability()
+        if self._pending_mode != PendingMode.NONE:
+            print("[UndoManager] Already processing an undo/redo")
             return False
             
-        print(f"[UndoManager] Undoing {op['type']} -> Executing {inverse_op['type']}")
+        op = self._undo_stack.pop()
+        desc = op.description if hasattr(op, 'description') else str(op)
+        print(f"[UndoManager] Undoing: {desc}")
         
-        # Execute the inverse
-        success = self._execute(inverse_op)
+        # Set pending state BEFORE executing
+        self._pending_operation = op
+        self._pending_mode = PendingMode.UNDO
+        self._pending_job_ids.clear()
+        self._pending_success = True
+        self._received_completions = 0
         
-        if success:
-            # Add ORIGINAL op to redo stack, so we can redo (re-apply) it later
-            self._redo_stack.append(op)
-            self.operationUndone.emit(f"Undid {op['type']}")
-        else:
-            # If execution failed, what do we do?
-            # Maybe push op back to undo stack?
-            self._undo_stack.append(op) 
-            
+        self.busyChanged.emit(True)
         self._emit_availability()
-        return success
+        
+        # Count expected completions
+        if isinstance(op, dict):
+            self._expected_completions = 1
+        else:
+            self._expected_completions = len(op.ops)
+        
+        # Execute the inverse operations
+        success = self._undo_transaction(op)
+        
+        if not success:
+            # Failed to even start the operation (e.g., no FileOperations)
+            self._pending_operation = None
+            self._pending_mode = PendingMode.NONE
+            self._undo_stack.append(op)  # Put it back
+            self.busyChanged.emit(False)
+            self._emit_availability()
+            return False
+        
+        # If no async operations were started, complete immediately
+        if self._expected_completions == 0:
+            self._finalize_pending()
+        
+        return True
     
-    @Slot()
+    @Slot(result=bool)
     def redo(self) -> bool:
         """
-        Redo the last undone operation.
+        Redo the last undone operation (async).
         
         Returns:
-            True if redo was successful, False if stack empty or failed
+            True if redo was started, False if stack empty or busy
         """
         if not self.canRedo():
             return False
             
-        op = self._redo_stack.pop()
-        
-        print(f"[UndoManager] Redoing {op['type']}")
-        
-        # Execute original operation again
-        success = self._execute(op)
-        
-        if success:
-            # Push back to undo stack
-            self._undo_stack.append(op)
-            self.operationRedone.emit(f"Redid {op['type']}")
-        else:
-            # Push back to redo stack if failed?
-            self._redo_stack.append(op)
+        if self._pending_mode != PendingMode.NONE:
+            print("[UndoManager] Already processing an undo/redo")
+            return False
             
+        op = self._redo_stack.pop()
+        desc = op.description if hasattr(op, 'description') else str(op)
+        print(f"[UndoManager] Redoing: {desc}")
+        
+        # Set pending state
+        self._pending_operation = op
+        self._pending_mode = PendingMode.REDO
+        self._pending_job_ids.clear()
+        self._pending_success = True
+        self._received_completions = 0
+        
+        self.busyChanged.emit(True)
         self._emit_availability()
-        return success
+        
+        # Count expected completions
+        if isinstance(op, dict):
+            self._expected_completions = 1
+        else:
+            self._expected_completions = len(op.ops)
+        
+        # Execute the original operations
+        success = self._redo_transaction(op)
+        
+        if not success:
+            self._pending_operation = None
+            self._pending_mode = PendingMode.NONE
+            self._redo_stack.append(op)
+            self.busyChanged.emit(False)
+            self._emit_availability()
+            return False
+        
+        if self._expected_completions == 0:
+            self._finalize_pending()
+            
+        return True
     
     @Slot(result=bool)
     def canUndo(self) -> bool:
-        """Returns True if there are operations to undo."""
-        return len(self._undo_stack) > 0
+        """Returns True if there are operations to undo and not busy."""
+        return len(self._undo_stack) > 0 and self._pending_mode == PendingMode.NONE
     
     @Slot(result=bool)
     def canRedo(self) -> bool:
-        """Returns True if there are operations to redo."""
-        return len(self._redo_stack) > 0
+        """Returns True if there are operations to redo and not busy."""
+        return len(self._redo_stack) > 0 and self._pending_mode == PendingMode.NONE
+    
+    @Slot(result=bool)
+    def isBusy(self) -> bool:
+        """Returns True if an undo/redo is in progress."""
+        return self._pending_mode != PendingMode.NONE
     
     @Slot()
     def clear(self):
         """Clear all undo/redo history."""
         self._undo_stack.clear()
         self._redo_stack.clear()
+        self._pending_operation = None
+        self._pending_mode = PendingMode.NONE
         self.undoAvailable.emit(False)
         self.redoAvailable.emit(False)
+    
+    # -------------------------------------------------------------------------
+    # SIGNAL HANDLER (Async completion)
+    # -------------------------------------------------------------------------
+    
+    @Slot(str, str, str, str, bool, str)
+    def _on_operation_finished(self, tid: str, job_id: str, op_type: str, 
+                                result_path: str, success: bool, message: str):
+        """
+        Called when any file operation completes.
+        We check if it's one of our pending undo/redo operations.
+        """
+        if self._pending_mode == PendingMode.NONE:
+            return  # Not our operation
+        
+        if job_id in self._pending_job_ids:
+            self._pending_job_ids.discard(job_id)
+            self._received_completions += 1
+            
+            if not success:
+                self._pending_success = False
+                print(f"[UndoManager] Operation failed: {message}")
+            
+            # Check if all operations completed
+            if self._received_completions >= self._expected_completions:
+                self._finalize_pending()
+    
+    def _finalize_pending(self):
+        """Complete the pending undo/redo operation."""
+        op = self._pending_operation
+        mode = self._pending_mode
+        success = self._pending_success
+        
+        # Reset state
+        self._pending_operation = None
+        self._pending_mode = PendingMode.NONE
+        self._pending_job_ids.clear()
+        
+        self.busyChanged.emit(False)
+        
+        desc = op.description if hasattr(op, 'description') else "Operation"
+        
+        if mode == PendingMode.UNDO:
+            if success:
+                self._redo_stack.append(op)
+                self.operationUndone.emit(f"Undid {desc}")
+            else:
+                self._undo_stack.append(op)  # Put it back
+                self.undoFailed.emit(f"Failed to undo {desc}")
+        
+        elif mode == PendingMode.REDO:
+            if success:
+                self._undo_stack.append(op)
+                self.operationRedone.emit(f"Redid {desc}")
+            else:
+                self._redo_stack.append(op)  # Put it back
+                self.undoFailed.emit(f"Failed to redo {desc}")
+        
+        self._emit_availability()
     
     # -------------------------------------------------------------------------
     # INTERNAL
@@ -185,21 +330,14 @@ class UndoManager(QObject):
             rename(A→B) → rename(B→A)
             move(A→B) → move(B→A)  
             copy(A→B) → trash(B)
-            trash(A) → restore(A) [needs trash location tracking]
+            trash(A) → restore(A)
             createFolder(A) → trash(A)
         """
         op_type = op.get("type")
         src = op.get("src")
-        # For Move/Copy/Rename, the 'result path' (e.g. if renamed to 'A (2)') 
-        # should be stored in 'dest' or a specific 'result_path' field. 
-        # We assume 'dest' contains the FINAL path where the item ended up.
         dest = op.get("dest") 
         
         if op_type == "rename":
-            # Reverse: Rename dest back to original name
-            # op: {type: rename, src: /dir/old.txt, dest: /dir/new.txt}
-            # rev: {type: rename, src: /dir/new.txt, dest: old.txt}
-            # FileOperations.rename(path, new_name) takes basename only for new_name.
             return {
                 "type": "rename",
                 "src": dest,
@@ -207,58 +345,88 @@ class UndoManager(QObject):
             }
             
         elif op_type == "move":
-            # Reverse: Move dest back to original src location
-            # op: {type: move, src: /A/file.txt, dest: /B/file.txt}
-            # rev: {type: move, src: /B/file.txt, dest: /A/file.txt}
-            # Note: We pass the FULL original path, not just the directory.
-            # FileOperations.move(src, dest) where dest is the target FILE path.
             return {
                 "type": "move",
                 "src": dest,
-                "dest": src  # Full original path
+                "dest": src
             }
             
         elif op_type == "copy":
-            # Reverse: Trash the copy
-            # op: {type: copy, src: /A, dest: /B/A}
-            # rev: {type: trash, src: /B/A}
             return {
                 "type": "trash",
                 "src": dest
             }
             
         elif op_type == "trash":
-            # Reverse: Restore from trash
-            # This is hard without specific "trash info".
-            # For now, we will mark this as unsupported or use a specific restore command if we add it.
-            # Assuming we can't easily undo trash without 'gio restore' logic which isn't in FileOperations yet.
-            print("[UndoManager] Undo Trash not yet fully supported (requires Trash restoration logic)")
-            return None # TODO: Implement Restore
-            
-        elif op_type == "createFolder":
-            # Reverse: Trash the created folder
-            # op: {type: createFolder, src: /path/NewFolder}
-            # rev: {type: trash, src: /path/NewFolder}
-            return {
-                "type": "trash",
-                "src": src
-            }
-
-        elif op_type == "trash":
-            # Reverse: Restore file from trash
-            # op: {type: trash, src: /path/file.txt}
-            # rev: {type: restore_trash, src: /path/file.txt}
-            # Note: We rely on FileOperations to find the item in trash:/// 
-            # that matches this original source path.
             return {
                 "type": "restore_trash",
                 "src": src
             }
             
+        elif op_type == "createFolder":
+            return {
+                "type": "trash",
+                "src": src
+            }
+            
         return None
     
-    def _execute(self, op: dict) -> bool:
-        """Execute an operation using FileOperations."""
+    def _undo_transaction(self, tx) -> bool:
+        """
+        Reverses a Transaction (or single op dict).
+        Iterates operations in LIFO order.
+        """
+        # Handle legacy dict
+        if isinstance(tx, dict):
+            inv = self._reverse_operation(tx)
+            return self._execute_single_op(inv) if inv else False
+
+        # Handle Transaction Object
+        ops_to_undo = list(reversed(tx.ops))
+        
+        if not ops_to_undo:
+            return True  # Empty transaction
+        
+        all_started = True
+        for op in ops_to_undo:
+            op_dict = {
+                "type": op.op_type,
+                "src": op.src,
+                "dest": op.dest if op.dest else op.result_path
+            }
+            
+            inv = self._reverse_operation(op_dict)
+            if inv:
+                if not self._execute_single_op(inv):
+                    all_started = False
+            else:
+                all_started = False
+        
+        return all_started
+
+    def _redo_transaction(self, tx) -> bool:
+        """Re-applies a Transaction."""
+        if isinstance(tx, dict):
+            return self._execute_single_op(tx)
+            
+        all_started = True
+        for op in tx.ops:
+            op_dict = {
+                "type": op.op_type,
+                "src": op.src,
+                "dest": op.dest
+            }
+            if not self._execute_single_op(op_dict):
+                all_started = False
+        return all_started
+
+    def _execute_single_op(self, op: dict) -> bool:
+        """
+        Execute an operation using FileOperations.
+        Tracks the job_id for async completion tracking.
+        
+        Returns True if operation was queued, False on error.
+        """
         if not self._file_ops:
             print("[UndoManager] No FileOperations instance connected")
             return False
@@ -266,38 +434,29 @@ class UndoManager(QObject):
         op_type = op.get("type")
         src = op.get("src")
         dest = op.get("dest")
-        
-        # We need to map 'dest' correctly for FileOperations methods
+        job_id = None
         
         if op_type == "rename":
-            # Note: FileOperations is async. We return True optimistically.
-            # If the operation fails, the redo stack will have a bad entry.
-            # TODO: Implement proper async completion tracking.
-            self._file_ops.rename(src, dest)
-            return True
+            job_id = self._file_ops.rename(src, dest)
             
         elif op_type == "restore_trash":
-            # Special operation to find and restore a file from trash
-            # src is the ORIGINAL path where it should go back to
-            self._file_ops.restore_from_trash(src)
-            return True
+            job_id = self._file_ops.restore_from_trash(src)
             
         elif op_type == "move":
-            self._file_ops.move(src, dest)
-            return True
+            job_id = self._file_ops.move(src, dest)
             
         elif op_type == "copy":
-            self._file_ops.copy(src, dest)
-            return True
+            job_id = self._file_ops.copy(src, dest)
             
         elif op_type == "trash":
-            self._file_ops.trash(src)
-            return True
+            job_id = self._file_ops.trash(src)
             
         elif op_type == "createFolder":
-            self._file_ops.createFolder(src)
+            job_id = self._file_ops.createFolder(src)
+        
+        if job_id:
+            self._pending_job_ids.add(job_id)
             return True
-            
         return False
     
     def _emit_availability(self):

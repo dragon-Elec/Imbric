@@ -98,26 +98,32 @@ class AppBridge(QObject):
         # Create conflict resolver for this drop operation
         resolver = ConflictResolver(self.mw)
         
+
+        
+        # Start Transaction
+        desc = f"Drag & Drop {len(paths)} files"
+        tid = self.mw.transaction_manager.startTransaction(desc)
+        
         for src in paths:
-            # Calculate destination path
+             # Calculate destination path
             dest = os.path.join(target_dir, os.path.basename(src))
             
             # Skip if dropping file onto itself
             if os.path.abspath(src) == os.path.abspath(dest):
-                print(f"[DROP] Skipped: Same file {os.path.basename(src)}")
                 continue
             
             # Resolve conflict (shows dialog if dest exists)
             action, final_dest = resolver.resolve(src, dest)
             
             if action == ConflictAction.CANCEL:
-                print("[DROP] Cancelled by user")
+                # If user cancels middle of loop, we stop adding new ops.
+                # Existing ones will continue or we can cancel transaction?
+                # For now, break loop.
                 break
             elif action == ConflictAction.SKIP:
-                print(f"[DROP] Skipped: {os.path.basename(src)}")
                 continue
             
-            # Check if source is on same device
+            # Check device
             is_same_device = False
             if target_dev is not None:
                 try:
@@ -131,11 +137,11 @@ class AppBridge(QObject):
 
             if same_dir:
                 # Dragging to same folder -> Copy/Clone
-                self.mw.file_ops.copy(src, final_dest)
+                self.mw.file_ops.copy(src, final_dest, transaction_id=tid)
             elif is_same_device:
-                self.mw.file_ops.move(src, final_dest)
+                self.mw.file_ops.move(src, final_dest, transaction_id=tid)
             else:
-                self.mw.file_ops.copy(src, final_dest)
+                self.mw.file_ops.copy(src, final_dest, transaction_id=tid)
 
     @Slot(str)
     def openPath(self, path):
@@ -183,7 +189,14 @@ class AppBridge(QObject):
         # Move to Trash (All)
         menu.addSeparator()
         act_trash = menu.addAction(QIcon.fromTheme("user-trash"), "Move to Trash")
-        act_trash.triggered.connect(lambda checked=False, p=paths: self.mw.file_ops.trashMultiple(p))
+        
+        def do_trash(p):
+            # Batch trash
+            tid = self.mw.transaction_manager.startTransaction(f"Trash {len(p)} items")
+            for item in p:
+                self.mw.file_ops.trash(item, transaction_id=tid)
+                
+        act_trash.triggered.connect(lambda checked=False, p=paths: do_trash(p))
             
         menu.exec_(QCursor.pos())
 
@@ -269,6 +282,11 @@ class AppBridge(QObject):
         cancelled = False
         pasted_paths = []  # Track destination paths for post-paste selection
         
+        # Create Transaction
+        op_name = "Move" if is_cut else "Copy"
+        desc = f"{op_name} {len(files)} files"
+        tid = self.mw.transaction_manager.startTransaction(desc)
+        
         for src in files:
             # Check if source file still exists
             if not os.path.exists(src):
@@ -293,9 +311,9 @@ class AppBridge(QObject):
             
             # OVERWRITE or RENAME — proceed with operation
             if is_cut:
-                self.mw.file_ops.move(src, final_dest)
+                self.mw.file_ops.move(src, final_dest, transaction_id=tid)
             else:
-                self.mw.file_ops.copy(src, final_dest)
+                self.mw.file_ops.copy(src, final_dest, transaction_id=tid)
             
             pasted_paths.append(final_dest)  # Track for selection
             successful_count += 1
