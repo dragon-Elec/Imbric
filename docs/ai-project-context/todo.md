@@ -41,7 +41,9 @@
 - [ ] Sorting UI — Add sort options to right-click background menu
 - [/] Fix BUG-007: Rubberband selection ignores sort order (implemented, pending test)
 - [ ] Async thumbnail generation (background thread)
-- [ ] UI Error Feedback — `ProgressOverlay` show `PARTIAL:N` skipped files
+- [x] UI Error Feedback — `ProgressOverlay` show `PARTIAL:N` skipped files
+- [ ] Sort options context menu
+
 
 ### Pending Tests
 
@@ -60,6 +62,16 @@
 - [ ] When a single folder is selected, display: `"'FolderName' selected (containing N items)"`
 - [ ] Connect `scanner.fileAttributeUpdated` to update status bar when count arrives
 - [ ] Backend (`count_worker.py`) is already done — just needs UI wiring
+
+### 🧩 UI & Navigation Features (Next Up)
+
+- [ ] **Job History UI** (Transaction Log)
+    - Backend: `core/transaction_manager.py` (Done)
+    - Frontend: Needs list view of past operations + Undo button
+- [ ] **Navigation History** (Back/Forward)
+    - Backend: Needs `NavigationStack`
+    - Frontend: Back/Forward buttons in header
+
 
 ---
 
@@ -80,9 +92,7 @@
 - [ ] Add expandable "Show Details" for granular control
 
 ### Dragonfly Adaptations (post-bugfix)
-- [ ] Search impl (`Df_Find.py` → `search.py`)
-- [ ] Job history UI (`Df_Job.py` patterns)
-- [ ] Back/Forward nav (`Df_Panel.py` history stack)
+- [x] Search impl (`Df_Find.py` → `search.py`)
 - [ ] Window state persist (`Df_Config.py` → QSettings)
 
 ---
@@ -101,7 +111,7 @@
 ### Active GitHub Issues (v0.5.0)
 - [x] **Sorting Logic** (#6) - Implemented in `core/sorter.py`
 - [x] **Async Thumbnails** (#7) - Implemented via `QQuickAsyncImageProvider`
-- [ ] **UI Error Feedback** (#8) - Visual alerts for failures (partial skips)
+- [x] **UI Error Feedback** (#8) - Visual alerts for failures (partial skips)
 
 ### Critical Infrastructure
 - [x] **Job System Refactor** (`file_operations.py`) — Implemented via QThreadPool
@@ -198,8 +208,8 @@
 - [ ] `core/file_properties.py` (Properties Dialog backend)
 - [x] `core/search.py` (Implemented: FdSearchEngine, ScandirSearchEngine, SearchWorker)
 - [ ] `core/shortcuts.py` (Centralized keybinds)
-- [x] `core/undo_manager.py` (Implemented: undo/redo logic, trash restore pending)
-- [/] `core/transaction_manager.py` (Stub created, not implemented)
+- [x] `core/undo_manager.py` (Implemented: async-aware undo/redo logic, transaction support)
+- [x] `core/transaction_manager.py` (Implemented and Integrated)
 
 ---
 
@@ -221,7 +231,7 @@
 - [ ] Free space indicator in status bar
 - [ ] Tooltip on folder hover (show child count)
 - [ ] List view (alternative to grid)
-- [/] Undo/Redo for file operations (backend done, UI pending)
+- [x] Undo/Redo for file operations (backend done, UI pending)
 - [x] Search within folder (backend done, UI pending)
 
 ---

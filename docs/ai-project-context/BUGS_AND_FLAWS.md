@@ -111,11 +111,11 @@ Path: Refactored to `QThreadPool` + `QRunnable` for parallel execution.
 **Symptom:** "Overwrite" action on a folder might replace the *entire* target folder structure instead of merging.
 **Path:** `ConflictResolver` needs specific `WOULD_MERGE` handling or a "Merge" option separate from "Overwrite" for directories.
 
-### BUG-011: Incomplete Undo Stack
-**Files:** `core/undo_manager.py`
-**Severity:** MEDIUM
-**Symptom:** Trash and Restore operations cannot be undone. "Create Folder" undo is missing. History is lost on app exit.
-**Path:** Implement `restore` logic in UndoManager. Consider `QSettings` or a JSON log for persistence.
+### ✅ BUG-011: Incomplete Undo Stack
+[core/undo_manager.py](file:///home/ray/Desktop/files/wrk/Imbric/core/undo_manager.py) | MEDIUM | FIXED (2026-01-26)
+Was: Trash/Restore/Mkdir undo missing. Async race conditions.
+Why: `_execute` returned optimistic success before I/O completion.
+Path: Rewrote UndoManager to be event-driven (async-aware). Added `TransactionManager` wiring.
 
 ### BUG-012: Race Condition in "New Folder"
 **Files:** `ui/models/app_bridge.py`
