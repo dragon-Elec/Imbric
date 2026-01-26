@@ -38,6 +38,7 @@ class FileJob:
     op_type: str              # "copy", "move", "trash", "rename", "createFolder"
     source: str
     dest: str = ""
+    transaction_id: str = ""  # Links this job to a larger transaction (batch)
     cancellable: Gio.Cancellable = field(default_factory=Gio.Cancellable)
     status: str = "pending"   # "pending", "running", "done", "cancelled", "error"
     skipped_files: List[str] = field(default_factory=list)
@@ -53,7 +54,8 @@ class FileOperationSignals(QObject):
     """
     started = Signal(str, str, str)           # (job_id, op_type, path)
     progress = Signal(str, int, int)          # (job_id, current_bytes, total_bytes)
-    finished = Signal(str, str, str, bool, str)  # (job_id, op_type, path, success, message)
+    # finished now includes transaction_id and dest/result path explicitly
+    finished = Signal(str, str, str, str, bool, str)  # (tid, job_id, op_type, result_path, success, message)
 
 
 # =============================================================================
@@ -99,9 +101,10 @@ class FileOperationRunnable(QRunnable):
         QMetaObject.invokeMethod(
             self.signals, "finished",
             Qt.QueuedConnection,
+            Q_ARG(str, self.job.transaction_id),
             Q_ARG(str, self.job.id),
             Q_ARG(str, self.job.op_type),
-            Q_ARG(str, self.job.source),
+            Q_ARG(str, self.job.dest if self.job.dest else self.job.source), # Result path (approx)
             Q_ARG(bool, success),
             Q_ARG(str, message)
         )
@@ -158,25 +161,30 @@ class CopyRunnable(FileOperationRunnable):
                 pass  # May already exist
             
             # Enumerate children
-            enumerator = source.enumerate_children(
-                "standard::name,standard::type",
-                Gio.FileQueryInfoFlags.NONE,
-                cancellable
-            )
-            
-            for child_info in enumerator:
-                child_name = child_info.get_name()
-                child_source = source.get_child(child_name)
-                child_dest = dest.get_child(child_name)
+            enumerator = None
+            try:
+                enumerator = source.enumerate_children(
+                    "standard::name,standard::type",
+                    Gio.FileQueryInfoFlags.NONE,
+                    cancellable
+                )
                 
-                QThread.msleep(1)  # Yield to prevent GUI freeze
-                try:
-                    self._recursive_copy(child_source, child_dest, cancellable)
-                except GLib.Error as e:
-                    if e.code == Gio.IOErrorEnum.CANCELLED:
-                        raise
-                    print(f"[FILE_OPS:{self.job.id[:8]}] SKIP: {child_name} - {e}")
-                    self.job.skipped_files.append(child_source.get_path())
+                for child_info in enumerator:
+                    child_name = child_info.get_name()
+                    child_source = source.get_child(child_name)
+                    child_dest = dest.get_child(child_name)
+                    
+                    # Performance fix: Removed msleep(1)
+                    try:
+                        self._recursive_copy(child_source, child_dest, cancellable)
+                    except GLib.Error as e:
+                        if e.code == Gio.IOErrorEnum.CANCELLED:
+                            raise
+                        print(f"[FILE_OPS:{self.job.id[:8]}] SKIP: {child_name} - {e}")
+                        self.job.skipped_files.append(child_source.get_path())
+            finally:
+                if enumerator:
+                    enumerator.close(None)
         else:
             # Regular file copy
             try:
@@ -241,46 +249,51 @@ class MoveRunnable(FileOperationRunnable):
     
     def _recursive_move_merge(self, source, dest, cancellable):
         """Move directory contents recursively (merge operation)."""
-        enumerator = source.enumerate_children(
-            "standard::name,standard::type",
-            Gio.FileQueryInfoFlags.NONE,
-            cancellable
-        )
-        
-        for child_info in enumerator:
-            child_name = child_info.get_name()
-            child_source = source.get_child(child_name)
-            child_dest = dest.get_child(child_name)
+        enumerator = None
+        try:
+            enumerator = source.enumerate_children(
+                "standard::name,standard::type",
+                Gio.FileQueryInfoFlags.NONE,
+                cancellable
+            )
             
-            child_type = child_info.get_file_type()
-            dest_exists = child_dest.query_exists(cancellable)
+            for child_info in enumerator:
+                child_name = child_info.get_name()
+                child_source = source.get_child(child_name)
+                child_dest = dest.get_child(child_name)
+                
+                child_type = child_info.get_file_type()
+                dest_exists = child_dest.query_exists(cancellable)
+                
+                if child_type == Gio.FileType.DIRECTORY and dest_exists:
+                    child_dest_info = child_dest.query_info(
+                        "standard::type", Gio.FileQueryInfoFlags.NONE, cancellable
+                    )
+                    if child_dest_info.get_file_type() == Gio.FileType.DIRECTORY:
+                        try:
+                            self._recursive_move_merge(child_source, child_dest, cancellable)
+                        except GLib.Error as e:
+                            if e.code == Gio.IOErrorEnum.CANCELLED:
+                                raise
+                            self.job.skipped_files.append(child_source.get_path())
+                        continue
+                
+                try:
+                    child_source.move(
+                        child_dest,
+                        Gio.FileCopyFlags.OVERWRITE,
+                        cancellable,
+                        self._progress_callback,
+                        None
+                    )
+                except GLib.Error as e:
+                    if e.code == Gio.IOErrorEnum.CANCELLED:
+                        raise
+                    self.job.skipped_files.append(child_source.get_path())
+        finally:
+            if enumerator:
+                enumerator.close(None)
             
-            if child_type == Gio.FileType.DIRECTORY and dest_exists:
-                child_dest_info = child_dest.query_info(
-                    "standard::type", Gio.FileQueryInfoFlags.NONE, cancellable
-                )
-                if child_dest_info.get_file_type() == Gio.FileType.DIRECTORY:
-                    try:
-                        self._recursive_move_merge(child_source, child_dest, cancellable)
-                    except GLib.Error as e:
-                        if e.code == Gio.IOErrorEnum.CANCELLED:
-                            raise
-                        self.job.skipped_files.append(child_source.get_path())
-                    continue
-            
-            try:
-                child_source.move(
-                    child_dest,
-                    Gio.FileCopyFlags.OVERWRITE,
-                    cancellable,
-                    self._progress_callback,
-                    None
-                )
-            except GLib.Error as e:
-                if e.code == Gio.IOErrorEnum.CANCELLED:
-                    raise
-                self.job.skipped_files.append(child_source.get_path())
-        
         # Delete empty source folder
         source.delete(cancellable)
 
@@ -331,6 +344,24 @@ class CreateFolderRunnable(FileOperationRunnable):
 
 
 # =============================================================================
+# INLINE TRASH RUNNABLE (Fallback)
+# =============================================================================
+class InlineTrashRunnable(FileOperationRunnable):
+    """Fallback trash operation when TrashManager is unavailable."""
+    
+    def run(self):
+        self.emit_started()
+        gfile = Gio.File.new_for_path(self.job.source)
+        
+        try:
+            gfile.trash(self.job.cancellable)
+            self.emit_finished(True, self.job.source)
+        except GLib.Error as e:
+            msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
+            self.emit_finished(False, msg)
+
+
+# =============================================================================
 # CONTROLLER (Main thread interface)
 # =============================================================================
 class FileOperations(QObject):
@@ -350,8 +381,10 @@ class FileOperations(QObject):
     # Note: Signals now include job_id for tracking
     operationStarted = Signal(str, str, str)     # (job_id, op_type, path)
     operationProgress = Signal(str, int, int)    # (job_id, current, total)
-    operationCompleted = Signal(str, str, str)   # (op_type, path, result) - compat
-    operationError = Signal(str, str, str)       # (op_type, path, error) - compat
+    # Updated finished signal to include transaction ID
+    operationFinished = Signal(str, str, str, str, bool, str)   # (tid, job_id, op_type, result_path, success, message)
+    operationCompleted = Signal(str, str, str)   # (op_type, path, result) - LEGACY COMPAT for UI
+    operationError = Signal(str, str, str)       # (op_type, path, error) - LEGACY COMPAT for UI
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -378,7 +411,21 @@ class FileOperations(QObject):
     
     def setTrashManager(self, trash_manager):
         """Inject a TrashManager to delegate trash operations."""
+        if self._trash_manager:
+            try:
+                self._trash_manager.operationStarted.disconnect(self.operationStarted)
+                self._trash_manager.operationProgress.disconnect(self.operationProgress)
+                self._trash_manager.operationFinished.disconnect(self.operationFinished)
+            except RuntimeError:
+                pass
+
         self._trash_manager = trash_manager
+        
+        if self._trash_manager:
+            # Proxy signals so TransactionManager only needs to listen to us
+            self._trash_manager.operationStarted.connect(self.operationStarted)
+            self._trash_manager.operationProgress.connect(self.operationProgress)
+            self._trash_manager.operationFinished.connect(self.operationFinished)
     
     # -------------------------------------------------------------------------
     # INTERNAL SIGNAL HANDLERS
@@ -392,7 +439,7 @@ class FileOperations(QObject):
         # For overlay compatibility, emit with job_id
         self.operationProgress.emit(job_id, current, total)
     
-    def _on_finished(self, job_id: str, op_type: str, path: str, success: bool, message: str):
+    def _on_finished(self, tid: str, job_id: str, op_type: str, result_path: str, success: bool, message: str):
         """Handle completion and emit appropriate signal."""
         # Get job info
         with QMutexLocker(self._mutex):
@@ -400,77 +447,64 @@ class FileOperations(QObject):
             if job:
                 del self._jobs[job_id]
         
+        # Emit the new transaction-aware signal
+        self.operationFinished.emit(tid, job_id, op_type, result_path, success, message)
+        
+        # Legacy signals for existing UI (ProgressOverlay)
+        # We can eventually phase these out or have TransactionManager drive the UI.
         if success:
-            self.operationCompleted.emit(op_type, path, message)
+            self.operationCompleted.emit(op_type, result_path, message)
             
-            # Record for Undo
-            if self._undo_manager:
-                dest_path = message if message else ""
-                if "|" in dest_path:
-                    dest_path = dest_path.split("|")[0]
-                
-                op_record = {
-                    "type": op_type,
-                    "src": path,
-                    "dest": dest_path,
-                    "timestamp": time.time()
-                }
-                
-                if op_type == "createFolder":
-                    op_record["dest"] = path
-                elif op_type == "restoreTrash":
-                    # For restore, 'path' is the original path, 'message' is also the original path
-                    op_record["src"] = path
-                    op_record["dest"] = "" # No specific 'dest' for restore, it goes back to 'src'
-                
-                self._undo_manager.push(op_record)
+            # Undo Recording has been Moved to TransactionManager!
+            # We no longer push to _undo_manager here.
+            
         else:
-            self.operationError.emit(op_type, path, message)
+            self.operationError.emit(op_type, result_path, message)
     
     # -------------------------------------------------------------------------
     # PUBLIC API (Non-blocking, returns job_id)
     # -------------------------------------------------------------------------
-    @Slot(str, str, result=str)
-    def copy(self, source_path: str, dest_path: str) -> str:
+    @Slot(str, str, str, result=str)
+    def copy(self, source_path: str, dest_path: str, transaction_id: str = "") -> str:
         """Copy a file/directory asynchronously. Returns job_id."""
         job = FileJob(
             id=str(uuid4()),
             op_type="copy",
             source=source_path,
-            dest=dest_path
+            dest=dest_path,
+            transaction_id=transaction_id
         )
         return self._submit(job, CopyRunnable)
     
-    @Slot(str, str, result=str)
-    def move(self, source_path: str, dest_path: str) -> str:
+    @Slot(str, str, str, result=str)
+    def move(self, source_path: str, dest_path: str, transaction_id: str = "") -> str:
         """Move a file asynchronously. Returns job_id."""
         job = FileJob(
             id=str(uuid4()),
             op_type="move",
             source=source_path,
-            dest=dest_path
+            dest=dest_path,
+            transaction_id=transaction_id
         )
         return self._submit(job, MoveRunnable)
     
-    @Slot(str, result=str)
-    def trash(self, path: str) -> str:
+    @Slot(str, str, result=str)
+    def trash(self, path: str, transaction_id: str = "") -> str:
         """
         Move a file to trash asynchronously. Returns job_id.
         Delegates to TrashManager if available.
         """
         if self._trash_manager:
-            return self._trash_manager.trash(path)
+            return self._trash_manager.trash(path, transaction_id)
         else:
-            # Inline fallback: direct Gio.File.trash()
-            # Note: This doesn't have the graceful error handling of TrashManager
-            gfile = Gio.File.new_for_path(path)
-            try:
-                gfile.trash(None)
-                self.operationCompleted.emit("trash", path, "")
-                return "inline-trash"
-            except GLib.Error as e:
-                self.operationError.emit("trash", path, str(e))
-                return "inline-trash-error"
+            # Inline fallback using ThreadPool
+            job = FileJob(
+                id=str(uuid4()),
+                op_type="trash",
+                source=path,
+                transaction_id=transaction_id
+            )
+            return self._submit(job, InlineTrashRunnable)
     
     @Slot(list)
     def trashMultiple(self, paths: list):
@@ -478,24 +512,26 @@ class FileOperations(QObject):
         for path in paths:
             self.trash(path)
     
-    @Slot(str, str, result=str)
-    def rename(self, path: str, new_name: str) -> str:
+    @Slot(str, str, str, result=str)
+    def rename(self, path: str, new_name: str, transaction_id: str = "") -> str:
         """Rename a file/folder asynchronously. Returns job_id."""
         job = FileJob(
             id=str(uuid4()),
             op_type="rename",
             source=path,
-            dest=new_name  # dest stores the new name
+            dest=new_name,  # dest stores the new name
+            transaction_id=transaction_id
         )
         return self._submit(job, RenameRunnable)
     
-    @Slot(str, result=str)
-    def createFolder(self, path: str) -> str:
+    @Slot(str, str, result=str)
+    def createFolder(self, path: str, transaction_id: str = "") -> str:
         """Create a new folder asynchronously. Returns job_id."""
         job = FileJob(
             id=str(uuid4()),
             op_type="createFolder",
-            source=path
+            source=path,
+            transaction_id=transaction_id
         )
         return self._submit(job, CreateFolderRunnable)
     

@@ -45,6 +45,7 @@ class TrashJob:
     id: str
     op_type: str             # "trash", "restore", "empty", "list"
     source: str = ""         # Original path (for trash/restore)
+    transaction_id: str = "" # Batch ID
     cancellable: Gio.Cancellable = field(default_factory=Gio.Cancellable.new)
     status: str = "pending"
 
@@ -54,8 +55,8 @@ class TrashJob:
 # =============================================================================
 class TrashSignals(QObject):
     """Signals emitted by trash operations."""
-    started = Signal(str, str)              # (job_id, op_type)
-    finished = Signal(str, str, bool, str)  # (job_id, op_type, success, message)
+    started = Signal(str, str, str)              # (job_id, op_type, path)
+    finished = Signal(str, str, str, str, bool, str)  # (tid, job_id, op_type, result_path, success, message)
     progress = Signal(str, int, int)        # (job_id, current, total)
     itemListed = Signal(object)             # TrashItem (for list operation)
     trashNotSupported = Signal(str, str)    # (path, error_message) - for fallback prompt
@@ -74,11 +75,12 @@ class TrashRunnable(QRunnable):
         self.setAutoDelete(True)
     
     def emit_started(self):
-        self.signals.started.emit(self.job.id, self.job.op_type)
+        self.signals.started.emit(self.job.id, self.job.op_type, self.job.source)
     
     def emit_finished(self, success: bool, message: str = ""):
         self.job.status = "done" if success else "error"
-        self.signals.finished.emit(self.job.id, self.job.op_type, success, message)
+        result_path = self.job.source  # For trash ops, result is the original path
+        self.signals.finished.emit(self.job.transaction_id, self.job.id, self.job.op_type, result_path, success, message)
 
 
 # =============================================================================
@@ -365,8 +367,8 @@ class TrashManager(QObject):
     """
     
     # Public signals
-    operationStarted = Signal(str, str)              # (job_id, op_type)
-    operationFinished = Signal(str, str, bool, str)  # (job_id, op_type, success, message)
+    operationStarted = Signal(str, str, str)              # (job_id, op_type, path)
+    operationFinished = Signal(str, str, str, str, bool, str)  # (tid, job_id, op_type, result_path, success, message)
     operationProgress = Signal(str, int, int)        # (job_id, current, total)
     itemListed = Signal(object)                      # TrashItem
     trashNotSupported = Signal(str, str)             # (path, error) - for "Delete permanently?" dialog
@@ -388,14 +390,14 @@ class TrashManager(QObject):
     # -------------------------------------------------------------------------
     # PRIVATE SLOTS
     # -------------------------------------------------------------------------
-    def _on_started(self, job_id: str, op_type: str):
-        self.operationStarted.emit(job_id, op_type)
+    def _on_started(self, job_id: str, op_type: str, path: str):
+        self.operationStarted.emit(job_id, op_type, path)
     
-    def _on_finished(self, job_id: str, op_type: str, success: bool, message: str):
+    def _on_finished(self, tid: str, job_id: str, op_type: str, result_path: str, success: bool, message: str):
         with QMutexLocker(self._mutex):
             if job_id in self._jobs:
                 del self._jobs[job_id]
-        self.operationFinished.emit(job_id, op_type, success, message)
+        self.operationFinished.emit(tid, job_id, op_type, result_path, success, message)
     
     def _submit(self, job: TrashJob, runnable_class) -> str:
         """Submit a job to the thread pool."""
@@ -409,29 +411,31 @@ class TrashManager(QObject):
     # -------------------------------------------------------------------------
     # PUBLIC API
     # -------------------------------------------------------------------------
-    @Slot(str, result=str)
-    def trash(self, path: str) -> str:
+    @Slot(str, str, result=str)
+    def trash(self, path: str, transaction_id: str = "") -> str:
         """Move a file to trash. Returns job_id."""
         job = TrashJob(
             id=str(uuid4()),
             op_type="trash",
-            source=path
+            source=path,
+            transaction_id=transaction_id
         )
         return self._submit(job, SendToTrashRunnable)
     
     @Slot(list)
     def trashMultiple(self, paths: list):
-        """Trash multiple files (each as separate job)."""
+        """Trash multiple files. Note: Does not support transaction_id grouping yet."""
         for path in paths:
             self.trash(path)
     
-    @Slot(str, result=str)
-    def restore(self, original_path: str) -> str:
+    @Slot(str, str, result=str)
+    def restore(self, original_path: str, transaction_id: str = "") -> str:
         """Restore a file from trash by its original path. Returns job_id."""
         job = TrashJob(
             id=str(uuid4()),
             op_type="restore",
-            source=original_path
+            source=original_path,
+            transaction_id=transaction_id
         )
         return self._submit(job, RestoreFromTrashRunnable)
     
