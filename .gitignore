@@ -50,8 +50,7 @@ Thumbs.db
 assets/template/
 
 # Reference code (not part of project)
-assets/dflynav-src/
-assets/poc_*.py
+
 
 # Test artifacts
 test_*
