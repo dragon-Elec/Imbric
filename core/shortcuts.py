@@ -19,7 +19,7 @@ Integration:
     - Shortcuts persisted to QSettings
 """
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Signal, Slot, QSettings, Qt
 from PySide6.QtGui import QKeySequence, QShortcut, QAction
 from PySide6.QtWidgets import QWidget
 from enum import Enum, auto
@@ -133,7 +133,8 @@ class Shortcuts(QObject):
         super().__init__(parent)
         self._shortcuts: Dict[ShortcutAction, str] = DEFAULT_SHORTCUTS.copy()
         self._actions: Dict[ShortcutAction, QAction] = {}
-        self._handlers: Dict[ShortcutAction, Callable] = {}
+        self._handlers: Dict[ShortcutAction, list] = {} # List of handlers
+        self._settings = QSettings("Imbric", "Shortcuts")
     
     # -------------------------------------------------------------------------
     # PUBLIC API
@@ -144,8 +145,30 @@ class Shortcuts(QObject):
         Create all shortcuts and attach to the window.
         Call this once during MainWindow initialization.
         """
-        raise NotImplementedError("TODO: Implement - Create QActions for all shortcuts")
-    
+        self.load() # Load custom shortcuts first
+        
+        for action_enum, key_seq in self._shortcuts.items():
+            action = QAction(window)
+            action.setShortcut(QKeySequence(key_seq))
+            action.setShortcutContext(Qt.WindowShortcut if "Ctrl" in key_seq else Qt.WidgetWithChildrenShortcut)
+            # Default to WindowShortcut context for most things, but some might need tuning.
+            # Actually, using ShortcutContext.WindowShortcut is usually best for global app shortcuts.
+            action.setShortcutContext(Qt.WindowShortcut)
+            
+            # Connect internal trigger to emit signal
+            # We use a lambda to capture the enum value
+            action.triggered.connect(lambda checked=False, a=action_enum: self._on_triggered(a))
+            
+            window.addAction(action)
+            self._actions[action_enum] = action
+            
+    def _on_triggered(self, action_enum: ShortcutAction):
+        """Internal handler to emit signal and call registered handlers."""
+        self.shortcutTriggered.emit(action_enum)
+        if action_enum in self._handlers:
+            for handler in self._handlers[action_enum]:
+                handler()
+
     def connect(self, action: ShortcutAction, handler: Callable):
         """
         Connect a handler function to a shortcut action.
@@ -154,7 +177,9 @@ class Shortcuts(QObject):
             action: The ShortcutAction to handle
             handler: Callable to invoke when shortcut triggered
         """
-        raise NotImplementedError("TODO: Implement - Store handler, connect QAction")
+        if action not in self._handlers:
+            self._handlers[action] = []
+        self._handlers[action].append(handler)
     
     def set(self, action: ShortcutAction, key_sequence: str):
         """
@@ -164,7 +189,10 @@ class Shortcuts(QObject):
             action: The action to rebind
             key_sequence: New key sequence (e.g., "Ctrl+Shift+A")
         """
-        raise NotImplementedError("TODO: Implement - Update QAction shortcut")
+        self._shortcuts[action] = key_sequence
+        if action in self._actions:
+            self._actions[action].setShortcut(QKeySequence(key_sequence))
+        self.save()
     
     def get(self, action: ShortcutAction) -> str:
         """Get the current key sequence for an action."""
@@ -175,21 +203,55 @@ class Shortcuts(QObject):
         Reset shortcut(s) to defaults.
         If action is None, resets all shortcuts.
         """
-        raise NotImplementedError("TODO: Implement - Restore from DEFAULT_SHORTCUTS")
+        if action:
+            default_key = DEFAULT_SHORTCUTS.get(action, "")
+            self.set(action, default_key)
+        else:
+            for act, key in DEFAULT_SHORTCUTS.items():
+                self.set(act, key)
     
     def save(self):
         """Persist current shortcuts to QSettings."""
-        raise NotImplementedError("TODO: Implement - QSettings.setValue for each action")
+        self._settings.beginGroup("KeyBindings")
+        for action, key in self._shortcuts.items():
+            self._settings.setValue(action.name, key)
+        self._settings.endGroup()
+        self._settings.sync()
     
     def load(self):
         """Load shortcuts from QSettings."""
-        raise NotImplementedError("TODO: Implement - QSettings.value for each action")
+        self._settings.beginGroup("KeyBindings")
+        keys = self._settings.childKeys()
+        for key_name in keys:
+            # key_name matches ShortcutAction.name (e.g., "COPY")
+            try:
+                action = ShortcutAction[key_name]
+                sequence = self._settings.value(key_name)
+                if sequence:
+                    self._shortcuts[action] = str(sequence)
+            except KeyError:
+                pass # Unknown action in settings
+        self._settings.endGroup()
     
     def get_conflicts(self) -> Dict[str, list]:
         """
         Find shortcut conflicts (same key bound to multiple actions).
         
         Returns:
-            Dict mapping key_sequence to list of conflicting actions
+            Dict mapping key_sequence to list of interacting actions
         """
-        raise NotImplementedError("TODO: Implement - Group actions by key sequence")
+        reverse_map = {}
+        conflicts = {}
+        
+        for action, key in self._shortcuts.items():
+            if not key: continue
+            if key in reverse_map:
+                reverse_map[key].append(action)
+            else:
+                reverse_map[key] = [action]
+        
+        for key, actions in reverse_map.items():
+            if len(actions) > 1:
+                conflicts[key] = actions
+                
+        return conflicts
