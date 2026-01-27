@@ -34,7 +34,7 @@ class BrowserTab(QWidget):
         # Per-tab components
         from core.gio_bridge.scanner import FileScanner
         from ui.models.column_splitter import ColumnSplitter
-        from core.selection_helper import SelectionHelper
+        from ui.models.selection_helper import SelectionHelper
         from ui.models.app_bridge import AppBridge
         
         self.scanner = FileScanner()

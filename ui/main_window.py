@@ -7,15 +7,18 @@ from pathlib import Path
 import os
 
 # Import core logic (shared across tabs)
+# Import core logic (shared across tabs)
 from core.file_operations import FileOperations
-from core.clipboard_manager import ClipboardManager
+from ui.models.clipboard_manager import ClipboardManager
 from core.file_monitor import FileMonitor
 from core.transaction_manager import TransactionManager
 from core.undo_manager import UndoManager
 from core.trash_manager import TrashManager
-from ui.widgets.progress_overlay import ProgressOverlay
-from ui.widgets.status_bar import StatusBar
-from ui.widgets.tab_manager import TabManager
+
+# UI Elements
+from ui.elements.progress_overlay import ProgressOverlay
+from ui.elements.status_bar import StatusBar
+from ui.elements.tab_manager import TabManager
 
 
 class MainWindow(QMainWindow):
