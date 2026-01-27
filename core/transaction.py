@@ -49,3 +49,18 @@ class Transaction:
         if self.total_ops == 0:
             return 0.0
         return self.completed_ops / self.total_ops
+
+    def find_operation(self, job_id: str) -> Optional[TransactionOperation]:
+        """Finds an operation by its job ID."""
+        for op in self.ops:
+            if op.job_id == job_id:
+                return op
+        return None
+
+    def update_status(self, job_id: str, status: TransactionStatus, error: str = ""):
+        """Updates status of a specific operation."""
+        op = self.find_operation(job_id)
+        if op:
+            op.status = status
+            op.error = error
+
