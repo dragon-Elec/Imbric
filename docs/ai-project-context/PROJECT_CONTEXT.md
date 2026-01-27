@@ -79,29 +79,32 @@ Unified utility for Gio metadata extraction. Single source of truth for:
 - `resolve_mime_icon(gfile)`
 Used by `FileOperations`, `TrashManager`, and `FilePropertiesModel`.
 
-#### `core/file_operations.py` — Parallel File I/O (~575 lines) `[DONE]`
-True parallel file operations via QThreadPool + QRunnable. Each operation runs independently.
+#### `core/file_operations.py` — Operations Controller (~220 lines) `[REFACTORED]`
+Unified controller for all I/O (Standard + Trash). Orchestrates workers via `QThreadPool`.
 
-- `FileJob` (dataclass): Per-operation tracking (UUID, status, cancellable)
-- `FileOperationSignals` (QObject): Thread-safe signal hub for runnables
-- Runnables (QRunnable subclasses):
-  - `CopyRunnable` — recursive copy with progress
-  - `MoveRunnable` — move with auto directory merge
-  - `TrashRunnable` — Gio trash integration
-  - `RenameRunnable` — display name change
-  - `CreateFolderRunnable` — mkdir
-- `FileOperations` (Controller):
-  - `copy(src, dest)` → returns `job_id`
-  - `move(src, dest)`, `trash(path)`, `trashMultiple(paths)`
-  - `rename(path, name)`, `createFolder(path)`
-  - `cancel(job_id=None)` — cancel specific or all ops
-  - `activeJobCount()`, `jobStatus(job_id)` — status queries
-  - `openWithDefaultApp(path)` — sync, launches via `Gio.AppInfo`
-- **Signals:** 
-  - `operationStarted(job_id, op_type, path)`
-  - `operationProgress(job_id, current, total)`
-  - `operationFinished(tid, job_id, op_type, result_path, success, message)`
-  - `operationError(job_id, op_type, path, message, conflict_data)`
+- **Role:** Single source of truth for UI. Manages `jobs` dict and signals.
+- **Methods:**
+  - `copy()`, `move()`, `rename()`, `createFolder()`
+  - `trash()`, `restore()`, `listTrash()`, `emptyTrash()`
+  - `cancel(job_id)`
+  - `setUndoManager(mgr)` — dependency injection
+- **Signals:** Unified `operationStarted`, `operationProgress`, `operationFinished`, `operationError`.
+
+#### `core/file_workers.py` — Standard Ops Logic (~280 lines) `[NEW]`
+Contains the `QRunnable` implementations for standard file operations.
+- `FileJob` (dataclass): Shared state (UUID, status, paths).
+- `CopyRunnable`: Recursive copy with progress.
+- `MoveRunnable`: Move with "Directory Merge" logic and fallback strategies.
+- `RenameRunnable`: Wraps `Gio.set_display_name`.
+- `CreateFolderRunnable`: Wraps `Gio.make_directory`.
+
+#### `core/trash_workers.py` — Trash Ops Logic (~200 lines) `[NEW]`
+Contains the `QRunnable` implementations for Trash operations.
+- `SendToTrashRunnable`: Wraps `Gio.trash`.
+- `RestoreFromTrashRunnable`: Restores via `trash://` URI, handles rename-on-restore.
+- `ListTrashRunnable`: Enumerates `trash://` and builds `TrashItem` list.
+- `EmptyTrashRunnable`: Recursively deletes `trash://` contents.
+- `TrashItem` (dataclass): Metadata wrapper.
 
 ---
 
@@ -175,15 +178,7 @@ Tracks file operations for undo/redo capability.
 
 ---
 
-#### `core/trash_manager.py` — Native Trash Handling `[DONE]`
-Freedeskop.org-compliant trash management using Gio/GVFS.
 
-- `trash(path)` — move file to trash, handles external drive errors gracefully
-- `restore(original_path)` — find file in `trash:///` by `trash::orig-path`, restore newest
-- `listTrash()` — enumerate all trash items with metadata
-- `emptyTrash()` — permanently delete all trash contents (recursive)
-- **Signals:** `operationFinished`, `itemListed`, `trashNotSupported`, `operationError`
-- **Data:** `TrashItem` dataclass (trash_name, display_name, original_path, deletion_date, size, is_dir)
 
 ---
 
@@ -222,12 +217,20 @@ Async file search with glob patterns.
 - `filter(files, pattern)` → sync in-memory filter
 - **Signals:** `resultsFound(list)`, `searchFinished(count)`
 
+#### `core/search_worker.py` — Background Search Worker (50 lines)
+`QThread` implementation for running blocking search operations off the main thread.
+- Wraps `core.search.search_files`.
+- Emits results back to UI via Qt signals.
+
 ---
+
+
+
+### 1.2. UI Models (`ui/models/`)
 
 #### `ui/models/file_properties_model.py` — File Metadata `[DONE]`
 Reads detailed file properties (size, dates, permissions).
 Delegates core logic to `core.metadata_utils`.
-
 - `get_properties(path)` → `FileInfo` dict
 - `format_size(bytes)` → "1.2 MB"
 - `is_symlink(path)`, `get_symlink_target(path)`
@@ -236,7 +239,6 @@ Delegates core logic to `core.metadata_utils`.
 
 #### `ui/models/shortcuts_model.py` — Keyboard Shortcuts `[DONE]`
 Centralized shortcut management with customization support.
-
 - `setup(window)` — create all shortcuts
 - `connect(action, handler)` — bind handler to action
 - `set(action, key_sequence)` — change binding
@@ -244,8 +246,6 @@ Centralized shortcut management with customization support.
 - Default mappings: Ctrl+A (Select All), Backspace (Go Up), etc.
 
 ---
-
-### 1.2. UI Models (`ui/models/`)
 
 #### `ui/models/app_bridge.py` — QML-Python Controller (350 lines)
 Central bridge exposing Python logic to QML context.
