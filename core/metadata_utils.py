@@ -117,7 +117,7 @@ def to_unix_timestamp(dt: GLib.DateTime | None) -> int:
         return 0
     try:
         return int(dt.to_unix())
-    except Exception:
+    except (GLib.Error, ValueError, OverflowError):
         return 0
 
 
@@ -164,7 +164,7 @@ def resolve_mime_icon(gfile: Gio.File, cancellable: Gio.Cancellable = None) -> s
             # We could try to_string() but it might be a serialization
             pass
             
-    except Exception:
+    except GLib.Error:
         pass
         
     # Ultimate fallback
@@ -252,6 +252,7 @@ def get_file_info(path: str, attributes: str = ATTRS_FULL) -> Optional[FileInfo]
             group=group
         )
         
-    except Exception as e:
-        print(f"[MetadataUtils] Error querying {path}: {e}")
+    except GLib.Error as e:
+        # Expected for non-existent files or permission errors during scan
+        # print(f"[MetadataUtils] Error querying {path}: {e}")
         return None

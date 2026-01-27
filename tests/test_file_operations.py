@@ -92,8 +92,8 @@ class TestFileOperations(QObject):
     def _on_completed(self, op_type, path, result):
         self.completed_jobs.append((op_type, path, result))
     
-    @Slot(str, str, str)
-    def _on_error(self, op_type, path, error):
+    @Slot(str, str, str, str, object)
+    def _on_error(self, job_id, op_type, path, error, conflict_data):
         self.errors.append((op_type, path, error))
     
     @Slot(str, int, int)
