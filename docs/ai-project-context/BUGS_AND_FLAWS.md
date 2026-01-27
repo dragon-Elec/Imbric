@@ -98,6 +98,18 @@ Was: Long ops blocked short ops (sequential queue).
 Why: Single `QThread` serialization.
 Path: Refactored to `QThreadPool` + `QRunnable` for parallel execution.
 
+### ✅ BUG-011: Incomplete Undo Stack
+[core/undo_manager.py](file:///home/ray/Desktop/files/wrk/Imbric/core/undo_manager.py) | MEDIUM | FIXED (2026-01-26)
+Was: Trash/Restore/Mkdir undo missing. Async race conditions.
+Why: `_execute` returned optimistic success before I/O completion.
+Path: Rewrote UndoManager to be event-driven (async-aware). Added `TransactionManager` wiring.
+
+### ✅ BUG-019: Missing UI Init
+[ui/__init__.py](file:///home/ray/Desktop/files/wrk/Imbric/ui/__init__.py) | HIGH | FIXED (2026-01-27)
+Was: ModuleNotFoundError when importing from `ui`.
+Why: Missing `__init__.py` preventing package discovery.
+Path: Added empty `__init__.py`.
+
 ---
 
 ## 🆕 Unresolved Flaws (Jan 25 Analysis)
@@ -106,16 +118,12 @@ Path: Refactored to `QThreadPool` + `QRunnable` for parallel execution.
 
 
 ### BUG-010: Destructive Folder Overwrite
-**Files:** `ui/dialogs/conflict_dialog.py`
+**Files:** `ui/elements/conflict_dialog.py`
 **Severity:** HIGH
 **Symptom:** "Overwrite" action on a folder might replace the *entire* target folder structure instead of merging.
 **Path:** `ConflictResolver` needs specific `WOULD_MERGE` handling or a "Merge" option separate from "Overwrite" for directories.
 
-### ✅ BUG-011: Incomplete Undo Stack
-[core/undo_manager.py](file:///home/ray/Desktop/files/wrk/Imbric/core/undo_manager.py) | MEDIUM | FIXED (2026-01-26)
-Was: Trash/Restore/Mkdir undo missing. Async race conditions.
-Why: `_execute` returned optimistic success before I/O completion.
-Path: Rewrote UndoManager to be event-driven (async-aware). Added `TransactionManager` wiring.
+
 
 ### BUG-012: Race Condition in "New Folder"
 **Files:** `ui/models/app_bridge.py`
@@ -138,7 +146,7 @@ Path: Rewrote UndoManager to be event-driven (async-aware). Added `TransactionMa
 **Path:** Enable `CHANGED` event handling but throttle it heavily to avoid spam.
 
 ### BUG-015: Blind Status Bar
-**Files:** `ui/widgets/status_bar.py`
+**Files:** `ui/elements/status_bar.py`
 **Severity:** LOW
 **Symptom:** Shows "0 items" during long directory scans with no "Loading..." indicator.
 **Path:** Add `onScanStarted` signal to `FileScanner` and connect to StatusBar to show a spinner or "Scanning..." text.
