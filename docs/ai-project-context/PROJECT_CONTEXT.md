@@ -72,6 +72,13 @@
 
 ### 1.1. Core Layer (`core/`)
 
+#### `core/metadata_utils.py` — File Metadata Logic (~250 lines) `[NEW]`
+Unified utility for Gio metadata extraction. Single source of truth for:
+- `get_file_info(path)` → `FileInfo` dataclass
+- `format_size(bytes)`
+- `resolve_mime_icon(gfile)`
+Used by `FileOperations`, `TrashManager`, and `FilePropertiesModel`.
+
 #### `core/file_operations.py` — Parallel File I/O (~575 lines) `[DONE]`
 True parallel file operations via QThreadPool + QRunnable. Each operation runs independently.
 
@@ -93,8 +100,8 @@ True parallel file operations via QThreadPool + QRunnable. Each operation runs i
 - **Signals:** 
   - `operationStarted(job_id, op_type, path)`
   - `operationProgress(job_id, current, total)`
-  - `operationCompleted(op_type, path, result)` — compat with old API
-  - `operationError(op_type, path, error)`
+  - `operationFinished(tid, job_id, op_type, result_path, success, message)`
+  - `operationError(job_id, op_type, path, message, conflict_data)`
 
 ---
 
@@ -116,6 +123,16 @@ Parses `~/.config/gtk-3.0/bookmarks`.
 
 ---
 
+#### `core/gio_bridge/count_worker.py` — Recursive Item Counter (115 lines) [NEW]
+Background worker using `QThreadPool` + `os.scandir` for non-blocking directory size calc.
+
+- `ItemCountWorker`:
+  - `enqueue(path)` — adds folder to count queue
+  - `countReady(path, count)` — signal emitted on completion
+- Uses `C`-optimized `os.scandir` for speed over `pathlib`.
+
+---
+
 #### `core/gio_bridge/volumes.py` — Mounted Volumes (35 lines)
 Wraps `Gio.VolumeMonitor`.
 
@@ -134,24 +151,9 @@ Wraps `Gio.VolumeMonitor`.
 
 ---
 
-#### `core/clipboard_manager.py` — System Clipboard (148 lines)
-Qt clipboard wrapper for Copy/Cut/Paste. GNOME-compatible MIME.
 
-- `copy(paths)` / `cut(paths)` — set clipboard with `x-special/gnome-copied-files` marker
-- `getFiles()` → `list[str]` paths from clipboard
-- `isCut()` → checks GNOME marker, defaults to copy if missing
-- `hasFiles()`, `clear()`
-- **Formats:** `text/uri-list` + `x-special/gnome-copied-files`
 
----
 
-#### `core/selection_helper.py` — Rubberband Geometry (76 lines)
-Hit-testing for Masonry layout selection.
-
-- `getMasonrySelection(splitter, col_count, col_width, spacing, x, y, w, h)` → `list[paths]`
-- Replicates Masonry layout math (virtualized ListView can't query off-screen)
-
----
 
 #### `core/file_monitor.py` — Directory Watcher (126 lines)
 `Gio.FileMonitor` wrapper for live directory changes.
@@ -180,7 +182,7 @@ Freedeskop.org-compliant trash management using Gio/GVFS.
 - `restore(original_path)` — find file in `trash:///` by `trash::orig-path`, restore newest
 - `listTrash()` — enumerate all trash items with metadata
 - `emptyTrash()` — permanently delete all trash contents (recursive)
-- **Signals:** `operationFinished`, `itemListed`, `trashNotSupported`
+- **Signals:** `operationFinished`, `itemListed`, `trashNotSupported`, `operationError`
 - **Data:** `TrashItem` dataclass (trash_name, display_name, original_path, deletion_date, size, is_dir)
 
 ---
@@ -194,6 +196,25 @@ Sorts file lists by name, date, size, or type.
 
 ---
 
+#### `core/transaction.py` — Transaction Data Models (52 lines)
+Data definitions for batch operations.
+
+- `Transaction` (dataclass): Batch wrapper with ID, description, status.
+- `TransactionOperation` (dataclass): Atomic op definition (copy/move/trash).
+- `TransactionStatus` (Enum): `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`.
+
+---
+
+#### `core/transaction_manager.py` — I/O Orchestrator `[DONE]`
+Central nervous system for batch operations and conflict handling.
+
+- `startTransaction(description)` — begins a new batch
+- `addOperation(tid, op_type, src, dest)` — registers intent
+- `resolveConflict(job_id, resolution, new_name)` — handles pause/resume logic
+- **Signals:** `transactionStarted`, `transactionFinished`, `transactionProgress`, `conflictDetected`, `conflictResolved`
+
+---
+
 #### `core/search.py` — File Search `[STUB]`
 Async file search with glob patterns.
 
@@ -203,8 +224,9 @@ Async file search with glob patterns.
 
 ---
 
-#### `core/file_properties.py` — File Metadata `[STUB]`
+#### `ui/models/file_properties_model.py` — File Metadata `[DONE]`
 Reads detailed file properties (size, dates, permissions).
+Delegates core logic to `core.metadata_utils`.
 
 - `get_properties(path)` → `FileInfo` dict
 - `format_size(bytes)` → "1.2 MB"
@@ -212,7 +234,7 @@ Reads detailed file properties (size, dates, permissions).
 
 ---
 
-#### `core/shortcuts.py` — Keyboard Shortcuts `[STUB]`
+#### `ui/models/shortcuts_model.py` — Keyboard Shortcuts `[DONE]`
 Centralized shortcut management with customization support.
 
 - `setup(window)` — create all shortcuts
@@ -264,6 +286,25 @@ Combines bookmarks + volumes for sidebar QTreeView.
 
 ---
 
+#### `ui/models/clipboard_manager.py` — System Clipboard (148 lines)
+Qt clipboard wrapper for Copy/Cut/Paste. GNOME-compatible MIME.
+
+- `copy(paths)` / `cut(paths)` — set clipboard with `x-special/gnome-copied-files` marker
+- `getFiles()` → `list[str]` paths from clipboard
+- `isCut()` → checks GNOME marker, defaults to copy if missing
+- `hasFiles()`, `clear()`
+- **Formats:** `text/uri-list` + `x-special/gnome-copied-files`
+
+---
+
+#### `ui/models/selection_helper.py` — Rubberband Geometry (76 lines)
+Hit-testing for Masonry layout selection.
+
+- `getMasonrySelection(splitter, col_count, col_width, spacing, x, y, w, h)` → `list[paths]`
+- Replicates Masonry layout math (virtualized ListView can't query off-screen)
+
+---
+
 ### 1.3. UI Main (`ui/`)
 
 #### `ui/main_window.py` — Application Shell (423 lines)
@@ -282,9 +323,9 @@ Combines bookmarks + volumes for sidebar QTreeView.
 
 ---
 
-### 1.4. UI Widgets (`ui/widgets/`)
+### 1.4. UI Elements (`ui/elements/`)
 
-#### `ui/widgets/progress_overlay.py` — File Op Feedback (165 lines)
+#### `ui/elements/progress_overlay.py` — File Op Feedback (165 lines)
 Nautilus-style slide-up overlay. Shows only if op > 300ms.
 
 - `onOperationStarted(type, path)` — shows with delay
@@ -294,7 +335,7 @@ Nautilus-style slide-up overlay. Shows only if op > 300ms.
 
 ---
 
-#### `ui/widgets/status_bar.py` — Item Counts (85 lines)
+#### `ui/elements/status_bar.py` — Item Counts (85 lines)
 Bottom bar: "X items (Y folders, Z files)" or "X items selected".
 
 - `updateItemCount(files)` — accumulates batch counts
@@ -303,9 +344,7 @@ Bottom bar: "X items (Y folders, Z files)" or "X items selected".
 
 ---
 
-### 1.5. UI Widgets (`ui/widgets/`)
-
-#### `ui/widgets/tab_manager.py` — Multi-Tab Browser [NEW]
+#### `ui/elements/tab_manager.py` — Multi-Tab Browser `[DONE]`
 Wraps `QTabWidget` with per-tab state.
 
 - `TabManager`: Manages tabs, New/Close signals.
@@ -316,9 +355,7 @@ Wraps `QTabWidget` with per-tab state.
 
 ---
 
-### 1.6. UI Dialogs (`ui/dialogs/`) [NEW]
-
-#### `ui/dialogs/conflict_dialog.py` — File Conflict Resolution (212 lines)
+#### `ui/elements/conflict_dialog.py` — File Conflict Resolution (212 lines)
 Modal dialog for paste/drop/rename conflicts.
 
 - `ConflictAction` (Enum): `SKIP`, `OVERWRITE`, `RENAME`, `CANCEL`
@@ -407,7 +444,7 @@ See `usefulness.md` for full analysis.
    ↓
 [CORE] Backend (Shared)
    ├── I/O: GioBridge (Scanner, Volumes, Bookmarks)
-   ├── Ops: FileOperations (QThreadPool + QRunnable)
+   ├── Ops: TransManager -> FileOperations (QThreadPool)
    └── Media: ThumbnailProvider (GnomeDesktop)
 ```
 
@@ -424,7 +461,7 @@ Dependencies flow **downwards** only.
 - ✅ `SearchWorker`, `UndoManager` — IMPLEMENTED (UI pending)
 - 🚧 `ConflictDialog`, `Inline Rename` — PENDING VERIFICATION
 - ⏳ `DetailView` — TODO
-- ⏳ `TransactionManager` — STUB
+- ✅ `TransactionManager` — IMPLEMENTED
 
 ---
 

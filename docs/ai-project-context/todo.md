@@ -197,6 +197,11 @@
     - [x] Implement `listTrash()` (enumerate with metadata)
     - [x] Implement `emptyTrash()` (recursive delete)
     - [x] `trashNotSupported` signal for UI fallback prompt
+- [ ] **Transaction Manager & Conflict Architecture** <!-- id: 5 -->
+    - [ ] `TransactionManager`: Handle `conflictDetected` signals.
+    - [ ] `TrashManager`: Update `restore` to support `overwrite` and `rename_to` parameters.
+    - [ ] `TrashManager`: Emit rich conflict metadata instead of generic error.
+    - [ ] `UI`: Connect `TransactionManager` to `ConflictDialog` for "Resume/Retry" flow.
 - [ ] **Trash Management Testing**
     - [x] Basic trash & restore (`tests/test_trash_behavior.py`)
     - [x] Duplicate handling (restore newest by date)
