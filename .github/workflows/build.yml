@@ -13,6 +13,9 @@ on:
 env:
   APP_NAME: imbric
 
+permissions:
+  contents: write
+
 jobs:
   build-appimage:
     runs-on: ubuntu-22.04
