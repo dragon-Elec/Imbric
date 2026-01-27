@@ -5,7 +5,7 @@ Single source of truth for all keyboard shortcuts.
 Allows easy customization and conflict detection.
 
 Usage:
-    from core.shortcuts import Shortcuts, ShortcutAction
+    from ui.models.shortcuts_model import Shortcuts, ShortcutAction
     
     shortcuts = Shortcuts()
     shortcuts.setup(main_window)

@@ -1,7 +1,7 @@
 from PySide6.QtCore import QObject, Signal, Property, Slot, QUrl, QMimeData, Qt
 from PySide6.QtWidgets import QMenu
 from PySide6.QtGui import QCursor, QIcon, QDrag
-from ui.dialogs.conflict_dialog import ConflictResolver, ConflictAction
+from ui.elements.conflict_dialog import ConflictResolver, ConflictAction
 from core.search_worker import SearchWorker
 import os
 
