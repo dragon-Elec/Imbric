@@ -13,7 +13,7 @@ from ui.models.clipboard_manager import ClipboardManager
 from core.file_monitor import FileMonitor
 from core.transaction_manager import TransactionManager
 from core.undo_manager import UndoManager
-from core.trash_manager import TrashManager
+
 
 # UI Elements
 from ui.elements.progress_overlay import ProgressOverlay
@@ -39,22 +39,15 @@ class MainWindow(QMainWindow):
         # Undo Manager (History stack)
         self.undo_manager = UndoManager(file_operations=self.file_ops)
         
-        # Trash Manager (Native Freedesktop trash)
-        self.trash_manager = TrashManager()
-        
         # Wire them together:
         # 1. FileOperations -> TransactionManager (operation completion tracking)
         self.file_ops.operationFinished.connect(self.transaction_manager.onOperationFinished)
-        
-        # 2. TrashManager -> TransactionManager (trash operations use same tracking)
-        self.trash_manager.operationFinished.connect(self.transaction_manager.onOperationFinished)
         
         # 3. TransactionManager -> UndoManager (batch history)
         self.transaction_manager.historyCommitted.connect(self.undo_manager.push)
         
         # 4. Inject managers into FileOperations
         self.file_ops.setUndoManager(self.undo_manager)
-        self.file_ops.setTrashManager(self.trash_manager)
         
         # Auto-refresh: When files change in the watched directory, rescan
         self.file_monitor.directoryChanged.connect(self._on_directory_changed)
