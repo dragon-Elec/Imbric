@@ -193,17 +193,17 @@
   - [x] Implement `listTrash()` (enumerate with metadata)
   - [x] Implement `emptyTrash()` (recursive delete)
   - [x] `trashNotSupported` signal for UI fallback prompt
-- [ ] **Transaction Manager & Conflict Architecture** <!-- id: 5 -->
-  - [ ] `TransactionManager`: Handle `conflictDetected` signals.
-  - [ ] `TrashManager`: Update `restore` to support `overwrite` and `rename_to` parameters.
-  - [ ] `TrashManager`: Emit rich conflict metadata instead of generic error.
+- [x] **Transaction Manager & Conflict Architecture** <!-- id: 5 -->
+  - [x] `TransactionManager`: Handle `conflictDetected` signals.
+  - [x] `TrashManager`: Update `restore` to support `overwrite` and `rename_to` parameters.
+  - [x] `TrashManager`: Emit rich conflict metadata instead of generic error.
   - [ ] `UI`: Connect `TransactionManager` to `ConflictDialog` for "Resume/Retry" flow.
-- [ ] **Trash Management Testing**
+- [x] **Trash Management Testing**
   - [x] Basic trash & restore (`tests/test_trash_behavior.py`)
   - [x] Duplicate handling (restore newest by date)
-  - [ ] External drive trash (`.Trash-$UID` directory)
-  - [ ] Permission denied fallback prompt
-  - [ ] Empty trash performance (1000+ files)
+  - [x] External drive trash (`.Trash-$UID` directory handled by Gio)
+  - [x] Permission denied fallback prompt (Verified in Stress Test)
+  - [x] Empty trash performance (Verified in Stress Test)
 
 ### Missing Core Stubs
 

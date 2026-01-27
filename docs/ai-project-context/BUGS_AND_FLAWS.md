@@ -110,6 +110,24 @@ Was: ModuleNotFoundError when importing from `ui`.
 Why: Missing `__init__.py` preventing package discovery.
 Path: Added empty `__init__.py`.
 
+### ✅ BUG-020: Transaction Logic Missing
+[core/transaction_manager.py](file:///home/ray/Desktop/files/wrk/Imbric/core/transaction_manager.py) | CRITICAL | FIXED (2026-01-27)
+Was: `TransactionManager` ignored start/finish signals (empty methods) and crashed on Conflict Resolution (`NameError`).
+Why: Logic was stubbed out/commented.
+Path: Restored logic, fixed variable scope, verified with `test_transaction_conflict.py`.
+
+### ✅ BUG-021: Silent Permission Failure
+[core/file_workers.py](file:///home/ray/Desktop/files/wrk/Imbric/core/file_workers.py) | HIGH | FIXED (2026-01-27)
+Was: `CreateFolderRunnable` ignored `PermissionError` and reported success (false positive).
+Why: Swallow `GLib.Error` without emitting error signal.
+Path: Patched `emit_finished` flow to separate error vs cancellation. Verified with `test_stress_scenarios.py`.
+
+### ✅ BUG-022: Relative Path Undo Failure
+[core/file_workers.py](file:///home/ray/Desktop/files/wrk/Imbric/core/file_workers.py) | MEDIUM | FIXED (2026-01-27)
+Was: Undo Rename failed because worker returned relative path `renamed.txt`.
+Why: `Gio` sometimes returns relative paths; `TransactionManager` needs absolute for Undo.
+Path: Forced absolute path calculation in `RenameRunnable`. Verified with `test_undo_logic.py`.
+
 ---
 
 ## 🆕 Unresolved Flaws (Jan 25 Analysis)
@@ -117,11 +135,12 @@ Path: Added empty `__init__.py`.
 ### 🔴 Critical (Data Integrity)
 
 
-### BUG-010: Destructive Folder Overwrite
-**Files:** `ui/elements/conflict_dialog.py`
+### ✅ BUG-010: Destructive Folder Overwrite
+**Files:** `ui/elements/conflict_dialog.py` / `core/file_workers.py`
 **Severity:** HIGH
+**Status:** IMPLEMENTED (Backend) (2026-01-27)
 **Symptom:** "Overwrite" action on a folder might replace the *entire* target folder structure instead of merging.
-**Path:** `ConflictResolver` needs specific `WOULD_MERGE` handling or a "Merge" option separate from "Overwrite" for directories.
+**Path:** Backend logic in `_recursive_merge` confirmed in `file_workers.py`. UI "Merge" button still needed for explicit user choice, but backend is safe.
 
 
 
