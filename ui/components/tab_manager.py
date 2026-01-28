@@ -33,13 +33,18 @@ class BrowserTab(QWidget):
         
         # Per-tab components
         from core.gio_bridge.scanner import FileScanner
-        from ui.models.column_splitter import ColumnSplitter
-        from ui.models.selection_helper import SelectionHelper
+        from ui.managers.view_manager import ColumnSplitter, SelectionHelper
+        # AppBridge is now in ui.models but logic delegated
         from ui.models.app_bridge import AppBridge
         
         self.scanner = FileScanner()
         self.splitter = ColumnSplitter()
         self.selection_helper = SelectionHelper()
+
+        # Navigation History
+        self.history_stack = []
+        self.future_stack = []
+        self._is_history_nav = False
         
         # Connect scanner to splitter
         self.scanner.filesFound.connect(self.splitter.appendFiles)
@@ -112,10 +117,48 @@ class BrowserTab(QWidget):
         if not os.path.isdir(path):
             return
         
+        # Normalize path
+        path = os.path.abspath(path)
+        
+        # Don't navigate if same path (unless force refresh, but usually we skip)
+        # But here we might want to refresh? Let's just allow it but check stacks.
+        if self.current_path == path and not self._is_history_nav:
+             pass # Or should we refresh? Let's refresh.
+
+        if not self._is_history_nav:
+            if self.current_path and os.path.isdir(self.current_path):
+                 self.history_stack.append(self.current_path)
+            self.future_stack.clear()
+        
         self.current_path = path
-        self.splitter.setFiles([])  # Clear
-        self.scanner.scan_directory(path)
+        self.scan_current()
         self.pathChanged.emit(path)
+        
+        # Reset flag
+        self._is_history_nav = False
+
+    def scan_current(self):
+        """Re-scans the current directory."""
+        if self.current_path:
+            self.splitter.setFiles([])  # Clear
+            self.scanner.scan_directory(self.current_path)
+
+    def go_back(self):
+        if self.history_stack:
+            prev = self.history_stack.pop()
+            self.future_stack.append(self.current_path)
+            self._is_history_nav = True
+            self.navigate_to(prev)
+
+    def go_forward(self):
+        if self.future_stack:
+            next_path = self.future_stack.pop()
+            self.history_stack.append(self.current_path)
+            self._is_history_nav = True
+            self.navigate_to(next_path)
+    
+    def go_home(self):
+        self.navigate_to(str(Path.home()))
     
     def _on_scan_finished(self):
         """Called when directory scan completes."""
@@ -277,3 +320,37 @@ class TabManager(QTabWidget):
         tab = self.current_tab
         if tab:
             tab.navigate_to(path)
+
+    @Slot()
+    def next_tab(self):
+        """Switch to the next tab."""
+        if self.count() > 1:
+            next_idx = (self.currentIndex() + 1) % self.count()
+            self.setCurrentIndex(next_idx)
+
+    @Slot()
+    def prev_tab(self):
+        """Switch to the previous tab."""
+        if self.count() > 1:
+            prev_idx = (self.currentIndex() - 1) % self.count()
+            self.setCurrentIndex(prev_idx)
+
+    @Slot()
+    def close_current_tab(self):
+        """Close the currently active tab."""
+        self._close_tab(self.currentIndex())
+
+    @Slot()
+    def go_back(self):
+        if tab := self.current_tab:
+            tab.go_back()
+
+    @Slot()
+    def go_forward(self):
+        if tab := self.current_tab:
+            tab.go_forward()
+
+    @Slot()
+    def go_home(self):
+        if tab := self.current_tab:
+            tab.go_home()

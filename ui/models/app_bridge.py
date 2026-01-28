@@ -1,7 +1,7 @@
 from PySide6.QtCore import QObject, Signal, Property, Slot, QUrl, QMimeData, Qt
 from PySide6.QtWidgets import QMenu
 from PySide6.QtGui import QCursor, QIcon, QDrag
-from ui.elements.conflict_dialog import ConflictResolver, ConflictAction
+from ui.dialogs.conflicts import ConflictResolver, ConflictAction
 from core.search_worker import SearchWorker
 import os
 
@@ -38,7 +38,8 @@ class AppBridge(QObject):
     @Property(list, notify=cutPathsChanged)
     def cutPaths(self):
         """Returns list of paths currently in cut state."""
-        return self.mw.clipboard.getCutPaths()
+        # Delegated to FileManager
+        return self.mw.file_manager.get_cut_paths()
 
     @Slot(list)
     def startDrag(self, paths):
@@ -73,75 +74,9 @@ class AppBridge(QObject):
     def handleDrop(self, urls, dest_dir=None):
         """
         Handles files dropped onto the view or a folder.
+        Delegated to FileManager.
         """
-        if not urls:
-            return
-            
-        # Convert QUrl strings to local paths
-        paths = []
-        for u in urls:
-            qurl = QUrl(u)
-            if qurl.isLocalFile():
-                paths.append(qurl.toLocalFile())
-        
-        if not paths:
-            return
-
-        target_dir = dest_dir if dest_dir else self.mw.current_path
-        
-        # Determine device of target directory
-        try:
-            target_dev = os.stat(target_dir).st_dev
-        except OSError:
-            target_dev = None
-
-        # Create conflict resolver for this drop operation
-        resolver = ConflictResolver(self.mw)
-        
-
-        
-        # Start Transaction
-        desc = f"Drag & Drop {len(paths)} files"
-        tid = self.mw.transaction_manager.startTransaction(desc)
-        
-        for src in paths:
-             # Calculate destination path
-            dest = os.path.join(target_dir, os.path.basename(src))
-            
-            # Skip if dropping file onto itself
-            if os.path.abspath(src) == os.path.abspath(dest):
-                continue
-            
-            # Resolve conflict (shows dialog if dest exists)
-            action, final_dest = resolver.resolve(src, dest)
-            
-            if action == ConflictAction.CANCEL:
-                # If user cancels middle of loop, we stop adding new ops.
-                # Existing ones will continue or we can cancel transaction?
-                # For now, break loop.
-                break
-            elif action == ConflictAction.SKIP:
-                continue
-            
-            # Check device
-            is_same_device = False
-            if target_dev is not None:
-                try:
-                    src_dev = os.stat(src).st_dev
-                    is_same_device = (src_dev == target_dev)
-                except OSError:
-                    pass
-            
-            src_dir = os.path.dirname(os.path.abspath(src))
-            same_dir = src_dir == os.path.abspath(target_dir)
-
-            if same_dir:
-                # Dragging to same folder -> Copy/Clone
-                self.mw.file_ops.copy(src, final_dest, transaction_id=tid)
-            elif is_same_device:
-                self.mw.file_ops.move(src, final_dest, transaction_id=tid)
-            else:
-                self.mw.file_ops.copy(src, final_dest, transaction_id=tid)
+        self.mw.file_manager.handle_drop(urls, dest_dir)
 
     @Slot(str)
     def openPath(self, path):
@@ -150,88 +85,57 @@ class AppBridge(QObject):
     @Slot(list)
     def showContextMenu(self, paths):
         """
-        Shows a native QMenu for the selected file(s).
-        Called from QML on right-click.
+        Shows a native QMenu using ActionManager actions.
         """
-        if not paths:
-            return
+        if not paths: return
             
         menu = QMenu(self.mw)
+        am = self.mw.action_manager
         
-        # Single vs Multi selection
         is_single = len(paths) == 1
-        path = paths[0] if is_single else None
         
-        # Open (single only)
+        # Open (single only) - we don't have an action for "Open" in AM yet (it's logic here)
+        # But we can keep specific logic or move it. 
+        # For now, let's keep Open logic or create a one-off action.
         if is_single:
             act_open = menu.addAction(QIcon.fromTheme("document-open"), "Open")
-            act_open.triggered.connect(lambda checked=False, p=path: self.mw.file_ops.openWithDefaultApp(p))
+            act_open.triggered.connect(lambda checked=False, p=paths[0]: self.mw.file_ops.openWithDefaultApp(p))
             menu.addSeparator()
         
-        # Copy / Cut / Paste
-        act_copy = menu.addAction(QIcon.fromTheme("edit-copy"), "Copy")
-        act_copy.triggered.connect(lambda checked=False, p=paths: self.mw.clipboard.copy(p))
+        menu.addAction(am.get_action("copy"))
+        menu.addAction(am.get_action("cut"))
         
-        act_cut = menu.addAction(QIcon.fromTheme("edit-cut"), "Cut")
-        act_cut.triggered.connect(lambda checked=False, p=paths: self.mw.clipboard.cut(p))
-        
-        act_paste = menu.addAction(QIcon.fromTheme("edit-paste"), "Paste")
-        act_paste.setEnabled(self.mw.clipboard.hasFiles())
-        act_paste.triggered.connect(lambda: self.paste())
+        # Paste needs enabled check
+        act_paste = am.get_action("paste")
+        act_paste.setEnabled(self.mw.file_manager.get_clipboard_files() != [])
+        menu.addAction(act_paste)
         
         menu.addSeparator()
         
-        # Rename (single only)
         if is_single:
-            act_rename = menu.addAction(QIcon.fromTheme("edit-rename"), "Rename")
-            act_rename.triggered.connect(lambda checked=False, p=path: self.renameRequested.emit(p))
+            menu.addAction(am.get_action("rename"))
             
-        # Move to Trash (All)
         menu.addSeparator()
-        act_trash = menu.addAction(QIcon.fromTheme("user-trash"), "Move to Trash")
-        
-        def do_trash(p):
-            # Batch trash
-            tid = self.mw.transaction_manager.startTransaction(f"Trash {len(p)} items")
-            for item in p:
-                self.mw.file_ops.trash(item, transaction_id=tid)
-                
-        act_trash.triggered.connect(lambda checked=False, p=paths: do_trash(p))
+        menu.addAction(am.get_action("trash"))
             
-        menu.exec_(QCursor.pos())
+        menu.exec(QCursor.pos())
 
     @Slot()
     def showBackgroundContextMenu(self):
-        """
-        Shows a context menu for empty space.
-        """
+        """Shows a context menu for empty space."""
         menu = QMenu(self.mw)
+        am = self.mw.action_manager
         
-        act_paste = menu.addAction(QIcon.fromTheme("edit-paste"), "Paste")
-        act_paste.setEnabled(self.mw.clipboard.hasFiles())
-        act_paste.triggered.connect(lambda: self.paste())
+        act_paste = am.get_action("paste")
+        act_paste.setEnabled(self.mw.file_manager.get_clipboard_files() != [])
+        menu.addAction(act_paste)
         
         menu.addSeparator()
+        menu.addAction(am.get_action("new_folder"))
         
-        act_new_folder = menu.addAction(QIcon.fromTheme("folder-new"), "New Folder")
-        act_new_folder.triggered.connect(lambda: self._create_new_folder())
-        
-        menu.exec_(QCursor.pos())
+        menu.exec(QCursor.pos())
     
-    def _create_new_folder(self):
-        """Create a new folder with unique name (Untitled Folder, Untitled Folder (2), etc.)"""
-        base_name = "Untitled Folder"
-        folder_path = os.path.join(self.mw.current_path, base_name)
-        
-        # Auto-number if exists
-        counter = 2
-        while os.path.exists(folder_path):
-            folder_path = os.path.join(self.mw.current_path, f"{base_name} ({counter})")
-            counter += 1
-        
-        self.queueSelectionAfterRefresh([folder_path])
-        self._pending_rename_path = folder_path  # Trigger rename after folder is created
-        self.mw.file_ops.createFolder(folder_path)
+    # _create_new_folder moved to FileManager
     
     @Slot(str, str)
     def renameFile(self, old_path, new_name):
@@ -262,74 +166,7 @@ class AppBridge(QObject):
 
     @Slot()
     def paste(self):
-        """Pastes files from clipboard to current directory."""
-        files = self.mw.clipboard.getFiles()
-        is_cut = self.mw.clipboard.isCut()
-        
-        if not files:
-            print("[PASTE] No files in clipboard")
-            return
-            
-        print(f"[PASTE] {len(files)} files (Cut: {is_cut})")
-        
-        # Create conflict resolver for this paste operation
-        resolver = ConflictResolver(self.mw)
-        
-        # Track results
-        successful_count = 0
-        skipped_count = 0
-        failed_files = []
-        cancelled = False
-        pasted_paths = []  # Track destination paths for post-paste selection
-        
-        # Create Transaction
-        op_name = "Move" if is_cut else "Copy"
-        desc = f"{op_name} {len(files)} files"
-        tid = self.mw.transaction_manager.startTransaction(desc)
-        
-        for src in files:
-            # Check if source file still exists
-            if not os.path.exists(src):
-                print(f"[PASTE] SKIP: Source no longer exists: {src}")
-                failed_files.append(src)
-                continue
-            
-            # Calculate initial destination
-            dest = os.path.join(self.mw.current_path, os.path.basename(src))
-            
-            # Resolve conflict (shows dialog if dest exists)
-            action, final_dest = resolver.resolve(src, dest)
-            
-            if action == ConflictAction.CANCEL:
-                print("[PASTE] Cancelled by user")
-                cancelled = True
-                break
-            elif action == ConflictAction.SKIP:
-                print(f"[PASTE] Skipped: {os.path.basename(src)}")
-                skipped_count += 1
-                continue
-            
-            # OVERWRITE or RENAME — proceed with operation
-            if is_cut:
-                self.mw.file_ops.move(src, final_dest, transaction_id=tid)
-            else:
-                self.mw.file_ops.copy(src, final_dest, transaction_id=tid)
-            
-            pasted_paths.append(final_dest)  # Track for selection
-            successful_count += 1
-        
-        # Queue paths for selection after directory refreshes
-        if pasted_paths:
-            self.queueSelectionAfterRefresh(pasted_paths)
-        
-        # Clear clipboard only if cut mode, not cancelled, and no failures
-        if is_cut and not cancelled and len(failed_files) == 0:
-            self.mw.clipboard.clear()
-            print(f"[PASTE] Complete: {successful_count} moved, {skipped_count} skipped, clipboard cleared")
-        elif is_cut:
-            print(f"[PASTE] Partial: {successful_count} moved, {skipped_count} skipped, {len(failed_files)} failed")
-        else:
-            print(f"[PASTE] Complete: {successful_count} copied, {skipped_count} skipped")
+        self.mw.file_manager.paste_to_current()
     
     def queueSelectionAfterRefresh(self, paths):
         """Queue paths to be selected after the next directory refresh."""
@@ -353,11 +190,7 @@ class AppBridge(QObject):
     
     @Slot(int)
     def zoom(self, delta):
-        """
-        Zoom in or out. Called from QML on Ctrl+Scroll.
-        delta: positive = zoom out (more columns), negative = zoom in (fewer columns)
-        """
-        self.mw.change_zoom(delta)
+        self.mw.view_manager.zoom_in() if delta < 0 else self.mw.view_manager.zoom_out()
     
     # -------------------------------------------------------------------------
     # SEARCH API

@@ -224,12 +224,6 @@ Problem: Rename operations are NOT being recorded in the Undo History because th
 _create_new_folder
 : Calls self.mw.file_ops.createFolder(folder_path). MISSING TRANSACTION.
 Problem: Creating a new folder is NOT recorded in Undo History.
-Legacy Signals:
-FileOperations
- still emits operationCompleted and operationError.
-AppBridge
- doesn't listen to these, but the ProgressOverlay (which I assume exists in ui/overlay or similar) likely does.
-Impact: If ProgressOverlay isn't updated, it will still work (since legacy signals are emitted), but we have duplicate signal traffic.
 Summary of "Problems that Exist":
 
 Rename & Create Folder are NOT undoable. (Because 
@@ -288,7 +282,29 @@ trash()
 file_operations.py
 ) will take the first branch (if self._trash_manager: return self._trash_manager.trash(...)).
 The inline fallback code (lines 467-477) is effectively dead code (only reachable if initialization fails).
-Status:
 
-Inline Trash Bug: 🔴 False Alarm (Properly wired).
-Core Systems: Fully operational.
+
+### 🚀 Android Device Integration (Experimental Alpha v0.6.0)
+
+**Goal:** MTP device support via `android-file-transfer-linux` Python bindings.
+
+- [ ] **Phase 1: Foundation** (Read-only device browsing)
+  - [ ] Install & verify `android-file-transfer-linux` with Python bindings
+  - [ ] Test thumbnail support: `ObjectInfo.ThumbFormat`, `ThumbPixWidth`, `ThumbPixHeight`
+  - [ ] Create `core/mtp_bridge/` module structure
+  - [ ] Implement `MTPDeviceManager` (device detection)
+  - [ ] Implement `MTPScanner` (file listing compatible with `FileScanner` API)
+  - [ ] Implement `MTPThumbnailProvider` (`get_thumb()` integration)
+  - [ ] Modify `MainWindow` for `mtp://` path detection + scanner switching
+  - [ ] Modify `SidebarModel` to show "Devices" section
+  - [ ] Test with real Android device
+- [ ] **Phase 2: Photo Transfer** (v0.7.0)
+  - [ ] Implement `MTPFileOperations` (copy from device)
+  - [ ] Wire up clipboard operations for MTP → Local copy
+  - [ ] Progress tracking for large transfers
+- [ ] **Phase 3: Advanced** (Backlog)
+  - [ ] Bi-directional sync (upload to device)
+  - [ ] Auto-detection on device plug-in
+  - [ ] DCIM quick-import ("Import all photos" button)
+
+**Why This Is Unique:** First Linux photo manager with native Android device browsing in same UI as local files!

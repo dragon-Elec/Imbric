@@ -226,54 +226,40 @@ Async file search with glob patterns.
 
 
 
-### 1.2. UI Models (`ui/models/`)
+### 1.2. UI Managers (`ui/managers/`) [NEW]
 
-#### `ui/models/file_properties_model.py` — File Metadata `[DONE]`
-Reads detailed file properties (size, dates, permissions).
-Delegates core logic to `core.metadata_utils`.
-- `get_properties(path)` → `FileInfo` dict
-- `format_size(bytes)` → "1.2 MB"
-- `is_symlink(path)`, `get_symlink_target(path)`
+#### `ui/managers/action_manager.py` — Actions & Shortcuts
+Central Action registry. Replaces `ShortcutsModel`.
+- `setup_actions()` — registers QActions with global shortcuts
+- `get_action(name)` — retrieval for menus
 
----
+#### `ui/managers/file_manager.py` — High-Level Logic
+Consolidates Clipboard and Complex Ops.
+- `copy_selection()`, `cut_selection()`, `paste_to_current()`
+- `trash_selection()`, `rename_selection()`
+- `handle_drop(urls, dest)` — handles drag & drop
+- `get_clipboard_files()`, `is_cut_mode()` — clipboard state
 
-#### `ui/models/shortcuts_model.py` — Keyboard Shortcuts `[DONE]`
-Centralized shortcut management with customization support.
-- `setup(window)` — create all shortcuts
-- `connect(action, handler)` — bind handler to action
-- `set(action, key_sequence)` — change binding
-- `ShortcutAction` enum: all standard file manager shortcuts
-- Default mappings: Ctrl+A (Select All), Backspace (Go Up), etc.
-
----
-
-#### `ui/models/app_bridge.py` — QML-Python Controller (350 lines)
-Central bridge exposing Python logic to QML context.
-
-- `startDrag(paths)` — initiates system DnD with MIME data
-- `handleDrop(urls, dest)` — processes drops with **ConflictResolver** [MED risk]
-- `openPath(path)` — triggers navigation
-- `showContextMenu(paths)` — native `QMenu` over QML
-- `showBackgroundContextMenu()` — empty space menu (Paste, New Folder, Select All)
-- `paste()` — clipboard paste with conflict resolution [MED risk]
-- `renameFile(old, new)` — inline rename with specific conflict logic (Rename vs Overwrite)
-- `selectPath(path)` — programmatically select file (post-rename)
-- `zoom(delta)` — adjusts `targetCellWidth`
-- **Properties:** `targetCellWidth` (bound to QML)
+#### `ui/managers/view_manager.py` — Layout & Selection
+Module containing View logic classes.
+- `ViewManager` (Global): Orchestrates Zoom (`zoom_in/out`) and `select_all`.
+- `ColumnSplitter` (Per-Tab): Round-robin layout logic.
+- `SelectionHelper` (Per-Tab): Rubberband geometry calculation.
 
 ---
 
-#### `ui/models/column_splitter.py` — Masonry Layout (150 lines)
-"Card Dealing" algorithm — splits files into N columns round-robin.
+### 1.3. UI Models (`ui/models/`)
 
-- `SimpleListModel` — read-only model for one column
-  - Roles: `name`, `path`, `isDir`, `width`, `height`
-- `ColumnSplitter`:
-  - `setColumnCount(n)` — rebuilds models
-  - `setFiles(list)` / `appendFiles(list)` — distributes items
-  - `getModels()` → `list[SimpleListModel]`
-  - `getAllItems()` → master list (for SelectionHelper)
-  - `_redistribute()` — core dealing: `columns[i % N].append(file)`
+#### `ui/models/app_bridge.py` — QML Bridge (Simplified)
+Simplified QML interface. Delegates heavy logic to Managers.
+
+- `cutPaths` (Property)
+- `startDrag(paths)`
+- `showContextMenu(paths)` & `showBackgroundContextMenu()`
+- `renameFile(old, new)`
+- `startSearch()`, `cancelSearch`
+- `selectPath(path)` — select file (post-operation)
+- **Properties:** `targetCellWidth`
 
 ---
 
@@ -286,98 +272,50 @@ Combines bookmarks + volumes for sidebar QTreeView.
 
 ---
 
-#### `ui/models/clipboard_manager.py` — System Clipboard (148 lines)
-Qt clipboard wrapper for Copy/Cut/Paste. GNOME-compatible MIME.
+### 1.4. UI Dialogs (`ui/dialogs/`) [NEW]
 
-- `copy(paths)` / `cut(paths)` — set clipboard with `x-special/gnome-copied-files` marker
-- `getFiles()` → `list[str]` paths from clipboard
-- `isCut()` → checks GNOME marker, defaults to copy if missing
-- `hasFiles()`, `clear()`
-- **Formats:** `text/uri-list` + `x-special/gnome-copied-files`
+#### `ui/dialogs/conflicts.py` — Conflict Resolution
+Moved from `elements`. Contains `ConflictDialog` and `ConflictResolver`.
+- `resolve(src, dest)` → Copy mode `(Copy)`, `(Copy 2)`
+- `resolve_rename(old, new)` → Rename mode `(2)`, `(3)`
 
----
-
-#### `ui/models/selection_helper.py` — Rubberband Geometry (76 lines)
-Hit-testing for Masonry layout selection.
-
-- `getMasonrySelection(splitter, col_count, col_width, spacing, x, y, w, h)` → `list[paths]`
-- Replicates Masonry layout math (virtualized ListView can't query off-screen)
+#### `ui/dialogs/properties.py` — File Properties [NEW]
+Replaces `FilePropertiesModel`.
+- `PropertiesLogic.get_properties(path)` — fetches metadata
 
 ---
 
-### 1.3. UI Main (`ui/`)
+### 1.5. UI Components (`ui/components/`)
+Renamed from `ui/elements`.
 
-#### `ui/main_window.py` — Application Shell (423 lines)
-`QMainWindow` with native Fusion style, toolbar, sidebar, QML view.
+#### `ui/components/tab_manager.py` — Multi-Tab Browser
+Wraps `QTabWidget`. Each tab owns its own `ViewManager` components.
 
-- `setup_ui()` — builds toolbar, sidebar, path bar, QQuickView
-- `navigate_to(path)` — triggers scan + monitor
-- `go_up()` — parent directory
-- `change_zoom(delta)` — adjusts target column width
-- `_recalc_columns()` — calculates optimal column count from width
-- `_on_op_completed(type, path, result)` — handles post-op logic (e.g. re-selection)
-- **Shortcuts (ApplicationShortcut):** Ctrl+C/X/V, Delete, Ctrl+=/−
-- `_on_copy_triggered()`, `_on_cut_triggered()`, `_on_paste_triggered()`, `_on_trash_triggered()`
-- `eventFilter()` — detects resize for column recalc
-- `closeEvent()` — clean worker shutdown
+#### `ui/components/navigation_bar.py` — Toolbar
+#### `ui/components/sidebar.py` — Sidebar Widget
+#### `ui/components/status_bar.py` — Status Feedback
+#### `ui/components/progress_overlay.py` — Op Progress
 
 ---
 
-### 1.4. UI Elements (`ui/elements/`)
+### 1.6. UI Main (`ui/`)
 
-#### `ui/elements/progress_overlay.py` — File Op Feedback (165 lines)
-Nautilus-style slide-up overlay. Shows only if op > 300ms.
-
-- `onOperationStarted(type, path)` — shows with delay
-- `onOperationProgress(path, current_qint64, total_qint64)`
-- `onOperationCompleted(type, path, result)` / `onOperationError()` — hides
-- **Signal:** `cancelRequested`
+#### `ui/main_window.py` — Application Shell
+Orchestrator. Initializes Managers and Components.
+- `setup_ui()` — builds structure
+- `ActionManager.setup_actions()` — registers shortcuts
+- Delegated logic: Zoom -> ViewManager, Ops -> FileManager
 
 ---
 
-#### `ui/elements/status_bar.py` — Item Counts (85 lines)
-Bottom bar: "X items (Y folders, Z files)" or "X items selected".
-
-- `updateItemCount(files)` — accumulates batch counts
-- `updateSelection(paths)` — shows selection count
-- `resetCounts()` — clears on navigation
-
----
-
-#### `ui/elements/tab_manager.py` — Multi-Tab Browser `[DONE]`
-Wraps `QTabWidget` with per-tab state.
-
-- `TabManager`: Manages tabs, New/Close signals.
-- `BrowserTab`:
-  - Owns `FileScanner`, `ColumnSplitter`, `SelectionHelper`, `AppBridge`.
-  - Embeds `MasonryView.qml` via `createWindowContainer`.
-  - Handles `showEvent` (layout fix) and path navigation.
-
----
-
-#### `ui/elements/conflict_dialog.py` — File Conflict Resolution (212 lines)
-Modal dialog for paste/drop/rename conflicts.
-
-- `ConflictAction` (Enum): `SKIP`, `OVERWRITE`, `RENAME`, `CANCEL`
-- `ConflictDialog(QDialog)`:
-  - Buttons: Skip / Overwrite / Rename / Cancel All
-  - Checkbox: "Apply to all"
-- `ConflictResolver` (Shared Logic):
-  - `resolve(src, dest)` → Copy mode `(Copy)`, `(Copy 2)`
-  - `resolve_rename(old, new)` → Rename mode `(2)`, `(3)`
-  - `_resolve_internal(template)` — Unified logic core
-  - `_generate_unique_name(template)` — Handles numbering vs copy suffix
-
----
-
-### 1.6. QML (`ui/qml/`)
+### 1.7. QML (`ui/qml/`)
 
 #### `ui/qml/views/MasonryView.qml` — GPU Grid
 Main photo grid with N `ListView` columns.
 
 - **Input Model:** Hybrid — per-delegate `TapHandler`/`DragHandler` + global `MouseArea` for marquee
-- Binds to `ColumnSplitter.getModels()`
-- Signals to `AppBridge`: `showContextMenu`, `startDrag`, `handleDrop`
+- Binds to `ColumnSplitter.getModels()` (via context property)
+- Signals to `AppBridge`: `showContextMenu`, `startDrag`, `handleDrop`, `selectPath`
 - **Inline Rename:** `F2` triggers `Loader` using reusable `RenameField.qml`.
 - **Properties:** `currentSelection` (exposed to Python), `pathBeingRenamed`
 
@@ -396,11 +334,11 @@ Path-based selection tracking.
 Visual rubber band rectangle.
 
 - Properties: `startX`, `startY`, `endX`, `endY`
-- Uses `SelectionHelper.getMasonrySelection()` for hit testing
+- Uses `SelectionHelper.getMasonrySelection()` (via context property)
 
 ---
 
-### 1.7. Entry Point
+### 1.8. Entry Point
 
 #### `main.py` — Bootstrap (minimal)
 - Creates `QApplication`
@@ -409,7 +347,7 @@ Visual rubber band rectangle.
 
 ---
 
-### 1.8. Reference: Dragonfly Helpers (`assets/dflynav-src/`)
+### 1.9. Reference: Dragonfly Helpers (`assets/dflynav-src/`)
 
 Legacy patterns for future adaptation. **Not active code.**
 
@@ -428,19 +366,19 @@ See `usefulness.md` for full analysis.
 
 ### 2.1. Component Hierarchy
 ```
-[ENTRY] main.py
-   ↓
-[SHELL] MainWindow (QMainWindow + Fusion)
-   ├── Toolbar, Sidebar (QTreeView + SidebarModel)
-   ├── StatusBar, ProgressOverlay
+[SHELL] MainWindow (QMainWindow)
+   ├── Managers: ActionManager, FileManager, ViewManager
+   ├── Components: Toolbar, Sidebar, StatusBar
    ↓
 [TABS] TabManager (QTabWidget)
    └── [TAB] BrowserTab (QWidget)
-       ├── Scanner, Splitter, SelectionHelper (Per-Tab)
+       ├── Scanner (Per-Tab)
+       ├── ColumnSplitter (Per-Tab, Layout)
+       ├── AppBridge (Per-Tab, QML Bridge)
        ↓
-       [VIEW] MasonryView.qml (QQuickView container)
-           ├── Layout: ColumnSplitter (Round-Robin)
-           ├── Controller: AppBridge (Drag, Drop, Menu, Rename)
+       [VIEW] MasonryView.qml
+           ├── Layout: ColumnSplitter
+           ├── Controller: AppBridge -> Global Managers
    ↓
 [CORE] Backend (Shared)
    ├── I/O: GioBridge (Scanner, Volumes, Bookmarks)
@@ -450,18 +388,17 @@ See `usefulness.md` for full analysis.
 
 ### 2.2. Dependency Flow
 Dependencies flow **downwards** only.
-- `ui/` → `ui/models/` → `core/`
-- No circular imports
+- `ui/` -> Managers -> Components -> Models -> `core/`
 
 ### 2.3. Component Status
 
-- ✅ `MainWindow`, `TabManager`, `MasonryView`, `RubberBand`, `SelectionModel` — VERIFIED
-- ✅ `ProgressOverlay`, `StatusBar`, `ClipboardManager`, `FileScanner`, `ThumbnailProvider` — VERIFIED
-- ✅ `FileOperations` — VERIFIED (Parallel via QThreadPool)
-- ✅ `SearchWorker`, `UndoManager` — IMPLEMENTED (UI pending)
-- 🚧 `ConflictDialog`, `Inline Rename` — PENDING VERIFICATION
+- ✅ `ActionManager`, `FileManager`, `ViewManager` — VERIFIED
+- ✅ `MainWindow`, `TabManager`, `MasonryView` — VERIFIED
+- ✅ `ProgressOverlay`, `StatusBar`, `FileScanner`, `ThumbnailProvider` — VERIFIED
+- ✅ `ConflictDialog`, `PropertiesDialog` — VERIFIED
+- ✅ `FileOperations`, `TransactionManager` — VERIFIED
+- ✅ `SearchWorker`, `UndoManager` — IMPLEMENTED
 - ⏳ `DetailView` — TODO
-- ✅ `TransactionManager` — IMPLEMENTED
 
 ---
 
@@ -526,8 +463,8 @@ Dependencies flow **downwards** only.
 
 ### 4.2. Paste Operation
 ```
-1. Ctrl+V → _on_paste_triggered()
-2. ClipboardManager.getFiles(), isCut()
+1. Ctrl+V → ActionManager triggers FileManager.paste_to_current()
+2. FileManager.get_clipboard_files(), is_cut_mode()
 3. ConflictResolver.resolve() for each file:
    - CANCEL ALL → break
    - SKIP → continue
@@ -662,4 +599,10 @@ QMetaObject.invokeMethod(
 3.  **Focus Fighting:** `F2` logic split between `rubberBandArea` (global) and `TextInput` (local) caused "dead keys".
     *   *Fix:* Centralized Key handling in the `Root` item to catch bubbling events from anywhere.
     *   *Fix:* Explicit `forceActiveFocus` required when destroying QML components (Loader) to prevent focus drifting to "nowhere".
+
+### 6.6. Session: 2026-01-28 (Frontend Refactor) [NEW]
+- **Feature-Centric Architecture:** Moved from `models/elements` to `managers/dialogs/components`.
+- **Managers:** Introduced `ActionManager`, `FileManager`, `ViewManager`.
+- **Cleanup:** Removed `ShortcutsModel`, `ClipboardManager`, `ColumnSplitter`, `SelectionHelper`.
+- **Consolidation:** Logic now grouped by capability (View, File Ops, Actions) rather than technical type.
 
