@@ -6,6 +6,7 @@ TextArea {
     
     // --- API ---
     property string originalName: ""
+    property bool active: false
     
     signal commit(string newName)
     signal cancel()
@@ -35,20 +36,22 @@ TextArea {
     verticalAlignment: Text.AlignVCenter
     horizontalAlignment: Text.AlignHCenter
     
-    focus: true // Auto-focus when loaded
+    focus: active
     selectByMouse: true
     
     // --- BEHAVIOR ---
     
-    Component.onCompleted: {
-        forceActiveFocus()
-        // Select filename without extension
-        var name = text
-        var lastDot = name.lastIndexOf(".")
-        if (lastDot > 0) {
-            select(0, lastDot)
-        } else {
-            selectAll()
+    onActiveChanged: {
+        if (active) {
+            forceActiveFocus()
+            // Select filename without extension
+            var name = text
+            var lastDot = name.lastIndexOf(".")
+            if (lastDot > 0) {
+                select(0, lastDot)
+            } else {
+                selectAll()
+            }
         }
     }
     

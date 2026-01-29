@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt, QUrl, Signal, Slot, QTimer
 from PySide6.QtQuick import QQuickView
 from pathlib import Path
 import os
-
+import gc
 
 class BrowserTab(QWidget):
     """
@@ -124,6 +124,18 @@ class BrowserTab(QWidget):
         # But here we might want to refresh? Let's just allow it but check stacks.
         if self.current_path == path and not self._is_history_nav:
              pass # Or should we refresh? Let's refresh.
+
+        # FIX 1: RAM Cleanup on Navigation
+        # Force release of QML textures from the previous folder to prevent RAM stacking.
+        if self.current_path and self.qml_view.engine():
+            # Cleanup QML cache to free RAM
+            self.qml_view.engine().clearComponentCache()
+            
+            # AGGRESSIVE CLEANUP: Release graphics resources
+            self.qml_view.releaseResources()
+            
+            # Force Python GC to reclaim "Zombie" objects immediately
+            gc.collect()
 
         if not self._is_history_nav:
             if self.current_path and os.path.isdir(self.current_path):
@@ -286,8 +298,21 @@ class TabManager(QTabWidget):
         # Clean up QML view before deletion to prevent segfault
         if hasattr(tab, 'qml_view') and tab.qml_view:
             tab.qml_view.setSource(QUrl())  # Unload QML
+            
+            # FIX 1 (Cleanup): Clear cache on close
             tab.qml_view.engine().clearComponentCache()
         
+        # FIX 2: Signal Disconnection
+        # Explicitly disconnect scanner signals to break reference cycles
+        if hasattr(tab, 'scanner'):
+            try:
+                tab.scanner.filesFound.disconnect()
+                tab.scanner.scanFinished.disconnect()
+                tab.scanner.fileAttributeUpdated.disconnect()
+                tab.scanner.cancel()
+            except RuntimeError:
+                pass # Already disconnected
+
         # Schedule for deletion (safer than immediate delete)
         tab.deleteLater()
     

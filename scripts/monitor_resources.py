@@ -22,7 +22,7 @@ def print_dashboard(metrics, command, pid, log_file):
     
     # Colorize CPU if high
     cpu_color = "\033[1;31m" if metrics['cpu'] > 50 else "\033[1;32m"
-    print(f"CPU Usage:       {cpu_color}{metrics['cpu']:>6.1f}%\033[0m")
+    print(f"CPU Usage:       {cpu_color}{metrics['cpu']:>6.1f}%\033[0m (Total incl. children)")
     
     print(f"Memory (RSS):    \033[1;33m{metrics['rss']:>6.2f} MB\033[0m")
     print(f"Memory (VMS):    {metrics['vms']:>6.2f} MB")
@@ -33,131 +33,213 @@ def print_dashboard(metrics, command, pid, log_file):
     print(f"File Descriptors:{fd_color}{metrics['fds']:>6}\033[0m")
     
     print("-" * 50)
-    print(f"Disk Read:       {metrics['read_bytes'] / 1024 / 1024:>6.2f} MB")
-    print(f"Disk Write:      {metrics['write_bytes'] / 1024 / 1024:>6.2f} MB")
+    print(f"Disk Read:       {metrics['read_rate']:>6.2f} MB/s")
+    print(f"Disk Write:      {metrics['write_rate']:>6.2f} MB/s")
     print("-" * 50)
     if log_file:
          print(f"App output redirected to: \033[4m{log_file}\033[0m")
-    print("\033[2mPress Ctrl+C to stop.\033[0m")
+    print(f"\033[2mPress Ctrl+C (or close app) to stop.\033[0m")
 
-def monitor_process(command, interval, output_file, live_mode):
-    if not live_mode:
-        print(f"Starting process: {command}")
-        if output_file:
-            print(f"Logging to: {output_file}")
-    
-    # Handle log redirection for live mode
-    app_log_file = None
-    stdout_dest = None
-    stderr_dest = None
-    
-    if live_mode:
-        app_log_file = "app_output.log"
-        f_log = open(app_log_file, "w")
-        stdout_dest = f_log
-        stderr_dest = subprocess.STDOUT
-        print(f"Live mode enabled. Redirecting app output to {app_log_file}...")
-    
-    # Launch the process
+def monitor_pid(pid, interval, output_file, live_mode, app_cmd=None):
     try:
-        args_list = shlex.split(command)
-        proc = subprocess.Popen(args_list, shell=False, stdout=stdout_dest, stderr=stderr_dest)
-    except Exception as e:
-        print(f"Failed to launch command: {e}")
-        return
-
-    pid = proc.pid
-    if not live_mode:
-        print(f"Process launched with PID: {pid}")
-
-    try:
-        ps_proc = psutil.Process(pid)
+        proc = psutil.Process(pid)
+        # Prime CPU reading
+        proc.cpu_percent(interval=None)
+        if app_cmd is None:
+            try:
+                app_cmd = " ".join(proc.cmdline())
+            except:
+                app_cmd = f"PID {pid}"
     except psutil.NoSuchProcess:
-        print("Process died immediately.")
-        if live_mode and f_log: f_log.close()
+        print(f"Process {pid} not found.")
         return
+
+    # Initialize IO and time for rate calculation
+    try:
+        io_start = proc.io_counters()
+        prev_read = io_start.read_bytes
+        prev_write = io_start.write_bytes
+    except (psutil.AccessDenied, psutil.NoSuchProcess):
+        prev_read = 0
+        prev_write = 0
+    prev_time = time.time()
 
     # Prepare CSV
     csv_f = None
     writer = None
     if output_file:
-        # Ensure output directory exists
         output_dir = os.path.dirname(output_file)
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir)
-        
         csv_f = open(output_file, 'w', newline='')
         writer = csv.writer(csv_f)
-        writer.writerow(['timestamp', 'cpu_percent', 'rss_mb', 'vms_mb', 'num_threads', 'num_fds', 'read_bytes', 'write_bytes'])
+        writer.writerow(['timestamp', 'cpu_percent', 'rss_mb', 'vms_mb', 'num_threads', 'num_fds', 'read_mb_s', 'write_mb_s'])
 
     try:
-        while proc.poll() is None:
+        while proc.is_running():
             try:
-                with ps_proc.oneshot():
-                    timestamp_iso = datetime.now().isoformat()
-                    # For live display, we want a human readable time
-                    timestamp_display = datetime.now().strftime("%H:%M:%S")
-                    
-                    cpu = ps_proc.cpu_percent(interval=None)
-                    mem = ps_proc.memory_info()
-                    rss = mem.rss / (1024 * 1024)
-                    vms = mem.vms / (1024 * 1024)
-                    threads = ps_proc.num_threads()
+                curr_time = time.time()
+                time_delta = curr_time - prev_time
+                if time_delta <= 0: time_delta = 0.001
+
+                timestamp_display = datetime.now().strftime("%H:%M:%S")
+                timestamp_iso = datetime.now().isoformat()
+
+                total_cpu = 0.0
+                total_rss = 0.0
+                total_vms = 0.0
+                total_threads = 0
+                total_fds = 0
+                total_read_bytes = 0
+                total_write_bytes = 0
+
+                procs_to_monitor = [proc]
+                try:
+                    procs_to_monitor.extend(proc.children(recursive=True))
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+                for p in procs_to_monitor:
                     try:
-                        fds = ps_proc.num_fds()
-                    except: 
-                        fds = 0
-                    
-                    io = ps_proc.io_counters()
-                    read_bytes = io.read_bytes
-                    write_bytes = io.write_bytes
+                        with p.oneshot():
+                            total_cpu += p.cpu_percent(interval=None)
+                            mem = p.memory_info()
+                            total_rss += mem.rss
+                            total_vms += mem.vms
+                            total_threads += p.num_threads()
+                            try:
+                                total_fds += p.num_fds()
+                            except: pass
+                            
+                            io = p.io_counters()
+                            total_read_bytes += io.read_bytes
+                            total_write_bytes += io.write_bytes
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+
+                read_rate = (total_read_bytes - prev_read) / (1024 * 1024) / time_delta
+                write_rate = (total_write_bytes - prev_write) / (1024 * 1024) / time_delta
+                read_rate = max(0, read_rate)
+                write_rate = max(0, write_rate)
 
                 metrics = {
                     'timestamp': timestamp_display,
-                    'cpu': cpu,
-                    'rss': rss,
-                    'vms': vms,
-                    'threads': threads,
-                    'fds': fds,
-                    'read_bytes': read_bytes,
-                    'write_bytes': write_bytes
+                    'cpu': total_cpu,
+                    'rss': total_rss / (1024 * 1024),
+                    'vms': total_vms / (1024 * 1024),
+                    'threads': total_threads,
+                    'fds': total_fds,
+                    'read_rate': read_rate,
+                    'write_rate': write_rate
                 }
 
                 if live_mode:
-                    print_dashboard(metrics, command, pid, app_log_file)
+                    # In PID mode, we don't know the log file unless passed, but effectively we just show the dashboard
+                    print_dashboard(metrics, app_cmd, pid, "Use main terminal for logs")
                 
                 if writer:
-                    writer.writerow([timestamp_iso, cpu, f"{rss:.2f}", f"{vms:.2f}", threads, fds, read_bytes, write_bytes])
+                    writer.writerow([timestamp_iso, f"{total_cpu:.1f}", f"{metrics['rss']:.2f}", f"{metrics['vms']:.2f}", 
+                                   total_threads, total_fds, f"{read_rate:.2f}", f"{write_rate:.2f}"])
                     csv_f.flush()
+                
+                prev_read = total_read_bytes
+                prev_write = total_write_bytes
+                prev_time = curr_time
                 
                 time.sleep(interval)
                 
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 break
     except KeyboardInterrupt:
-        if not live_mode: 
-            print("\nMonitoring stopped by user.")
-        proc.terminate()
-        try:
-            proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        pass # Just exit cleaner
     finally:
         if csv_f: csv_f.close()
-        if live_mode and f_log: f_log.close()
+        # No process killing here, we just watched it.
 
-    if not live_mode:
-        print(f"Monitoring finished.")
-        if output_file:
-            print(f"Log saved to {output_file}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Monitor process resource usage.")
-    parser.add_argument("--command", required=True, help="Command to run (e.g. 'python3 main.py')")
-    parser.add_argument("--interval", type=float, default=1.0, help="Monitoring interval in seconds")
-    parser.add_argument("--output", default=None, help="Optional output CSV file path")
-    parser.add_argument("--live", action="store_true", help="Enable live TUI dashboard")
+    description = """
+Imbric Resource Monitor - Simplified Usage Patterns:
+  Basic Live:    python3 scripts/monitor_resources.py -l
+  Profile Live:  python3 scripts/monitor_resources.py -lp
+  Log to CSV:    python3 scripts/monitor_resources.py -o stats.csv
+  Custom Cmd:    python3 scripts/monitor_resources.py -c "ls -R"
+"""
+    parser = argparse.ArgumentParser(
+        description=description,
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    # Find default command path
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    root_dir = os.path.dirname(script_dir)
+    default_main = os.path.join(root_dir, "main.py")
+    
+    if os.path.exists(default_main):
+        default_cmd = f"python3 {default_main}"
+    else:
+        default_cmd = "python3 main.py"
+
+    parser.add_argument("--command", "-c", default=default_cmd, 
+                        help="Target command (default: Imbric main.py)")
+    parser.add_argument("--interval", "-i", type=float, default=1.0, 
+                        help="Check interval in seconds (default: 1.0)")
+    parser.add_argument("--output", "-o", default=None, 
+                        help="Save metrics to a CSV file (e.g. -o log.csv)")
+    parser.add_argument("--live", "-l", action="store_true", 
+                        help="Show real-time dashboard (TUI)")
+    parser.add_argument("--profile", "-p", action="store_true", 
+                        help="Enable Imbric internal profiling (adds --profile to app)")
+    parser.add_argument("--pid", type=int, default=None,
+                        help="Monitor existing PID instead of launching a command")
 
     args = parser.parse_args()
     
-    monitor_process(args.command, args.interval, args.output, args.live)
+    if args.pid:
+        monitor_pid(args.pid, args.interval, args.output, args.live)
+    else:
+        # Launcher Mode
+        cmd = args.command
+        if args.profile and "main.py" in cmd and "--profile" not in cmd:
+            cmd += " --profile"
+            
+        if args.live:
+            # Detached Launch Mode
+            try:
+                # 1. Launch the app in THIS terminal (so user sees logs)
+                args_list = shlex.split(cmd)
+                print(f"Launching application: {cmd}")
+                proc = subprocess.Popen(args_list, shell=False) # Inherit stdout/stderr
+            except Exception as e:
+                print(f"Failed to launch command: {e}")
+                sys.exit(1)
+            
+            # 2. Launch gnome-terminal to run the monitor attached to the new PID
+            try:
+                # Resolve absolute path to self to ensure we run the right script
+                script_path = os.path.abspath(__file__)
+                monitor_cmd = f"python3 {script_path} --pid {proc.pid} --live"
+                if args.output:
+                    monitor_cmd += f" --output {args.output}"
+                
+                # We spin up the monitor in a new window
+                subprocess.Popen(["gnome-terminal", "--", "bash", "-c", f"{monitor_cmd}; exec bash"])
+                print(f"Resource Monitor launched in a separate window (PID: {proc.pid})")
+                print("App logs will appear below...")
+                
+                # Wait for app to finish
+                try:
+                    proc.wait()
+                except KeyboardInterrupt:
+                    proc.terminate()
+            except FileNotFoundError:
+                print("Error: gnome-terminal not found. Falling back to non-live monitoring.")
+                monitor_pid(proc.pid, args.interval, args.output, False, cmd)
+        
+        else:
+            # Non-live standard mode: Launch app and monitor in background (or text log)
+            # Existing monitor logic can be reused or simplified. 
+            # For simplicity, we just use subprocess to launch and then monitor_pid
+            args_list = shlex.split(cmd)
+            proc = subprocess.Popen(args_list, shell=False)
+            monitor_pid(proc.pid, args.interval, args.output, False, cmd)

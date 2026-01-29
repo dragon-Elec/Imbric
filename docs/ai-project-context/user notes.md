@@ -308,3 +308,10 @@ The inline fallback code (lines 467-477) is effectively dead code (only reachabl
   - [ ] DCIM quick-import ("Import all photos" button)
 
 **Why This Is Unique:** First Linux photo manager with native Android device browsing in same UI as local files!
+
+
+
+Your current state:
+1.  QML Cleanup (clearComponentCache, releaseResources): This is good practice for image-heavy apps. QML's texture cache can grow indefinitely if not managed. We are right to force this when leaving a heavy folder.
+2.  Python GC (gc.collect()): This is neutral/safe. It just cleans up circular references immediately. Since we had a bug with circular references (the scanner), this is a good safety net, but strictly speaking, Python would do it eventually.
+3.  malloc_trim (The Diagnostic Tool): This is the "aggressive" one. You are right—we probably should not run this on every navigation in production. It causes CPU spikes and fights the OS allocator.

@@ -71,7 +71,6 @@ class ThumbnailRunnable(QRunnable):
     def run(self):
         """Generate or load thumbnail in background thread."""
         file_path = self._response._path
-        print(f"[DEBUG-ALL] Request: {file_path}") # Verify requests are arriving
         requested_size = self._response._requested_size
         factory = self._response._factory
         
@@ -83,12 +82,10 @@ class ThumbnailRunnable(QRunnable):
             
             # 1. Check Cache First
             if mime_type in self._mime_icon_cache:
-                # print(f"[DEBUG] Cache HIT for {mime_type}") # Uncomment to verify
                 self._response.set_image(self._mime_icon_cache[mime_type])
                 return
 
             # 2. Generate and Cache
-            print(f"[DEBUG] Cache MISS for {mime_type} - Generating...")
             img = self._get_mime_icon_from_type(mime_type, target_size)
             self._mime_icon_cache[mime_type] = img
             
@@ -306,9 +303,17 @@ class ThumbnailProvider(QQuickAsyncImageProvider):
     Inherits from QQuickAsyncImageProvider for non-blocking operation.
     """
     
+    # Shared factory instance (Singleton) to avoid per-tab memory overhead
+    _shared_factory = None
+
     def __init__(self):
         super().__init__()
-        self._factory = GnomeDesktop.DesktopThumbnailFactory.new(GnomeDesktop.DesktopThumbnailSize.LARGE)
+        
+        # Initialize singleton if not exists
+        if ThumbnailProvider._shared_factory is None:
+            ThumbnailProvider._shared_factory = GnomeDesktop.DesktopThumbnailFactory.new(GnomeDesktop.DesktopThumbnailSize.LARGE)
+            
+        self._factory = ThumbnailProvider._shared_factory
     
     def requestImageResponse(self, id_path: str, requested_size: QSize) -> QQuickImageResponse:
         """

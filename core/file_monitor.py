@@ -5,7 +5,7 @@ Wraps GIO's FileMonitor to watch a directory for changes.
 Emits signals when files are added, removed, or modified.
 """
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Signal, Slot, QTimer
 import gi
 gi.require_version('Gio', '2.0')
 from gi.repository import Gio, GLib
@@ -15,6 +15,8 @@ class FileMonitor(QObject):
     """
     Watches a directory for file system changes using GIO.
     Emits signals that can trigger a view refresh.
+    
+    Includes Event Coalescing (Debounce) to prevent UI freezing during bulk operations.
     """
     
     # Signals
@@ -27,7 +29,21 @@ class FileMonitor(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._monitor = None
+        self._monitor_handler = None
         self._current_path = None
+        
+        # Debounce Timer for directoryChanged
+        self._debounce_timer = QTimer(self)
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.setInterval(200) # Wait 200ms
+        self._debounce_timer.timeout.connect(self._emit_directory_changed)
+        
+    def _emit_directory_changed(self):
+        """Actually emit the signal after quiet period."""
+        self.directoryChanged.emit()
+
+    # -------------------------------------------------------------------------
+    # START MONITORING
     
     # -------------------------------------------------------------------------
     # START MONITORING
@@ -53,7 +69,7 @@ class FileMonitor(QObject):
             )
             
             # Connect to change signal
-            self._monitor.connect("changed", self._on_changed)
+            self._monitor_handler = self._monitor.connect("changed", self._on_changed)
             
             print(f"FileMonitor: Watching {directory_path}")
             
@@ -69,6 +85,13 @@ class FileMonitor(QObject):
         Stops monitoring the current directory.
         """
         if self._monitor:
+            if self._monitor_handler:
+                try:
+                    self._monitor.disconnect(self._monitor_handler)
+                except Exception:
+                    pass
+                self._monitor_handler = None
+                
             self._monitor.cancel()
             self._monitor = None
             self._current_path = None
@@ -87,12 +110,12 @@ class FileMonitor(QObject):
         if event_type == Gio.FileMonitorEvent.CREATED:
             if path:
                 self.fileCreated.emit(path)
-                self.directoryChanged.emit()
+                self._debounce_timer.start()
                 
         elif event_type == Gio.FileMonitorEvent.DELETED:
             if path:
                 self.fileDeleted.emit(path)
-                self.directoryChanged.emit()
+                self._debounce_timer.start()
                 
         elif event_type == Gio.FileMonitorEvent.CHANGED:
             if path:
@@ -102,17 +125,17 @@ class FileMonitor(QObject):
         elif event_type == Gio.FileMonitorEvent.RENAMED:
             if path and other_path:
                 self.fileRenamed.emit(path, other_path)
-                self.directoryChanged.emit()
+                self._debounce_timer.start()
                 
         elif event_type == Gio.FileMonitorEvent.MOVED_IN:
             if path:
                 self.fileCreated.emit(path)
-                self.directoryChanged.emit()
+                self._debounce_timer.start()
                 
         elif event_type == Gio.FileMonitorEvent.MOVED_OUT:
             if path:
                 self.fileDeleted.emit(path)
-                self.directoryChanged.emit()
+                self._debounce_timer.start()
     
     # -------------------------------------------------------------------------
     # PROPERTY

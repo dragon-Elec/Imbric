@@ -72,6 +72,11 @@ def main():
         profiler = cProfile.Profile()
         profiler.enable()
 
+    # [NEW] Start Internal Memory Profiler (Tracemalloc)
+    # This allows F12 diagnostics to work immediately without losing early history
+    from core.diagnostics import MemoryProfiler
+    MemoryProfiler.start()
+
     ret_code = app.exec()
 
     if args.profile:

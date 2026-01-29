@@ -109,15 +109,18 @@ class FileScanner(QObject):
         self._current_path = path
         self._cancellable = Gio.Cancellable()
         
+        # Capture the specific token for this scan
+        cancellable = self._cancellable
+        
         gfile = Gio.File.new_for_path(path)
         
         gfile.enumerate_children_async(
             self.QUERY_ATTRIBUTES,
             Gio.FileQueryInfoFlags.NONE,
             GLib.PRIORITY_DEFAULT,
-            self._cancellable,
+            cancellable,
             self._on_enumerate_ready,
-            None
+            cancellable # Pass token as user_data
         )
 
     @Slot()
@@ -136,9 +139,14 @@ class FileScanner(QObject):
 
     def _on_enumerate_ready(self, source: Gio.File, result: Gio.AsyncResult, user_data) -> None:
         """Callback when enumerate_children_async completes."""
+        cancellable = user_data
+        if cancellable.is_cancelled():
+            return
+
         try:
             enumerator = source.enumerate_children_finish(result)
         except GLib.Error as e:
+            if cancellable.is_cancelled(): return
             error_msg = f"Cannot open directory: {e.message}"
             print(f"[FileScanner] Error: {error_msg}")
             self.scanError.emit(error_msg)
@@ -149,30 +157,38 @@ class FileScanner(QObject):
             self.scanError.emit("Invalid directory path")
             return
         
-        self._fetch_next_batch(enumerator, parent_path)
+        self._fetch_next_batch(enumerator, parent_path, cancellable)
 
-    def _fetch_next_batch(self, enumerator: Gio.FileEnumerator, parent_path: str) -> None:
+    def _fetch_next_batch(self, enumerator: Gio.FileEnumerator, parent_path: str, cancellable: Gio.Cancellable) -> None:
         """Request the next batch of files from the enumerator."""
         enumerator.next_files_async(
             self.BATCH_SIZE,
             GLib.PRIORITY_DEFAULT,
-            self._cancellable,
+            cancellable,
             self._on_batch_ready,
-            (enumerator, parent_path)
+            (enumerator, parent_path, cancellable)
         )
 
     def _on_batch_ready(
         self,
-        enumerator: Gio.FileEnumerator,
+        source_obj,
         result: Gio.AsyncResult,
         context: tuple
     ) -> None:
         """Callback when a batch of files is ready."""
-        stored_enumerator, parent_path = context
+        stored_enumerator, parent_path, cancellable = context
+        
+        if cancellable.is_cancelled():
+            self._close_enumerator(stored_enumerator)
+            return
         
         try:
-            file_infos = enumerator.next_files_finish(result)
+            file_infos = stored_enumerator.next_files_finish(result)
         except GLib.Error as e:
+            if cancellable.is_cancelled():
+                self._close_enumerator(stored_enumerator)
+                return
+                
             error_msg = f"Error reading directory contents: {e.message}"
             print(f"[FileScanner] {error_msg}")
             self.scanError.emit(error_msg)
@@ -189,7 +205,7 @@ class FileScanner(QObject):
         if batch:
             self.filesFound.emit(batch)
         
-        self._fetch_next_batch(stored_enumerator, parent_path)
+        self._fetch_next_batch(stored_enumerator, parent_path, cancellable)
 
     def _process_batch(self, file_infos: list[Gio.FileInfo], parent_path: str) -> list[dict]:
         """

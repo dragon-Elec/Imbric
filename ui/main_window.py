@@ -111,6 +111,16 @@ class MainWindow(QMainWindow):
         self.sidebar.navigationRequested.connect(self.navigate_to)
         self.tab_manager.currentPathChanged.connect(self._on_tab_path_changed)
 
+        # [DIAGNOSTICS] F12 to trigger Memory Dump
+        from PySide6.QtGui import QShortcut, QKeySequence
+        self.diag_shortcut = QShortcut(QKeySequence("F12"), self)
+        self.diag_shortcut.activated.connect(self._run_diagnostics)
+
+    def _run_diagnostics(self):
+        """Trigger internal memory profiling."""
+        from core.diagnostics import MemoryProfiler
+        MemoryProfiler.print_report()
+
     # --- NAVIGATION ---
 
     def navigate_to(self, path):
