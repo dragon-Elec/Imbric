@@ -28,6 +28,7 @@ class SimpleListModel(QAbstractListModel):
     SizeRole = Qt.UserRole + 6
     DateModifiedRole = Qt.UserRole + 7
     ChildCountRole = Qt.UserRole + 8
+    IconSourceRole = Qt.UserRole + 9  # ADD NEW ROLE CONSTANT
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,6 +47,8 @@ class SimpleListModel(QAbstractListModel):
             return item.get("name", "")
         elif role == self.PathRole:
             return item.get("path", "")
+        elif role == self.IconSourceRole:  # EXPOSE THIS
+            return item.get("iconSource", "")
         elif role == self.IsDirRole:
             return item.get("isDir", False)
         elif role == self.WidthRole:
@@ -65,6 +68,7 @@ class SimpleListModel(QAbstractListModel):
         return {
             self.NameRole: b"name",
             self.PathRole: b"path",
+            self.IconSourceRole: b"iconSource",  # MAP ROLE TO QML NAME
             self.IsDirRole: b"isDir",
             self.WidthRole: b"width",
             self.HeightRole: b"height",

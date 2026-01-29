@@ -64,13 +64,36 @@ class ThumbnailRunnable(QRunnable):
         self._response = response
         self.setAutoDelete(True)
     
+    # Shared cache for generic MIME icons to prevent RAM explosion
+    # Key: mime_type (str), Value: QImage
+    _mime_icon_cache = {}
+
     def run(self):
         """Generate or load thumbnail in background thread."""
         file_path = self._response._path
+        print(f"[DEBUG-ALL] Request: {file_path}") # Verify requests are arriving
         requested_size = self._response._requested_size
         factory = self._response._factory
         
         target_size = requested_size if requested_size.isValid() else QSize(128, 128)
+
+        # [NEW] Check if this is a generic MIME request
+        if file_path.startswith("mime/"):
+            mime_type = file_path.replace("mime/", "")
+            
+            # 1. Check Cache First
+            if mime_type in self._mime_icon_cache:
+                # print(f"[DEBUG] Cache HIT for {mime_type}") # Uncomment to verify
+                self._response.set_image(self._mime_icon_cache[mime_type])
+                return
+
+            # 2. Generate and Cache
+            print(f"[DEBUG] Cache MISS for {mime_type} - Generating...")
+            img = self._get_mime_icon_from_type(mime_type, target_size)
+            self._mime_icon_cache[mime_type] = img
+            
+            self._response.set_image(img)
+            return
         
         # --- Symlink Resolution ---
         is_symlink = os.path.islink(file_path)
@@ -181,6 +204,27 @@ class ThumbnailRunnable(QRunnable):
             
         self._response.set_image(img)
     
+    def _get_mime_icon_from_type(self, mime_type: str, target_size: QSize) -> QImage:
+        """
+        Get the desktop theme icon directly from a MIME type string.
+        """
+        from gi.repository import Gio
+        
+        try:
+            # Get GIcon for the MIME type
+            gicon = Gio.content_type_get_icon(mime_type)
+            
+            if gicon:
+                if hasattr(gicon, 'get_names'):
+                    for name in gicon.get_names():
+                        icon = QIcon.fromTheme(name)
+                        if not icon.isNull():
+                            return icon.pixmap(target_size).toImage()
+        except Exception:
+            pass
+            
+        return self._get_themed_icon("application-x-generic", target_size)
+
     def _get_themed_icon(self, icon_name: str, target_size: QSize) -> QImage:
         """Load a themed icon as QImage."""
         icon = QIcon.fromTheme(icon_name)

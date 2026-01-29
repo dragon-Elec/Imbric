@@ -158,55 +158,48 @@ Item {
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     anchors.topMargin: 4
                                     
-                                    source: "image://thumbnail/" + model.path
+                                    source: model.iconSource // Use optimized URL (mime/... for generics) to enable caching
+                                    // REVERT: Removed sourceSize to verify if it was blocking requests.
+                                    // We will rely on the Python-side Cache for RAM savings first.
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true
                                     cache: true
                                 }
                                 
-                                Loader {
-                                    id: nameLoader
+                                Item {
                                     anchors.bottom: parent.bottom
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     anchors.bottomMargin: 4
                                     width: parent.width - 8
-                                    height: 20 // Fixed height for consistency
-                                    
-                                    property bool isRenaming: filterPath(root.pathBeingRenamed) === filterPath(model.path)
-                                    // Helper to handle potential path normalization issues
-                                    function filterPath(p) { return p ? p.toString() : "" }
+                                    height: 20
 
-                                    sourceComponent: isRenaming ? renameComponent : textComponent
-                                    
-                                    Component {
-                                        id: textComponent
-                                        Text {
-                                            text: model.name
-                                            color: (delegateItem.selected || (model.isDir && itemDropArea.containsDrag)) ? activePalette.highlightedText : activePalette.text
-                                            font.pixelSize: 12
-                                            elide: Text.ElideMiddle
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                        }
+                                    Text {
+                                        anchors.fill: parent
+                                        text: model.name
+                                        visible: root.pathBeingRenamed !== model.path
+                                        color: (delegateItem.selected || (model.isDir && itemDropArea.containsDrag)) ? activePalette.highlightedText : activePalette.text
+                                        font.pixelSize: 12
+                                        elide: Text.ElideMiddle
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
                                     }
-                                    
-                                    Component {
-                                        id: renameComponent
-                                        Components.RenameField {
-                                            originalName: model.name
-                                            
-                                            onCommit: (newName) => {
-                                                if (newName !== model.name) {
-                                                    appBridge.renameFile(model.path, newName)
-                                                }
-                                                root.pathBeingRenamed = ""
+
+                                    Components.RenameField {
+                                        anchors.fill: parent
+                                        visible: root.pathBeingRenamed === model.path
+                                        active: visible
+                                        originalName: model.name
+                                        
+                                        onCommit: (newName) => {
+                                            if (newName !== model.name) {
+                                                appBridge.renameFile(model.path, newName)
                                             }
-                                            
-                                            onCancel: {
-                                                root.pathBeingRenamed = ""
-                                                // Return focus to rubberBandArea (global handler)
-                                                rubberBandArea.forceActiveFocus()
-                                            }
+                                            root.pathBeingRenamed = ""
+                                        }
+                                        
+                                        onCancel: {
+                                            root.pathBeingRenamed = ""
+                                            rubberBandArea.forceActiveFocus()
                                         }
                                     }
                                 }

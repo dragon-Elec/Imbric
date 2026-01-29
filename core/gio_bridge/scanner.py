@@ -17,7 +17,6 @@ gi.require_version('Gio', '2.0')
 from gi.repository import Gio, GLib
 
 from PySide6.QtCore import QObject, Signal, Slot
-
 from core.gio_bridge.count_worker import ItemCountWorker
 
 
@@ -35,6 +34,9 @@ class FileScanner(QObject):
     scanFinished = Signal()
     scanError = Signal(str)
     fileAttributeUpdated = Signal(str, str, object)  # path, attribute_name, value
+
+    # Valid visual extensions (thumbnails needed)
+    VISUAL_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.tiff', '.tif', '.ico', '.mp4', '.mkv', '.webm', '.mov', '.avi'}
 
     # Gio attributes to request
     # Active: Used in UI immediately
@@ -63,7 +65,8 @@ class FileScanner(QObject):
         "unix::gid",
     ])
 
-    BATCH_SIZE = 50
+    # Batch size increased to 200 to reduce Masonry layout thrashing (O(N^2) sorts)
+    BATCH_SIZE = 200
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -207,6 +210,14 @@ class FileScanner(QObject):
             if name is None:
                 continue
             
+            # Extension & Visual Check
+            lower_name = name.lower()
+            is_visual = False
+            for ext in self.VISUAL_EXTENSIONS:
+                if lower_name.endswith(ext):
+                    is_visual = True
+                    break
+            
             # Full path
             if parent_path == '/':
                 full_path = '/' + name
@@ -249,15 +260,26 @@ class FileScanner(QObject):
                 self._count_worker.enqueue(full_path)
 
             
+            # Wrapper for QML caching
+            if is_visual:
+                # Images/Videos get unique thumbnails
+                icon_source = f"image://thumbnail/{full_path}"
+            else:
+                # Non-visual files get a SHARED icon based on MIME type
+                # QML will now see the SAME URL for all .txt files and reuse the RAM cache
+                icon_source = f"image://thumbnail/mime/{mime_type}"
+
             batch.append({
                 # Core
                 "name": name,
                 "path": full_path,
+                "iconSource": icon_source,
                 "isDir": is_dir,
                 "size": size,
                 
                 # MIME (Active)
                 "mimeType": mime_type,
+                "isVisual": is_visual,
                 
                 # Symlink (Active)
                 "isSymlink": is_symlink,
