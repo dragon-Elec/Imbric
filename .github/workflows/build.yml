@@ -100,7 +100,7 @@ jobs:
           ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage || echo "AppImage build completed with warnings"
       
       - name: Upload AppImage to Release
-        if: github.event_name == 'release'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
           files: Imbric*.AppImage
@@ -156,7 +156,7 @@ jobs:
           nfpm pkg --packager deb --target dist/
       
       - name: Upload .deb to Release
-        if: github.event_name == 'release'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
           files: dist/*.deb
