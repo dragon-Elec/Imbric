@@ -23,6 +23,9 @@ from ui.components.tab_manager import TabManager
 from ui.components.progress_overlay import ProgressOverlay
 
 class MainWindow(QMainWindow):
+    """
+    Main application window.
+    """
     def __init__(self, start_path=None):
         super().__init__()
         self.setWindowTitle("Imbric")
