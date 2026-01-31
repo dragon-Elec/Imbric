@@ -3,6 +3,7 @@ from PySide6.QtWidgets import QMenu
 from PySide6.QtGui import QCursor, QIcon, QDrag
 from ui.dialogs.conflicts import ConflictResolver, ConflictAction
 from core.search_worker import SearchWorker
+from ui.models.shortcuts import ShortcutAction
 import os
 
 class AppBridge(QObject):
@@ -102,21 +103,21 @@ class AppBridge(QObject):
             act_open.triggered.connect(lambda checked=False, p=paths[0]: self.mw.file_ops.openWithDefaultApp(p))
             menu.addSeparator()
         
-        menu.addAction(am.get_action("copy"))
-        menu.addAction(am.get_action("cut"))
+        menu.addAction(am.get_action(ShortcutAction.COPY))
+        menu.addAction(am.get_action(ShortcutAction.CUT))
         
         # Paste needs enabled check
-        act_paste = am.get_action("paste")
+        act_paste = am.get_action(ShortcutAction.PASTE)
         act_paste.setEnabled(self.mw.file_manager.get_clipboard_files() != [])
         menu.addAction(act_paste)
         
         menu.addSeparator()
         
         if is_single:
-            menu.addAction(am.get_action("rename"))
+            menu.addAction(am.get_action(ShortcutAction.RENAME))
             
         menu.addSeparator()
-        menu.addAction(am.get_action("trash"))
+        menu.addAction(am.get_action(ShortcutAction.TRASH))
             
         menu.exec(QCursor.pos())
 
@@ -126,12 +127,12 @@ class AppBridge(QObject):
         menu = QMenu(self.mw)
         am = self.mw.action_manager
         
-        act_paste = am.get_action("paste")
+        act_paste = am.get_action(ShortcutAction.PASTE)
         act_paste.setEnabled(self.mw.file_manager.get_clipboard_files() != [])
         menu.addAction(act_paste)
         
         menu.addSeparator()
-        menu.addAction(am.get_action("new_folder"))
+        menu.addAction(am.get_action(ShortcutAction.NEW_FOLDER))
         
         menu.exec(QCursor.pos())
     

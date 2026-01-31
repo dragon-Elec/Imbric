@@ -18,17 +18,20 @@ from typing import Deque
 from PySide6.QtCore import QObject, Signal, Slot, QRunnable, QThreadPool, QMutex, QMutexLocker
 
 
+class CountSignals(QObject):
+    """Signals for CountTask."""
+    result = Signal(str, int)
+
 class CountTask(QRunnable):
     """
     A single counting task for one directory.
-    
     Runs os.scandir in a thread pool thread.
     """
     
-    def __init__(self, path: str, callback):
+    def __init__(self, path: str):
         super().__init__()
         self.path = path
-        self.callback = callback
+        self.signals = CountSignals()
         self.setAutoDelete(True)
     
     def run(self):
@@ -42,8 +45,9 @@ class CountTask(QRunnable):
             # Return 0 on any error
             count = 0
         
-        # Invoke callback (will be called from thread pool thread)
-        self.callback(self.path, count)
+        # Emit signal (thread-safe)
+        # If receiver is deleted, this emits to nowhere (Safe)
+        self.signals.result.emit(self.path, count)
 
 
 class ItemCountWorker(QObject):
@@ -70,7 +74,6 @@ class ItemCountWorker(QObject):
     def enqueue(self, path: str) -> None:
         """
         Add a directory path to the counting queue.
-        
         If there's capacity, starts counting immediately.
         """
         with QMutexLocker(self._mutex):
@@ -82,7 +85,6 @@ class ItemCountWorker(QObject):
     def clear(self) -> None:
         """
         Clear all pending counts.
-        
         Note: Already-running tasks cannot be cancelled.
         """
         with QMutexLocker(self._mutex):
@@ -94,20 +96,25 @@ class ItemCountWorker(QObject):
             while self._queue and self._active_count < self.MAX_CONCURRENT:
                 path = self._queue.popleft()
                 self._active_count += 1
-                task = CountTask(path, self._on_task_done)
+                
+                # Create task with self-contained signals
+                task = CountTask(path)
+                
+                # Connect signal to slot (QueuedConnection is automatic across threads)
+                # If 'self' is deleted, this connection triggers generic disconnect
+                task.signals.result.connect(self._on_task_done)
+                
                 self._pool.start(task)
     
+    @Slot(str, int)
     def _on_task_done(self, path: str, count: int) -> None:
         """
-        Called by CountTask when counting finishes.
-        
-        This is called from a thread pool thread, so we use
-        a queued signal connection (default for cross-thread).
+        Called via Signal when counting finishes.
         """
         with QMutexLocker(self._mutex):
             self._active_count -= 1
         
-        # Emit signal (thread-safe, Qt handles queuing)
+        # Forward the result
         self.countReady.emit(path, count)
         
         # Process more from queue

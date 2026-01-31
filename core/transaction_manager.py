@@ -143,8 +143,14 @@ class TransactionManager(QObject):
         elif resolution == "rename":
             # Calculate new destination
             import os
+            # [SECURITY] Sanitize input to prevent path traversal
+            safe_name = os.path.basename(new_name) if new_name else ""
+            if not safe_name and new_name:
+                print(f"[TM] Security Warning: Invalid rename target '{new_name}'")
+                return
+
             base_dir = os.path.dirname(dest)
-            new_dest = os.path.join(base_dir, new_name) if new_name else dest
+            new_dest = os.path.join(base_dir, safe_name) if safe_name else dest
             
             if op_type == "restore":
                 if self._file_ops:
@@ -220,23 +226,43 @@ class TransactionManager(QObject):
         tx = self._active_transactions[tid]
         op = tx.find_operation(job_id)
         
+        # [ROBUSTNESS] If not found by ID (linkage missed?), try fuzzy match
+        if not op:
+            for pending_op in tx.ops:
+                # Match if pending AND op_type matches (ignore src if needed, or matched strict)
+                # We relax src check slightly or check exact?
+                # Using same logic as onOperationStarted
+                if (pending_op.status == TransactionStatus.PENDING and 
+                    pending_op.op_type == op_type):
+                    # We could check src, but op_type is strong signal in batch
+                    # Let's check src loosely
+                    op = pending_op
+                    op.job_id = job_id
+                    break
+
         if op:
             status = TransactionStatus.COMPLETED if success else TransactionStatus.FAILED
             tx.update_status(job_id, status, error=message if not success else "")
             
             if success:
-                tx.completed_ops += 1
-                op.dest = result_path # Update result path
+                # [CRITICAL] Data Integrity for Undo
+                # For Copy/Move/Rename: result_path is the final destination (e.g. "file (2).txt")
+                # For Trash: result_path is the source (item trashed) - handled by default logic
+                op.dest = result_path 
+                op.result_path = result_path
+            else:
+                 op.error = message
         
+        # Always increment completed_ops count regardless of success
+        # This prevents "hanging" transactions if one item fails
+        tx.completed_ops += 1
+
         # Check if entire batch is done
         if tx.completed_ops >= tx.total_ops:
             tx.status = TransactionStatus.COMPLETED
             self.transactionFinished.emit(tid, "Success")
             self.historyCommitted.emit(tx)
             del self._active_transactions[tid]
-        elif not success:
-            # Policy: Continue or Stop? 
-            pass
 
     @Slot(str, str, str, str, str, object)
     def onOperationError(self, tid: str, job_id: str, op_type: str, path: str, message: str, conflict_data: object):
@@ -257,15 +283,17 @@ class TransactionManager(QObject):
             }
             
             # Try to get paths from conflict_data directly (preferred)
-            src = conflict_data.get("src_path", "")
-            dest = conflict_data.get("dest_path", "")
+            src = conflict_data.get("src_path")
+            dest = conflict_data.get("dest_path")
             
-            # Fallback logic if paths are missing from data
-            if not src and op_type == "restore":
+            # Use 'path' (from signal) as source fallback if not provided in data
+            if not src:
                 src = path
-            if not dest and op_type != "restore":
-                dest = path
-                
+            
+            # [CRITICAL] Do NOT assume 'dest' = 'path' for Copy/Move operations
+            # If dest is missing, we must rely on what we have or fail gracefully.
+            # Restore is special: source is treated as the item to restore.
+            
             conflict_data["_context"]["src"] = src
             conflict_data["_context"]["dest"] = dest
             

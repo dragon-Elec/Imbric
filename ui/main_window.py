@@ -14,6 +14,7 @@ from core.undo_manager import UndoManager
 from ui.managers.action_manager import ActionManager
 from ui.managers.file_manager import FileManager
 from ui.managers.view_manager import ViewManager
+from ui.models.shortcuts import Shortcuts
 
 # UI Components
 from ui.components.navigation_bar import NavigationBar
@@ -35,11 +36,11 @@ class MainWindow(QMainWindow):
         self.file_ops = FileOperations()
         self.file_monitor = FileMonitor()
         self.transaction_manager = TransactionManager()
-        self.undo_manager = UndoManager(file_operations=self.file_ops)
+        self.undo_manager = UndoManager(self.transaction_manager)
         
         # Wire Core Logic
-        self.file_ops.operationFinished.connect(self.transaction_manager.onOperationFinished)
-        self.transaction_manager.historyCommitted.connect(self.undo_manager.push)
+        self.transaction_manager.setFileOperations(self.file_ops)
+        self.file_ops.setTransactionManager(self.transaction_manager)
         self.file_ops.setUndoManager(self.undo_manager)
         self.file_monitor.directoryChanged.connect(self._on_directory_changed)
         
@@ -47,6 +48,7 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         
         # 3. Init Managers (Now that UI exists)
+        self.shortcuts = Shortcuts(self)
         self.view_manager = ViewManager(self)
         self.file_manager = FileManager(self)
         self.action_manager = ActionManager(self)
@@ -54,10 +56,12 @@ class MainWindow(QMainWindow):
         # Setup Actions
         self.action_manager.setup_actions(
             window=self,
+            shortcuts=self.shortcuts,
             file_manager=self.file_manager,
             view_manager=self.view_manager,
             nav_bar=self.nav_bar,
-            tab_manager=self.tab_manager
+            tab_manager=self.tab_manager,
+            undo_manager=self.undo_manager
         )
         
         # Connect Components to Managers
@@ -159,6 +163,7 @@ class MainWindow(QMainWindow):
             # Connect new scanner and store reference
             self._active_scanner = tab.scanner
             self._active_scanner.filesFound.connect(self.status_bar.updateItemCount)
+            self._active_scanner.fileAttributeUpdated.connect(self.status_bar.updateAttribute)
 
     def _on_directory_changed(self):
         tab = self.tab_manager.current_tab

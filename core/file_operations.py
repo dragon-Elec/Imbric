@@ -18,7 +18,7 @@ from gi.repository import Gio, GLib
 # Import shared workers
 from core.file_workers import (
     FileJob, FileOperationSignals,
-    CopyRunnable, MoveRunnable, RenameRunnable, CreateFolderRunnable
+    TransferRunnable, RenameRunnable, CreateFolderRunnable
 )
 from core.trash_workers import (
     TrashItem, SendToTrashRunnable, RestoreFromTrashRunnable,
@@ -50,7 +50,8 @@ class FileOperations(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        self._undo_manager = None 
+        self._undo_manager = None
+        self._transaction_manager = None 
         self._pool = QThreadPool.globalInstance()
         self._jobs: Dict[str, FileJob] = {}
         self._mutex = QMutex()
@@ -95,7 +96,17 @@ class FileOperations(QObject):
     # PUBLIC API
     # -------------------------------------------------------------------------
     
+    def setTransactionManager(self, tm):
+        self._transaction_manager = tm
+
+    def setUndoManager(self, undo_manager):
+        self._undo_manager = undo_manager
+    
     def _create_job(self, op_type: str, source: str, dest: str = "", tid: str = "", overwrite: bool = False, rename_to: str = "") -> FileJob:
+        # [FIX] Register intent with TransactionManager BEFORE execution
+        if tid and self._transaction_manager:
+            self._transaction_manager.addOperation(tid, op_type, source, dest)
+            
         return FileJob(
             id=str(uuid4()),
             op_type=op_type,
@@ -113,24 +124,41 @@ class FileOperations(QObject):
         self._pool.start(runnable)
         return job.id
 
-    @Slot(str, str, str, bool, result=str)
-    def copy(self, source_path: str, dest_path: str, transaction_id: str = "", overwrite: bool = False) -> str:
+    @Slot(str, str, str, bool, bool, result=str)
+    def copy(self, source_path: str, dest_path: str, transaction_id: str = "", overwrite: bool = False, auto_rename: bool = False) -> str:
         job = self._create_job("copy", source_path, dest_path, transaction_id, overwrite)
-        return self._submit(job, CopyRunnable)
+        job.auto_rename = auto_rename
+        return self._submit(job, TransferRunnable)
     
     @Slot(str, str, str, bool, result=str)
     def move(self, source_path: str, dest_path: str, transaction_id: str = "", overwrite: bool = False) -> str:
         job = self._create_job("move", source_path, dest_path, transaction_id, overwrite)
-        return self._submit(job, MoveRunnable)
+        return self._submit(job, TransferRunnable)
     
+    @Slot(str, str, str, str, bool, bool, result=str)
+    def transfer(self, source_path: str, dest_path: str, mode: str = "auto", transaction_id: str = "", overwrite: bool = False, auto_rename: bool = False) -> str:
+        """
+        Generic transfer method. 
+        Mode: "copy", "move", or "auto" (guesses based on filesystem).
+        """
+        op_type = mode
+        if mode == "auto":
+            # Just default to move, the TransferRunnable will decide if cross-device
+            op_type = "move"
+            
+        job = self._create_job(op_type, source_path, dest_path, transaction_id, overwrite)
+        job.auto_rename = auto_rename
+        return self._submit(job, TransferRunnable)
+
     @Slot(str, str, str, result=str)
     def rename(self, path: str, new_name: str, transaction_id: str = "") -> str:
         job = self._create_job("rename", path, new_name, transaction_id)
         return self._submit(job, RenameRunnable)
     
-    @Slot(str, str, result=str)
-    def createFolder(self, path: str, transaction_id: str = "") -> str:
+    @Slot(str, str, bool, result=str)
+    def createFolder(self, path: str, transaction_id: str = "", auto_rename: bool = False) -> str:
         job = self._create_job("createFolder", path, "", transaction_id)
+        job.auto_rename = auto_rename # Set manually as _create_job doesnt support it yet
         return self._submit(job, CreateFolderRunnable)
 
     # --- TRASH API ---

@@ -44,12 +44,15 @@ class SendToTrashRunnable(FileOperationRunnable):
             elif e.code == Gio.IOErrorEnum.NOT_SUPPORTED:
                 # Signal the UI to offer permanent deletion
                 self.signals.trashNotSupported.emit(path, str(e))
+                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "trash", path, "Trash not supported", None)
                 self.emit_finished(False, "Trash not supported on this drive")
             elif e.code == Gio.IOErrorEnum.PERMISSION_DENIED:
                 self.signals.trashNotSupported.emit(path, str(e))
+                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "trash", path, "Permission denied", None)
                 self.emit_finished(False, "Permission denied")
             else:
-                self.emit_finished(False, e.message)
+                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "trash", path, str(e), None)
+                self.emit_finished(False, str(e))
 
 class RestoreFromTrashRunnable(FileOperationRunnable):
     """Restores a file from trash to its original location."""

@@ -52,13 +52,13 @@ def build_conflict_payload(src_path, dest_path, src_info=None, dest_info=None, e
 class FileJob:
     """Tracks a single file operation (Standard or Trash)."""
     id: str
-    op_type: str              # "copy", "move", "trash", "restore", "rename", "createFolder", "list", "empty"
+    op_type: str              # "copy", "move", "trash", "restore", "rename", "createFolder", "list", "empty", "transfer"
     source: str
     dest: str = ""            # Destination path (or new name for rename)
     transaction_id: str = ""  # Links this job to a larger transaction (batch)
     cancellable: Gio.Cancellable = field(default_factory=Gio.Cancellable)
-    status: str = "pending"   # "pending", "running", "done", "cancelled", "error"
-    skipped_files: List[str] = field(default_factory=list)
+    auto_rename: bool = False # [NEW] If True, automatically find a free name (For New Folder / Duplicate)
+    skipped_files: List[str] = field(default_factory=list) # For partial success
     overwrite: bool = False   # If True, overwrite existing files without prompt
     rename_to: str = ""       # Specific for Restore: if set, restore with this filename
 
@@ -119,129 +119,182 @@ class FileOperationRunnable(QRunnable):
 
     # Removed local build_conflict_data helper, using global build_conflict_payload
 
+def generate_candidate_path(base_path: str, counter: int, style: str = "copy") -> str:
+    """
+    Generates a candidate path for auto-renaming.
+    style='copy' -> "File (Copy).txt", "File (Copy 2).txt"
+    style='number' -> "File (1).txt"
+    """
+    if counter == 0:
+        return base_path
+        
+    parent = os.path.dirname(base_path)
+    base_name = os.path.basename(base_path)
+    
+    # Simple splitext matches Nautilus behavior generally
+    name_part, ext_part = os.path.splitext(base_name)
+    
+    if base_name.endswith(".tar.gz"):
+         name_part = base_name[:-7]
+         ext_part = ".tar.gz"
+    
+    if style == "copy":
+        suffix = " (Copy)" if counter == 1 else f" (Copy {counter})"
+    else:
+        suffix = f" ({counter})"
+        
+    return os.path.join(parent, f"{name_part}{suffix}{ext_part}")
+
 # =============================================================================
 # STANDARD OPERATIONS
 # =============================================================================
 
-class CopyRunnable(FileOperationRunnable):
-    """Handles recursive file/directory copy with progress."""
+class TransferRunnable(FileOperationRunnable):
+    """
+    Unified worker for Copy and Move.
+    Implements Smart Transfer:
+    - If Move + same device -> Atomic Rename.
+    - If Move + different device -> Recursive Copy + Delete.
+    - If Copy -> Recursive Copy.
+    - Handles Atomic Auto-Rename and Recursive Merge.
+    """
     
     def run(self):
         self.emit_started()
-        source = Gio.File.new_for_path(self.job.source)
-        dest = Gio.File.new_for_path(self.job.dest)
         
-        try:
-            self.job.skipped_files = []
-            self._recursive_copy(source, dest, self.job.cancellable)
+        # [NEW] Atomic Auto-Rename Loop
+        # We loop until we successfully transfer without an EXISTS error
+        base_dest = self.job.dest
+        base_name = os.path.basename(base_dest)
+        parent = os.path.dirname(base_dest)
+        name_part, ext_part = os.path.splitext(base_name)
+        
+        counter = 0
+        # If explicitly copying to same path (Duplication), start with 1 (Copy)
+        # to avoid trying to overwrite self (which might succeed/fail unpredictably)
+        if os.path.abspath(self.job.source) == os.path.abspath(base_dest):
+            counter = 1
             
-            if self.job.skipped_files:
-                count = len(self.job.skipped_files)
-                self.emit_finished(True, f"{self.job.dest}|PARTIAL:{count}")
-            else:
-                self.emit_finished(True, self.job.dest)
+        max_retries = 10000 if self.job.auto_rename else 1
+        
+        while counter < max_retries:
+            # 1. Calculate Candidate Path
+            final_dest = generate_candidate_path(base_dest, counter, style="copy")
+
+            src_file = Gio.File.new_for_path(self.job.source)
+            dst_file = Gio.File.new_for_path(final_dest)
+            
+            try:
+                self.job.skipped_files = []
                 
-        except GLib.Error as e:
-            if e.code == Gio.IOErrorEnum.EXISTS:
-                print(f"[FILE_OPS:{self.job.id[:8]}] CONFLICT: File exists at dest")
-                conflict_data = build_conflict_payload(self.job.source, self.job.dest)
-                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "copy", self.job.dest, "Conflict detected", conflict_data)
-                self.emit_finished(False, "Conflict detected")
-            else:
-                msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
-                self.emit_finished(False, msg)
-    
-    def _recursive_copy(self, source, dest, cancellable):
-        info = source.query_info("standard::type,standard::name", Gio.FileQueryInfoFlags.NONE, cancellable)
+                # 2. Decision Logic (SMART TRANSFER)
+                if self.job.op_type == "move":
+                    # Try atomic move first
+                    try:
+                        flags = Gio.FileCopyFlags.OVERWRITE if self.job.overwrite else Gio.FileCopyFlags.NONE
+                        # No fallback yet, we want to detect cross-device
+                        src_file.move(dst_file, flags | Gio.FileCopyFlags.NO_FALLBACK_FOR_MOVE, 
+                                      self.job.cancellable, self._progress_callback, None)
+                        self.emit_finished(True, "Success", result_override=final_dest)
+                        return
+                    except GLib.Error as e:
+                        # If it's a cross-device move, or directory merge, handle manually
+                        if e.code in [Gio.IOErrorEnum.NOT_SAME_MOUNTPOINT, Gio.IOErrorEnum.WOULD_MERGE, 29]:
+                            # Cross-device move or merge -> Recursive copy + delete
+                            # Note: Recursive transfer logic handles its own errors, we need to catch EXISTS there too?
+                            # _recursive_transfer generally doesn't raise EXISTS for children unless it's the root I guess?
+                            # Actually, if root exists, _recursive_transfer might fail if it's a file.
+                            # But if it's a dir, it merges.
+                            
+                            # For auto-rename, we generally want to avoid merging into existing folder too?
+                            # Nautilus auto-renames even if it's a folder to avoid merge if "Keep Both" is selected.
+                            # So we should treat EXISTS as a conflict/retry trigger.
+                            
+                            # Let's check existence before recursive if we are auto-renaming to be safe?
+                            # No, TOCTOU.
+                            # `_recursive_transfer` checks file type.
+                            self._recursive_transfer(src_file, dst_file, is_move=True)
+                            if self.job.skipped_files:
+                                self.emit_finished(True, f"Partial Success: {len(self.job.skipped_files)} skipped", result_override=final_dest)
+                            else:
+                                self.emit_finished(True, "Success", result_override=final_dest)
+                            return
+                        elif e.code == Gio.IOErrorEnum.EXISTS:
+                            raise e # Trigger Retry Loop
+                        else:
+                            raise e
+                else:
+                    # Standard Copy
+                    self._recursive_transfer(src_file, dst_file, is_move=False)
+                    if self.job.skipped_files:
+                        self.emit_finished(True, f"Partial Success: {len(self.job.skipped_files)} skipped", result_override=final_dest)
+                    else:
+                        self.emit_finished(True, "Success", result_override=final_dest)
+                    return
+                        
+            except GLib.Error as e:
+                if e.code == Gio.IOErrorEnum.EXISTS:
+                    if self.job.auto_rename:
+                        counter += 1
+                        continue # RETRY with new name
+                    else:
+                        # Conflict!
+                        conflict_data = build_conflict_payload(self.job.source, final_dest)
+                        self.signals.operationError.emit(self.job.transaction_id, self.job.id, self.job.op_type, final_dest, "Conflict", conflict_data)
+                        self.emit_finished(False, "Conflict detected")
+                        return
+                else:
+                    msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
+                    if e.code != Gio.IOErrorEnum.CANCELLED:
+                        self.signals.operationError.emit(self.job.transaction_id, self.job.id, self.job.op_type, final_dest, msg, None)
+                    self.emit_finished(False, msg)
+                    return
+        
+        # If loop finishes without return (counter maxed)
+        self.emit_finished(False, "Could not find unique name for copy (limit reached)")
+
+    def _recursive_transfer(self, source, dest, is_move=False):
+        """Unified recursive transfer logic."""
+        info = source.query_info("standard::type,standard::name", Gio.FileQueryInfoFlags.NONE, self.job.cancellable)
         file_type = info.get_file_type()
         
         if file_type == Gio.FileType.DIRECTORY:
             try:
-                dest.make_directory_with_parents(cancellable)
+                dest.make_directory_with_parents(self.job.cancellable)
             except GLib.Error:
                 pass # Exists ok
             
+            local_error = False
             enumerator = None
             try:
-                enumerator = source.enumerate_children("standard::name,standard::type", Gio.FileQueryInfoFlags.NONE, cancellable)
+                enumerator = source.enumerate_children("standard::name,standard::type", Gio.FileQueryInfoFlags.NONE, self.job.cancellable)
                 for child_info in enumerator:
                     child_name = child_info.get_name()
-                    self._recursive_copy(source.get_child(child_name), dest.get_child(child_name), cancellable)
+                    c_src = source.get_child(child_name)
+                    c_dst = dest.get_child(child_name)
+                    
+                    try:
+                        self._recursive_transfer(c_src, c_dst, is_move=is_move)
+                    except GLib.Error as e:
+                        if e.code in [Gio.IOErrorEnum.CANCELLED, Gio.IOErrorEnum.EXISTS]: raise
+                        self.job.skipped_files.append(c_src.get_path())
+                        local_error = True
             finally:
                 if enumerator: enumerator.close(None)
-        else:
-            flags = Gio.FileCopyFlags.OVERWRITE if self.job.overwrite else Gio.FileCopyFlags.NONE
-            source.copy(dest, flags, cancellable, self._progress_callback, None)
-
-class MoveRunnable(FileOperationRunnable):
-    """Handles move with directory merge support."""
-    
-    def run(self):
-        self.emit_started()
-        source = Gio.File.new_for_path(self.job.source)
-        dest = Gio.File.new_for_path(self.job.dest)
-        
-        try:
-            flags = Gio.FileCopyFlags.OVERWRITE if self.job.overwrite else Gio.FileCopyFlags.NONE
-            source.move(dest, flags, self.job.cancellable, self._progress_callback, None)
-            self.emit_finished(True, self.job.dest)
             
-        except GLib.Error as e:
-            if e.code == Gio.IOErrorEnum.WOULD_MERGE or e.code == 29:
-                # Merge Logic
+            # If move and all children transferred, delete original dir
+            if is_move and not local_error:
                 try:
-                    self.job.skipped_files = []
-                    self._recursive_move_merge(source, dest, self.job.cancellable)
-                    if self.job.skipped_files:
-                        self.emit_finished(True, f"{self.job.dest}|PARTIAL:{len(self.job.skipped_files)}")
-                    else:
-                        self.emit_finished(True, self.job.dest)
-                except GLib.Error as merge_e:
-                    msg = "Cancelled" if merge_e.code == Gio.IOErrorEnum.CANCELLED else str(merge_e)
-                    self.emit_finished(False, msg)
-            elif e.code == Gio.IOErrorEnum.EXISTS:
-                conflict_data = build_conflict_payload(self.job.source, self.job.dest)
-                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "move", self.job.dest, "Conflict detected", conflict_data)
-                self.emit_finished(False, "Conflict detected")
+                    source.delete(self.job.cancellable)
+                except:
+                    pass
+        else:
+            # File Transfer
+            flags = Gio.FileCopyFlags.OVERWRITE if self.job.overwrite else Gio.FileCopyFlags.NONE
+            if is_move:
+                source.move(dest, flags, self.job.cancellable, self._progress_callback, None)
             else:
-                msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
-                self.emit_finished(False, msg)
-
-    def _recursive_move_merge(self, source, dest, cancellable):
-        enumerator = None
-        local_skipped = False
-        try:
-            enumerator = source.enumerate_children("standard::name,standard::type", Gio.FileQueryInfoFlags.NONE, cancellable)
-            for child_info in enumerator:
-                child_name = child_info.get_name()
-                child_source = source.get_child(child_name)
-                child_dest = dest.get_child(child_name)
-                
-                flags = Gio.FileCopyFlags.OVERWRITE if self.job.overwrite else Gio.FileCopyFlags.NONE
-                
-                # If both are dirs, recurse
-                if child_info.get_file_type() == Gio.FileType.DIRECTORY and child_dest.query_exists(cancellable):
-                     # Check if dest is also dir
-                     d_info = child_dest.query_info("standard::type", Gio.FileQueryInfoFlags.NONE, cancellable)
-                     if d_info.get_file_type() == Gio.FileType.DIRECTORY:
-                         self._recursive_move_merge(child_source, child_dest, cancellable)
-                         continue
-
-                try:
-                    child_source.move(child_dest, flags, cancellable, self._progress_callback, None)
-                except GLib.Error as e:
-                    if e.code in [Gio.IOErrorEnum.CANCELLED, Gio.IOErrorEnum.EXISTS]: raise
-                    self.job.skipped_files.append(child_source.get_path())
-                    local_skipped = True
-        finally:
-            if enumerator: enumerator.close(None)
-        
-        # Cleanup empty source only if we moved everything locally
-        if not local_skipped and not self.job.skipped_files:
-            try:
-                source.delete(cancellable)
-            except GLib.Error:
-                pass
+                source.copy(dest, flags, self.job.cancellable, self._progress_callback, None)
 
 
 class RenameRunnable(FileOperationRunnable):
@@ -274,12 +327,52 @@ class RenameRunnable(FileOperationRunnable):
 class CreateFolderRunnable(FileOperationRunnable):
     def run(self):
         self.emit_started()
-        gfile = Gio.File.new_for_path(self.job.source)
+        
+        target_path = self.job.source
+        
+        # [NEW] Atomic Auto-Rename Loop
+        if self.job.auto_rename:
+            base_name = os.path.basename(target_path)
+            parent = os.path.dirname(target_path)
+            name_part, ext_part = os.path.splitext(base_name)
+            
+            counter = 0
+            # Safety limit to prevent infinite loops
+            while counter < 10000:
+                candidate = generate_candidate_path(target_path, counter, style="number")
+                
+                gfile = Gio.File.new_for_path(candidate)
+                try:
+                    gfile.make_directory(self.job.cancellable)
+                    self.emit_finished(True, candidate, result_override=candidate)
+                    return
+                except GLib.Error as e:
+                    if e.code == Gio.IOErrorEnum.EXISTS:
+                         counter += 1
+                         continue
+                    
+                    # Handle Cancel/Other errors immediately
+                    msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
+                    if e.code != Gio.IOErrorEnum.CANCELLED:
+                        self.signals.operationError.emit(self.job.transaction_id, self.job.id, "createFolder", candidate, msg, None)
+                    self.emit_finished(False, msg)
+                    return
+            
+            self.emit_finished(False, "Could not find unique name (limit reached)")
+            return
+
+        # Standard Create (Fail if Exists)
+        gfile = Gio.File.new_for_path(target_path)
         try:
             gfile.make_directory(self.job.cancellable)
-            self.emit_finished(True, self.job.source)
+            self.emit_finished(True, target_path)
         except GLib.Error as e:
-            msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
-            if e.code != Gio.IOErrorEnum.CANCELLED:
-                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "createFolder", self.job.source, msg, None)
-            self.emit_finished(False, msg)
+            if e.code == Gio.IOErrorEnum.EXISTS:
+                conflict_data = build_conflict_payload(target_path, target_path)
+                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "createFolder", target_path, "Folder exists", conflict_data)
+                self.emit_finished(False, "Folder exists")
+            else:
+                msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
+                if e.code != Gio.IOErrorEnum.CANCELLED:
+                    self.signals.operationError.emit(self.job.transaction_id, self.job.id, "createFolder", target_path, msg, None)
+                self.emit_finished(False, msg)

@@ -110,26 +110,12 @@ class FileManager(QObject):
             dirname = os.path.dirname(p)
             filename = os.path.basename(p)
             
-            # Split ext
-            if filename.endswith(".tar.gz"):
-                base = filename[:-7]
-                ext = ".tar.gz"
-            else:
-                base, ext = os.path.splitext(filename)
+            # Target is same folder, so we just use the original path as dest key
+            # and let auto_rename handle the (Copy) suffix generation
+            dest_path = p 
             
-            # Find unique name: "Foo (Copy).txt", "Foo (Copy 2).txt"
-            counter = 1
-            while True:
-                suffix = " (Copy)" if counter == 1 else f" (Copy {counter})"
-                candidate_name = f"{base}{suffix}{ext}"
-                candidate_path = os.path.join(dirname, candidate_name)
-                
-                if not os.path.exists(candidate_path):
-                    # Found it
-                    self.mw.file_ops.copy(p, candidate_path, transaction_id=tid)
-                    break 
-                    
-                counter += 1
+            # [FIX] Use atomic auto_rename in backend. No UI loop!
+            self.mw.file_ops.copy(p, dest_path, transaction_id=tid, auto_rename=True)
 
     # --- Clipboard Logic (Ex-ClipboardManager) ---
 
@@ -183,20 +169,25 @@ class FileManager(QObject):
             self._clipboard.clear()
 
     def _create_folder_internal(self, current_path):
+        # [FIX] Atomic creation via Core. 
+        # UI only guesses a name for better UX, but Core ensures uniqueness.
         base_name = "Untitled Folder"
         folder_path = os.path.join(current_path, base_name)
-        counter = 2
-        while os.path.exists(folder_path):
-            folder_path = os.path.join(current_path, f"{base_name} ({counter})")
-            counter += 1
-            
-        # We need to tell the bridge to select this later
-        # Logic for "pending select" acts on Bridges.
+        
+        # We still queue it for selection, but we rely on backend for naming
         if tab := self._current_tab():
-            tab.bridge.queueSelectionAfterRefresh([folder_path])
-            # tab.bridge._pending_rename_path = folder_path # If we want auto-rename
-            
-        self.mw.file_ops.createFolder(folder_path)
+             # We queue the BASE path. If it gets renamed to "Untitled Folder (2)", 
+             # we rely on the returned path from op_completed signal to handle selection?
+             # Wait, FileManager.create_new_folder -> file_ops.createFolder -> returns jobID
+             # Then Main Window connects operationCompleted -> AppBridge.selectPath(result_path)
+             # So we don't need to manually queue selection here IF the result path is propagated correctly!
+             
+             # Actually, AppBridge.queueSelectionAfterRefresh is for *reloading* view.
+             # But operationCompleted happens async.
+             # Let's keep a loose generic queue or rely on on_op_completed in MainWindow.
+             pass
+
+        self.mw.file_ops.createFolder(folder_path, auto_rename=True)
 
     def _run_transfer(self, sources: List[str], dest_dir: str, is_move: bool):
         """
@@ -205,12 +196,7 @@ class FileManager(QObject):
         resolver = ConflictResolver(self.mw)
         op_name = "Move" if is_move else "Copy"
         tid = self.mw.transaction_manager.startTransaction(f"{op_name} {len(sources)} items")
-        
-        # Check cross-device for moves
-        try:
-            dest_dev = os.stat(dest_dir).st_dev
-        except OSError:
-            dest_dev = None
+        # Helper for paste / conflict resolution
 
         for src in sources:
             if not os.path.exists(src): continue
@@ -223,12 +209,9 @@ class FileManager(QObject):
             if action == ConflictAction.CANCEL: break
             if action == ConflictAction.SKIP: continue
             
-            if is_move:
-                # If move across devices, falls back to copy-del in fileOPS usually, 
-                # but let's check optimization
-                self.mw.file_ops.move(src, final_dest, transaction_id=tid)
-            else:
-                self.mw.file_ops.copy(src, final_dest, transaction_id=tid)
+            # Smart Transfer handles move/copy logic internally
+            mode = "move" if is_move else "copy"
+            self.mw.file_ops.transfer(src, final_dest, mode=mode, transaction_id=tid)
 
     # --- Drag & Drop ---
     
@@ -254,17 +237,8 @@ class FileManager(QObject):
             # Ideally we check device to decide Move vs Copy default.
             # Existing AppBridge logic did complex checks. 
             # We will default to 'move' if on same device, else 'copy', inside run_transfer?
-            # actually run_transfer takes explicit is_move.
-            # Let's do a simple check here:
-            is_move = False
-            try:
-                # Simple heuristic: if same device, move.
-                if dest_dir and os.path.exists(dest_dir):
-                    dest_dev = os.stat(dest_dir).st_dev
-                    src_dev = os.stat(real_paths[0]).st_dev
-                    if dest_dev == src_dev:
-                        is_move = True
-            except:
-                pass
-                
-            self._run_transfer(real_paths, dest_dir, is_move=is_move)
+            # Unified transfer logic. Mode="auto" lets the core decide Move vs Copy.
+            self.mw.file_ops.transfer(real_paths[0], dest_dir, mode="auto")
+            # If multiple paths, handle them as well (TODO: Batch transfer support in Core?)
+            for p in real_paths[1:]:
+                self.mw.file_ops.transfer(p, dest_dir, mode="auto")
