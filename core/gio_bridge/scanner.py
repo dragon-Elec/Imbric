@@ -15,8 +15,9 @@ Features:
 import gi
 gi.require_version('Gio', '2.0')
 from gi.repository import Gio, GLib
+from uuid import uuid4
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Signal, Slot, QTimer
 from core.gio_bridge.count_worker import ItemCountWorker
 
 
@@ -25,13 +26,14 @@ class FileScanner(QObject):
     Async directory scanner using Gio.
     
     Signals:
-        filesFound(list[dict]) - Emitted with each batch of files
-        scanFinished() - Emitted when scan completes successfully
+        filesFound(str, list) - Emitted with (session_id, batch) for cross-talk filtering
+        scanFinished(str) - Emitted with session_id when scan completes successfully
         scanError(str) - Emitted on fatal error (e.g., directory not found)
     """
     
-    filesFound = Signal(list)
-    scanFinished = Signal()
+    # [FIX] Session-tagged signals to prevent cross-talk
+    filesFound = Signal(str, list)  # (session_id, batch)
+    scanFinished = Signal(str)       # (session_id)
     scanError = Signal(str)
     fileAttributeUpdated = Signal(str, str, object)  # path, attribute_name, value
 
@@ -68,11 +70,24 @@ class FileScanner(QObject):
     # Batch size increased to 200 to reduce Masonry layout thrashing (O(N^2) sorts)
     BATCH_SIZE = 200
 
+    # [FIX] Timer interval for coalesced emission (reduces layout thrashing)
+    EMIT_DEBOUNCE_MS = 100
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cancellable: Gio.Cancellable | None = None
         self._current_path: str | None = None
         self._show_hidden: bool = False
+        
+        # [FIX] Session ID for cross-talk prevention
+        self._session_id: str = ""
+        
+        # [FIX] Buffer and timer for coalesced emission
+        self._batch_buffer: list[dict] = []
+        self._emit_timer = QTimer(self)
+        self._emit_timer.setInterval(self.EMIT_DEBOUNCE_MS)
+        self._emit_timer.setSingleShot(True)
+        self._emit_timer.timeout.connect(self._flush_buffer)
         
         # Background item counter
         self._count_worker = ItemCountWorker(self)
@@ -108,6 +123,8 @@ class FileScanner(QObject):
         
         self._current_path = path
         self._cancellable = Gio.Cancellable()
+        # [FIX] Generate unique session ID for cross-talk prevention
+        self._session_id = str(uuid4())
         
         # Capture the specific token for this scan
         cancellable = self._cancellable
@@ -126,6 +143,10 @@ class FileScanner(QObject):
     @Slot()
     def cancel(self) -> None:
         """Cancel any in-progress scan."""
+        # [FIX] Stop timer and clear buffer to prevent stale emissions
+        self._emit_timer.stop()
+        self._batch_buffer.clear()
+        
         if self._cancellable is not None:
             self._cancellable.cancel()
             self._cancellable = None
@@ -196,14 +217,19 @@ class FileScanner(QObject):
             return
         
         if not file_infos:
-            self.scanFinished.emit()
+            # [FIX] Flush remaining buffer before signaling completion
+            self._flush_buffer()
+            self.scanFinished.emit(self._session_id)
             self._close_enumerator(stored_enumerator)
             return
         
         batch = self._process_batch(file_infos, parent_path)
         
+        # [FIX] Buffer batch instead of immediate emit (reduces layout thrashing)
         if batch:
-            self.filesFound.emit(batch)
+            self._batch_buffer.extend(batch)
+            if not self._emit_timer.isActive():
+                self._emit_timer.start()
         
         self._fetch_next_batch(stored_enumerator, parent_path, cancellable)
 
@@ -276,20 +302,17 @@ class FileScanner(QObject):
                 self._count_worker.enqueue(full_path)
 
             
-            # Wrapper for QML caching
-            if is_visual:
-                # Images/Videos get unique thumbnails
-                icon_source = f"image://thumbnail/{full_path}"
-            else:
-                # Non-visual files get a SHARED icon based on MIME type
-                # QML will now see the SAME URL for all .txt files and reuse the RAM cache
-                icon_source = f"image://thumbnail/mime/{mime_type}"
+            # Determine icon name for non-visual files (used by QML image://theme/)
+            icon_name = ""
+            if not is_visual:
+                # Convert MIME type to icon name (e.g., "inode/directory" -> "inode-directory")
+                icon_name = mime_type.replace("/", "-") if mime_type else "application-x-generic"
 
             batch.append({
                 # Core
                 "name": name,
                 "path": full_path,
-                "iconSource": icon_source,
+                "iconName": icon_name,  # For QML image://theme/ (non-visual only)
                 "isDir": is_dir,
                 "size": size,
                 
@@ -328,6 +351,15 @@ class FileScanner(QObject):
             return dt.to_unix()
         except Exception:
             return 0
+
+    def _flush_buffer(self) -> None:
+        """
+        [FIX] Timer callback: Emit all buffered files at once.
+        Reduces layout updates from 50+ to ~10 per second.
+        """
+        if self._batch_buffer and self._session_id:
+            self.filesFound.emit(self._session_id, self._batch_buffer)
+            self._batch_buffer = []
 
 
 

@@ -7,11 +7,12 @@ without blocking the main thread.
 Features:
 - Queue-based processing
 - Uses os.scandir (C-optimized) for fast counting
-- Cancellable via clear()
+- Cooperative cancellation via threading.Event
 - Thread-safe signal emission
 """
 
 import os
+import threading
 from collections import deque
 from typing import Deque
 
@@ -26,11 +27,13 @@ class CountTask(QRunnable):
     """
     A single counting task for one directory.
     Runs os.scandir in a thread pool thread.
+    Supports cooperative cancellation via threading.Event.
     """
     
-    def __init__(self, path: str):
+    def __init__(self, path: str, cancel_event: threading.Event):
         super().__init__()
         self.path = path
+        self._cancel = cancel_event
         self.signals = CountSignals()
         self.setAutoDelete(True)
     
@@ -40,15 +43,17 @@ class CountTask(QRunnable):
         try:
             with os.scandir(self.path) as entries:
                 for _ in entries:
+                    # [FIX] Check cancellation flag every iteration
+                    if self._cancel.is_set():
+                        return  # Abort early, don't emit
                     count += 1
         except (PermissionError, FileNotFoundError, OSError):
             # Return 0 on any error
             count = 0
         
-        # Emit signal (thread-safe)
-        # If receiver is deleted, this emits to nowhere (Safe)
-        self.signals.result.emit(self.path, count)
-
+        # Only emit if not cancelled
+        if not self._cancel.is_set():
+            self.signals.result.emit(self.path, count)
 
 class ItemCountWorker(QObject):
     """
@@ -69,6 +74,8 @@ class ItemCountWorker(QObject):
         self._active_count = 0
         self._mutex = QMutex()
         self._pool = QThreadPool.globalInstance()
+        # [FIX] Shared cancellation token for cooperative thread abort
+        self._cancel_event = threading.Event()
     
     @Slot(str)
     def enqueue(self, path: str) -> None:
@@ -84,11 +91,14 @@ class ItemCountWorker(QObject):
     @Slot()
     def clear(self) -> None:
         """
-        Clear all pending counts.
-        Note: Already-running tasks cannot be cancelled.
+        Clear all pending counts and signal running tasks to abort.
         """
         with QMutexLocker(self._mutex):
             self._queue.clear()
+            # [FIX] Signal all running tasks to abort
+            self._cancel_event.set()
+            # Reset for next scan session
+            self._cancel_event = threading.Event()
     
     def _process_queue(self) -> None:
         """Start counting tasks up to MAX_CONCURRENT."""
@@ -97,11 +107,10 @@ class ItemCountWorker(QObject):
                 path = self._queue.popleft()
                 self._active_count += 1
                 
-                # Create task with self-contained signals
-                task = CountTask(path)
+                # [FIX] Pass cancel_event for cooperative cancellation
+                task = CountTask(path, self._cancel_event)
                 
                 # Connect signal to slot (QueuedConnection is automatic across threads)
-                # If 'self' is deleted, this connection triggers generic disconnect
                 task.signals.result.connect(self._on_task_done)
                 
                 self._pool.start(task)
@@ -119,3 +128,4 @@ class ItemCountWorker(QObject):
         
         # Process more from queue
         self._process_queue()
+

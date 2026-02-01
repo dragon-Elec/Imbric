@@ -27,11 +27,12 @@ class StatusBar(QStatusBar):
         self._folder_count = 0
         self._file_count = 0
     
-    @Slot(list)
-    def updateItemCount(self, files: list):
+    @Slot(str, list)
+    def updateItemCount(self, session_id: str, files: list):
         """
         Called when files are loaded in a directory.
         files: list of dicts with 'path', 'isDir', etc.
+        session_id: ignored here (StatusBar doesn't filter by session).
         
         Note: Scanner emits files in batches, so we ACCUMULATE counts.
         Call resetCounts() before a new directory scan.
