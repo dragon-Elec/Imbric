@@ -45,9 +45,11 @@ class BrowserTab(QWidget):
         self.history_stack = []
         self.future_stack = []
         self._is_history_nav = False
+        # [FIX] Session tracking for cross-talk prevention
+        self._current_session_id: str = ""
         
-        # Connect scanner to splitter
-        self.scanner.filesFound.connect(self.splitter.appendFiles)
+        # Connect scanner to splitter (with session filtering)
+        self.scanner.filesFound.connect(self._on_files_found)
         self.scanner.scanFinished.connect(self._on_scan_finished)
         self.scanner.fileAttributeUpdated.connect(self.splitter.updateItem)
         
@@ -72,11 +74,16 @@ class BrowserTab(QWidget):
         self.bridge._tab = self  # Reference back to this tab for path operations
         ctx.setContextProperty("appBridge", self.bridge)
         
-        # Image Provider (per-tab instance — Qt takes ownership and deletes on engine destroy)
+        # Image Providers (per-tab instance — Qt takes ownership and deletes on engine destroy)
         # We create a new instance for each tab to avoid the shared provider being deleted
         from core.image_providers.thumbnail_provider import ThumbnailProvider
+        from core.image_providers.theme_provider import ThemeImageProvider
+        
         self._thumbnail_provider = ThumbnailProvider()
+        self._theme_provider = ThemeImageProvider()
+        
         self.qml_view.engine().addImageProvider("thumbnail", self._thumbnail_provider)
+        self.qml_view.engine().addImageProvider("theme", self._theme_provider)
         
         # QML import path
         qml_dir = Path(__file__).parent.parent / "qml"
@@ -130,12 +137,6 @@ class BrowserTab(QWidget):
         if self.current_path and self.qml_view.engine():
             # Cleanup QML cache to free RAM
             self.qml_view.engine().clearComponentCache()
-            
-            # AGGRESSIVE CLEANUP: Release graphics resources
-            self.qml_view.releaseResources()
-            
-            # Force Python GC to reclaim "Zombie" objects immediately
-            gc.collect()
 
         if not self._is_history_nav:
             if self.current_path and os.path.isdir(self.current_path):
@@ -154,6 +155,8 @@ class BrowserTab(QWidget):
         if self.current_path:
             self.splitter.setFiles([])  # Clear
             self.scanner.scan_directory(self.current_path)
+            # [FIX] Track session ID for cross-talk prevention
+            self._current_session_id = self.scanner._session_id
 
     def go_back(self):
         if self.history_stack:
@@ -172,8 +175,22 @@ class BrowserTab(QWidget):
     def go_home(self):
         self.navigate_to(str(Path.home()))
     
-    def _on_scan_finished(self):
-        """Called when directory scan completes."""
+    def _on_files_found(self, session_id: str, batch: list):
+        """
+        [FIX] Handle files with session filtering to prevent cross-talk.
+        """
+        if session_id != self._current_session_id:
+            return  # Stale batch from previous navigation, discard
+        self.splitter.appendFiles(batch)
+    
+    def _on_scan_finished(self, session_id: str):
+        """
+        Called when directory scan completes.
+        [FIX] Now accepts session_id for validation.
+        """
+        if session_id != self._current_session_id:
+            return  # Stale completion signal
+        
         # Check if there are pending paths to select (e.g., from paste)
         pending = self.bridge.selectPendingPaths()
         if pending:
@@ -301,6 +318,9 @@ class TabManager(QTabWidget):
             
             # FIX 1 (Cleanup): Clear cache on close
             tab.qml_view.engine().clearComponentCache()
+            
+            # FIX: Explicitly destroy the QQuickView (QWindow)
+            tab.qml_view.deleteLater()
         
         # FIX 2: Signal Disconnection
         # Explicitly disconnect scanner signals to break reference cycles

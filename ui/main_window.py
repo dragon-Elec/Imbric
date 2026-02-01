@@ -101,11 +101,20 @@ class MainWindow(QMainWindow):
         
         # Progress Overlay
         self.progress_overlay = ProgressOverlay()
+        
+        # PRIMARY: Connect to TransactionManager for batch operations
+        self.transaction_manager.transactionStarted.connect(self.progress_overlay.onBatchStarted)
+        self.transaction_manager.transactionProgress.connect(self.progress_overlay.onBatchProgress)
+        self.transaction_manager.transactionUpdate.connect(self.progress_overlay.onBatchUpdate)
+        self.transaction_manager.transactionFinished.connect(self.progress_overlay.onBatchFinished)
+        
+        # FALLBACK: Connect to FileOperations for single-file ops (without transactions)
         self.file_ops.operationStarted.connect(self.progress_overlay.onOperationStarted)
-        self.file_ops.operationProgress.connect(self.progress_overlay.onOperationProgress)
         self.file_ops.operationCompleted.connect(self.progress_overlay.onOperationCompleted)
         self.file_ops.operationError.connect(self.progress_overlay.onOperationError)
-        self.progress_overlay.cancelRequested.connect(self.file_ops.cancel)
+        
+        # Cancel support
+        self.progress_overlay.cancelRequested.connect(self._on_cancel_requested)
         central_layout.addWidget(self.progress_overlay)
         
         # Logic Wiring for Progress
@@ -189,6 +198,22 @@ class MainWindow(QMainWindow):
             if tab.bridge._pending_rename_path == path:
                 tab.bridge._pending_rename_path = None
                 QTimer.singleShot(100, lambda: tab.bridge.renameRequested.emit(path))
+    
+    @Slot(str)
+    def _on_cancel_requested(self, identifier: str):
+        """
+        Handle cancel request from ProgressOverlay.
+        identifier can be a transaction_id or a job_id.
+        """
+        # Try to cancel all jobs in a transaction
+        tx = self.transaction_manager._active_transactions.get(identifier)
+        if tx:
+            for op in tx.ops:
+                if op.job_id:
+                    self.file_ops.cancel(op.job_id)
+        else:
+            # Fallback: treat as single job_id
+            self.file_ops.cancel(identifier)
     
     # --- PROPERTIES (For Bridge Access to Managers) ---
     

@@ -178,6 +178,52 @@ class ProgressOverlay(QFrame):
         # Hide after 3 seconds
         QTimer.singleShot(3000, self._do_hide)
     
+    # -------------------------------------------------------------------------
+    # BATCH/TRANSACTION SLOTS (For multi-file operations)
+    # -------------------------------------------------------------------------
+    
+    @Slot(str, str)
+    def onBatchStarted(self, tid: str, description: str):
+        """Called when a batch transaction starts."""
+        self._current_job_id = tid  # Use transaction ID for cancel
+        self._operation_type = "batch"
+        self._pending_show = True
+        
+        # Set icon (generic for batch)
+        self.icon_label.setPixmap(QIcon.fromTheme("folder-copy").pixmap(24, 24))
+        
+        # Set title from description
+        self.title_label.setText(description)
+        self.title_label.setStyleSheet("font-weight: bold;")
+        self.detail_label.setText("Starting...")
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+        
+        # Delay show
+        self._show_timer.start(300)
+    
+    @Slot(str, int)
+    def onBatchProgress(self, tid: str, percent: int):
+        """Called during batch progress."""
+        if not self._pending_show and not self.isVisible():
+            return
+        self.progress_bar.setValue(percent)
+    
+    @Slot(str, str, int, int)
+    def onBatchUpdate(self, tid: str, description: str, completed: int, total: int):
+        """Called with detailed batch status."""
+        if not self._pending_show and not self.isVisible():
+            return
+        self.title_label.setText(description)
+        self.detail_label.setText(f"{completed} / {total} items")
+    
+    @Slot(str, str)
+    def onBatchFinished(self, tid: str, status: str):
+        """Called when batch transaction completes."""
+        self._pending_show = False
+        self._show_timer.stop()
+        self._do_hide()
+    
     def _do_show(self):
         """Actually show the overlay (called after delay)."""
         if not self._pending_show:
@@ -200,3 +246,4 @@ class ProgressOverlay(QFrame):
         else:
             # No active job (or finished with warning): Just close overlay
             self._do_hide()
+

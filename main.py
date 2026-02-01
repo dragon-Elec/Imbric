@@ -18,12 +18,33 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Imbric Photo Manager")
     parser.add_argument("path", nargs="?", help="Folder to open", default=None)
     parser.add_argument("--profile", action="store_true", help="Enable cProfile performance profiling")
+    parser.add_argument("--monitor", "-m", action="store_true", help="Launch with resource monitor (TUI)")
     return parser.parse_args()
 
 def main():
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     
     args = parse_args()
+    
+    # [NEW] Monitor Wrapper Logic
+    if args.monitor:
+        monitor_script = Path(__file__).parent / "scripts" / "monitor_resources.py"
+        if monitor_script.exists():
+            import subprocess
+            # Re-run ourselves without the -m flag, wrapped by monitor
+            cmd_args = [sys.executable, str(monitor_script), "-l", "-c"]
+            
+            # Construct the inner command (removing -m/--monitor)
+            inner_cmd = [sys.executable, str(Path(__file__).absolute())]
+            if args.path: inner_cmd.append(args.path)
+            if args.profile: inner_cmd.append("--profile")
+            
+            cmd_args.append(" ".join(inner_cmd))
+            
+            # Replace current process
+            os.execv(sys.executable, cmd_args)
+        else:
+            print("Warning: Monitor script not found. Proceeding normally.")
 
     app = QApplication(sys.argv)
     app.setOrganizationName("Antigravity")
