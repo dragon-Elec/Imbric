@@ -150,20 +150,40 @@ Item {
                                     }
                                 }
                                 
+                                // Photo Thumbnail (Async, Cached Bitmap)
                                 Image {
                                     id: img
+                                    visible: model.isVisual
                                     width: parent.width - 8
                                     height: delegateItem.imgHeight - 8
                                     anchors.top: parent.top
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     anchors.topMargin: 4
                                     
-                                    source: model.iconSource // Use optimized URL (mime/... for generics) to enable caching
-                                    // REVERT: Removed sourceSize to verify if it was blocking requests.
-                                    // We will rely on the Python-side Cache for RAM savings first.
+                                    source: model.isVisual ? "image://thumbnail/" + model.path : ""
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true
                                     cache: true
+                                }
+                                
+                                // Theme Icon (Vector, Crisp at Any Size)
+                                Image {
+                                    id: themeIcon
+                                    visible: !model.isVisual
+                                    width: parent.width - 8
+                                    height: delegateItem.imgHeight - 8
+                                    anchors.top: parent.top
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.topMargin: 4
+                                    
+                                    // Qt's theme engine handles SVG/PNG selection
+                                    source: !model.isVisual ? "image://theme/" + model.iconName : ""
+                                    fillMode: Image.PreserveAspectFit
+                                    asynchronous: false  // Theme icons are fast (no I/O)
+                                    cache: false         // Re-render at current size on zoom
+                                    
+                                    // Request icon at current display size for crispness
+                                    sourceSize: Qt.size(width, height)
                                 }
                                 
                                 Item {

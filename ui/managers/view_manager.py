@@ -28,7 +28,8 @@ class SimpleListModel(QAbstractListModel):
     SizeRole = Qt.UserRole + 6
     DateModifiedRole = Qt.UserRole + 7
     ChildCountRole = Qt.UserRole + 8
-    IconSourceRole = Qt.UserRole + 9  # ADD NEW ROLE CONSTANT
+    IconNameRole = Qt.UserRole + 9   # For QML image://theme/
+    IsVisualRole = Qt.UserRole + 10  # For conditional rendering
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -47,8 +48,10 @@ class SimpleListModel(QAbstractListModel):
             return item.get("name", "")
         elif role == self.PathRole:
             return item.get("path", "")
-        elif role == self.IconSourceRole:  # EXPOSE THIS
-            return item.get("iconSource", "")
+        elif role == self.IconNameRole:
+            return item.get("iconName", "")
+        elif role == self.IsVisualRole:
+            return item.get("isVisual", False)
         elif role == self.IsDirRole:
             return item.get("isDir", False)
         elif role == self.WidthRole:
@@ -68,7 +71,8 @@ class SimpleListModel(QAbstractListModel):
         return {
             self.NameRole: b"name",
             self.PathRole: b"path",
-            self.IconSourceRole: b"iconSource",  # MAP ROLE TO QML NAME
+            self.IconNameRole: b"iconName",
+            self.IsVisualRole: b"isVisual",
             self.IsDirRole: b"isDir",
             self.WidthRole: b"width",
             self.HeightRole: b"height",
@@ -155,6 +159,10 @@ class ColumnSplitter(QObject):
         self._redistribute()
 
     def _rebuild_models(self) -> None:
+        # Cleanup: Destroy existing models to prevent "Zombie" accumulation
+        for model in self._column_models:
+            model.deleteLater()
+
         self._column_models = [SimpleListModel(self) for _ in range(self._column_count)]
 
     def _redistribute(self) -> None:

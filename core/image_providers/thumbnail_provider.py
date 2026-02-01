@@ -128,28 +128,9 @@ class ThumbnailRunnable(QRunnable):
         
         # Non-image files: Get MIME-based icon [+ Lock if needed]
         if ext not in IMAGE_EXTENSIONS:
-            if is_locked:
-                # We need to get the MIME icon first, then composite. 
-                # _get_mime_icon returns QImage, so we can't easily pass it to _get_emblemed_icon (which takes str).
-                # Modification: We'll modify _get_emblemed_icon to accept QImage or handle this locally.
-                # For now, let's just stick to a simple lock on generic mime types if possible, 
-                # or we just rely on _get_mime_icon returning the base and we manually composite.
-                # Let's simple it: Just use _get_mime_icon for now, handling lock is complex for MIME types without retrieving name.
-                # ACTUALLY: Let's extract the mime icon name logic to a helper so we can reuse it.
-                
-                # For this iteration, let's prioritize the MIME icon. 
-                # If the user really wants the lock on MIME files, we'd need to refactor _get_mime_icon to return the name.
-                # Let's try to get the icon image, then overlay lock manually here? 
-                # No, let's keep it simple for this step and just fix Broken Link + Dir Lock.
-                pass 
-            
-            img = self._get_mime_icon(resolved_path, target_size)
-            
-            # Post-process: Add Lock Emblem if needing
-            if is_locked:
-                img = self._overlay_emblem(img, "emblem-readonly", target_size)
-                
-            self._response.set_image(img)
+            # Non-visual files are handled by QML via image://theme/
+            # We return generic icon only as a fallback if caller insists on using this provider
+            self._response.set_image(self._get_themed_icon("application-x-generic", target_size))
             return
         
         # --- 4. HANDLE IMAGES ---
@@ -187,7 +168,15 @@ class ThumbnailRunnable(QRunnable):
         if thumb_path and os.path.exists(thumb_path):
             img = QImage(thumb_path)
         else:
-            img = QImage(resolved_path) # Fallback to original
+            # FIX: Memory-efficient loading via QImageReader
+            from PySide6.QtGui import QImageReader
+            reader = QImageReader(resolved_path)
+            if requested_size.isValid():
+                # Decode at target size to avoid full-bitmap allocation
+                reader.setScaledSize(requested_size)
+            img = reader.read()
+            if img.isNull():
+                img = self._get_themed_icon("image-x-generic", target_size)
         
         if img.isNull():
             img = self._get_themed_icon("image-x-generic", target_size)
