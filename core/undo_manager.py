@@ -247,7 +247,8 @@ class UndoManager(QObject):
                 # Ideally we keep it in Undo stack because it wasn't successfully undone.
                 self._undo_stack.append(tx) 
                 print(f"[UndoManager] Undo Failed: {errs}")
-                self.operationFinished.emit(False, f"Undo failed: {errs[0]}")
+                error_msg = errs[0] if errs else "Unknown error"
+                self.operationFinished.emit(False, f"Undo failed: {error_msg}")
                 
         elif mode == PendingMode.REDO:
             if success:
@@ -258,6 +259,7 @@ class UndoManager(QObject):
                 # Execution failed. Keep in Redo stack?
                 self._redo_stack.append(tx)
                 print(f"[UndoManager] Redo Failed: {errs}")
-                self.operationFinished.emit(False, f"Redo failed: {errs[0]}")
+                error_msg = errs[0] if errs else "Unknown error"
+                self.operationFinished.emit(False, f"Redo failed: {error_msg}")
 
         self._emit_status()

@@ -102,29 +102,39 @@ class RestoreFromTrashRunnable(FileOperationRunnable):
     def _get_trash_specific_data(self, original_path: str) -> dict:
         """Fetch trash deletion date to enrich conflict payload."""
         trash_root = Gio.File.new_for_uri("trash:///")
-        enumerator = trash_root.enumerate_children(
-            "trash::orig-path,trash::deletion-date",
-            Gio.FileQueryInfoFlags.NONE,
-            self.job.cancellable
-        )
+        try:
+            enumerator = trash_root.enumerate_children(
+                "trash::orig-path,trash::deletion-date",
+                Gio.FileQueryInfoFlags.NONE,
+                self.job.cancellable
+            )
+        except GLib.Error as e:
+            print(f"[TrashWorker] Warning: Could not enumerate trash: {e}")
+            return {}
         
         candidate_date = ""
         found = False
         
-        while True:
-            info = enumerator.next_file(self.job.cancellable)
-            if not info:
-                break
-            orig_path = info.get_attribute_byte_string("trash::orig-path")
-            if orig_path:
-                if isinstance(orig_path, bytes):
-                    orig_path = orig_path.decode('utf-8', errors='ignore')
-                if orig_path == original_path:
-                    date = info.get_attribute_string("trash::deletion-date") or ""
-                    if not found or date > candidate_date:
-                        candidate_date = date
-                        found = True
-        enumerator.close(self.job.cancellable)
+        try:
+            while True:
+                try:
+                    info = enumerator.next_file(self.job.cancellable)
+                except GLib.Error as e:
+                    print(f"[TrashWorker] Warning: Error reading trash entry, skipping: {e}")
+                    continue
+                if not info:
+                    break
+                orig_path = info.get_attribute_byte_string("trash::orig-path")
+                if orig_path:
+                    if isinstance(orig_path, bytes):
+                        orig_path = orig_path.decode('utf-8', errors='ignore')
+                    if orig_path == original_path:
+                        date = info.get_attribute_string("trash::deletion-date") or ""
+                        if not found or date > candidate_date:
+                            candidate_date = date
+                            found = True
+        finally:
+            enumerator.close(self.job.cancellable)
         
         return {"deletion_date": candidate_date} if found else {}
 
@@ -139,23 +149,28 @@ class RestoreFromTrashRunnable(FileOperationRunnable):
         candidate = None
         candidate_date = ""
         
-        while True:
-            info = enumerator.next_file(self.job.cancellable)
-            if not info:
-                break
-            
-            orig_path = info.get_attribute_byte_string("trash::orig-path")
-            if orig_path:
-                if isinstance(orig_path, bytes):
-                    orig_path = orig_path.decode('utf-8', errors='ignore')
+        try:
+            while True:
+                try:
+                    info = enumerator.next_file(self.job.cancellable)
+                except GLib.Error as e:
+                    print(f"[TrashWorker] Warning: Error reading trash entry, skipping: {e}")
+                    continue
+                if not info:
+                    break
                 
-                if orig_path == original_path:
-                    date = info.get_attribute_string("trash::deletion-date") or ""
-                    if candidate is None or date > candidate_date:
-                        candidate = info
-                        candidate_date = date
-        
-        enumerator.close(self.job.cancellable)
+                orig_path = info.get_attribute_byte_string("trash::orig-path")
+                if orig_path:
+                    if isinstance(orig_path, bytes):
+                        orig_path = orig_path.decode('utf-8', errors='ignore')
+                    
+                    if orig_path == original_path:
+                        date = info.get_attribute_string("trash::deletion-date") or ""
+                        if candidate is None or date > candidate_date:
+                            candidate = info
+                            candidate_date = date
+        finally:
+            enumerator.close(self.job.cancellable)
         
         if candidate:
             trash_name = candidate.get_name()

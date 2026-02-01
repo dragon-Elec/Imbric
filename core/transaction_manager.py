@@ -35,6 +35,9 @@ class TransactionManager(QObject):
     
     # Emitted when a conflict is resolved
     conflictResolved = Signal(str, str)       # (job_id, resolution_type)
+    
+    # NEW: UI-friendly batch update (description + counts)
+    transactionUpdate = Signal(str, str, int, int)  # (tid, description, completed, total)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -65,8 +68,8 @@ class TransactionManager(QObject):
         self.transactionStarted.emit(tid, description)
         return tid
 
-    @Slot(str, str, str, str)
-    def addOperation(self, tid: str, op_type: str, src: str, dest: str = ""):
+    @Slot(str, str, str, str, str)
+    def addOperation(self, tid: str, op_type: str, src: str, dest: str = "", job_id: str = ""):
         """
         Register intent to perform an operation within a transaction.
         Call this BEFORE calling file_ops.
@@ -75,7 +78,7 @@ class TransactionManager(QObject):
             return
             
         tx = self._active_transactions[tid]
-        op = TransactionOperation(op_type=op_type, src=src, dest=dest)
+        op = TransactionOperation(op_type=op_type, src=src, dest=dest, job_id=job_id)
         tx.add_operation(op)
 
     @Slot(str, str, str)
@@ -226,19 +229,9 @@ class TransactionManager(QObject):
         tx = self._active_transactions[tid]
         op = tx.find_operation(job_id)
         
-        # [ROBUSTNESS] If not found by ID (linkage missed?), try fuzzy match
+        # [STRICT MODE] No fuzzy matching - ID must be correct
         if not op:
-            for pending_op in tx.ops:
-                # Match if pending AND op_type matches (ignore src if needed, or matched strict)
-                # We relax src check slightly or check exact?
-                # Using same logic as onOperationStarted
-                if (pending_op.status == TransactionStatus.PENDING and 
-                    pending_op.op_type == op_type):
-                    # We could check src, but op_type is strong signal in batch
-                    # Let's check src loosely
-                    op = pending_op
-                    op.job_id = job_id
-                    break
+            print(f"[TM] WARNING: Job {job_id} not found in transaction {tid}. Possible linkage error.")
 
         if op:
             status = TransactionStatus.COMPLETED if success else TransactionStatus.FAILED
@@ -256,6 +249,11 @@ class TransactionManager(QObject):
         # Always increment completed_ops count regardless of success
         # This prevents "hanging" transactions if one item fails
         tx.completed_ops += 1
+        
+        # [NEW] Emit aggregated progress for UI
+        percent = int((tx.completed_ops / tx.total_ops) * 100) if tx.total_ops > 0 else 100
+        self.transactionProgress.emit(tid, percent)
+        self.transactionUpdate.emit(tid, tx.description, tx.completed_ops, tx.total_ops)
 
         # Check if entire batch is done
         if tx.completed_ops >= tx.total_ops:

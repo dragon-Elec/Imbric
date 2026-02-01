@@ -103,12 +103,14 @@ class FileOperations(QObject):
         self._undo_manager = undo_manager
     
     def _create_job(self, op_type: str, source: str, dest: str = "", tid: str = "", overwrite: bool = False, rename_to: str = "") -> FileJob:
-        # [FIX] Register intent with TransactionManager BEFORE execution
+        # [FIX] Generate ID first, then register with TransactionManager
+        job_id = str(uuid4())
+        
         if tid and self._transaction_manager:
-            self._transaction_manager.addOperation(tid, op_type, source, dest)
+            self._transaction_manager.addOperation(tid, op_type, source, dest, job_id)
             
         return FileJob(
-            id=str(uuid4()),
+            id=job_id,
             op_type=op_type,
             source=source,
             dest=dest,
@@ -170,8 +172,17 @@ class FileOperations(QObject):
     
     @Slot(list)
     def trashMultiple(self, paths: list):
+        """Trash multiple files as a single batch transaction."""
+        if not paths:
+            return
+        
+        # Create a transaction for batch progress aggregation
+        tid = ""
+        if self._transaction_manager:
+            tid = self._transaction_manager.startTransaction(f"Trashing {len(paths)} items")
+        
         for path in paths:
-            self.trash(path)
+            self.trash(path, transaction_id=tid)
             
     # Updated signature to match what TransactionManager needs
     @Slot(str, str, bool, str, result=str)
