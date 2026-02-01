@@ -315,3 +315,200 @@ Your current state:
 1.  QML Cleanup (clearComponentCache, releaseResources): This is good practice for image-heavy apps. QML's texture cache can grow indefinitely if not managed. We are right to force this when leaving a heavy folder.
 2.  Python GC (gc.collect()): This is neutral/safe. It just cleans up circular references immediately. Since we had a bug with circular references (the scanner), this is a good safety net, but strictly speaking, Python would do it eventually.
 3.  malloc_trim (The Diagnostic Tool): This is the "aggressive" one. You are right—we probably should not run this on every navigation in production. It causes CPU spikes and fights the OS allocator.
+---
+
+## 5. Python-Managed Shortcuts in QML (The "Headless" Pattern)
+
+This section explains the architectural decision to move shortcut handling **out** of QML and into Python `ActionManager`.
+
+### The Concept: "Dumb View, Smart Controller"
+
+In traditional QML apps, you often see:
+```qml
+// Traditional (The "Smart View")
+Item {
+    Keys.onPressed: (event) => {
+        if (event.key == Qt.Key_F2) { startRename() }
+    }
+}
+```
+This looks simple, but it creates a **Focus Trap**. If a button inside the view steals focus, the shortcut stops working.
+
+### The New Architecture: "Global Interception"
+
+We moved to a **Centralized Python Controller**:
+
+1.  **The Trigger (Python):** 
+    We register `QAction`s in `ActionManager` using `Qt.WindowShortcut`. This means efficient, OS-level interception. The Python window catches the key *before* QML even knows it happened.
+
+2.  **The Logic (Python):**
+    We don't ask QML "what is selected?". We ask our own `FileManager` (which tracks selection state in Python).
+    *   Python: "User pressed F2. What is selected? -> `photo.jpg`."
+    *   Python: "Okay, rename `photo.jpg`."
+
+3.  **The Command (Signal):**
+    Python sends a specific instruction to QML via `AppBridge`:
+    *   `appBridge.renameRequested.emit("photo.jpg")`
+
+4.  **The Reaction (QML):**
+    QML receives the order and updates its visual state.
+    ```qml
+    // Modern (The "Dumb View")
+    Connections {
+        target: appBridge
+        onRenameRequested: (path) => { 
+            root.pathBeingRenamed = path // Show text box
+        }
+    }
+    ```
+
+### Why we did this (Pros & Cons)
+
+| Feature | Old Way (QML Keys) | New Way (Python Actions) |
+| :--- | :--- | :--- |
+| **Reliability** | ⚠️ Flaky (depends on focus) | ✅ Rock Solid (Window-scope) |
+| **State Sync** | ⚠️ Hard (QML must tell Python) | ✅ Perfect (Python tells QML) |
+| **Configurability**| ❌ Hardcoded in `.qml` file | ✅ Editable in `shortcuts.py` |
+| **Complexity** | Simple (1 file) | Medium (Need Signals & Slots) |
+
+**Verdict:** Use this pattern for all **App-Level Tools** (Rename, Delete, Copy). Only use `Keys.onPressed` for purely internal navigation (Arrow keys, Enter to open).
+
+
+[FAST] [SCOPE: Evaluate QImageReader vs Native/Custom solutions for thumbnail generation]
+
+QImageReader is "Good Enough" for 95% of cases, but not "World Class" for high-performance gallery apps.
+
+1. QImageReader (The Built-in)
+Pros: Native to Qt, easy to implement (setScaledSize), supports many formats.
+Cons:
+Synchronous-ish: Even in a thread, it blocks that thread fully.
+CPU Bound: All decoding happens on the CPU.
+Format Limits: Great for JPEG/PNG. Terrible for RAW (needs plugins), HEIF/HEIC (slow), or Videos (impossible).
+2. The Power User / "State of the Art" Solutions
+If we want lightning fast, buttery smooth resizing for a "Photo First" app, we look at these tiers:
+
+Tier A: Native Accelerated Decoding (OS Level)
+Using the OS's native tooling often beats generic libraries because they use hardware acceleration (GPU/Media Engines).
+
+Linux: GdkPixbuf (which GnomeDesktopThumbnailFactory uses). This is what Nautilus uses. It's solid but not always GPU-accelerated.
+Alternative: FFmpeg (via python bindings like 
+av
+ or opencv).
+Why? FFmpeg is hyper-optimized. It can extract video frames OR decode images significantly faster than Qt's internal engines for obscure formats.
+Downside: Heavy dependency.
+Tier B: "Vips" (libvips) — The Speed King
+If you want to resize a 50MP image to 500px instantly using minimal RAM, libvips is the industry standard (used by Wikipedia, Flickr, etc.).
+
+Why: It streams the image. It never loads the whole file. It reads-and-resizes on the fly in small chunks.
+Performance: Often 5x-10x faster than ImageMagick or Qt for large resize ops.
+Memory: Constant, low memory usage regardless of image size.
+Tier C: GPU Decoding
+Using OpenGL / Vulkan to decode.
+
+This is theoretically fastest but incredibly complex to implement correctly for generic file formats (Texture upload bandwidth often negates the speed gain for static images). This is usually overkill unless doing video playback.
+Recommendation for Imbric
+Stick to GnomeDesktopThumbnailFactory (Tier A) for standard sizes (128/256).
+It's robust, compliant, and "free" (system does it).
+For Detail Zoom (>256px), Upgrade to libvips (Tier B).
+If the user zooms in, we spawn a task that uses pyvips (if installed) to grab the 512px/1024px version.
+Fallback: If pyvips isn't there, fall back to QImageReader.
+Why not just QImageReader? QImageReader is fine for JPEGs. It will choke on a 40MB RAW file or a 100MB TIFF. Imbric (as a photo manager) will encounter these. A "Power User" tool needs to handle the heavy stuff gracefully.
+
+[COMPLETE] Awaiting choice on direction.
+
+## 6. QtQuick.Controls.impl.IconImage Discovery (2026-02-01)
+
+### The Discovery
+During the Icon Architecture Improvement work, we discovered that QML can directly import and use system theme icons via:
+```qml
+import QtQuick.Controls.impl 2.15 as ControlsImpl
+
+ControlsImpl.IconImage {
+    name: "folder"  // Directly references freedesktop icon names
+    color: "transparent"
+}
+```
+
+### Performance Characteristics (CRITICAL)
+
+**IconImage is designed for Buttons, NOT Data Grids:**
+
+- **Approach A (IconImage in QML):**
+  - QML Engine handles the rendering.
+  - QML's internal `IconImage` is designed for **Buttons** (which there are usually 5-10 on screen), not **Data Grids** (500+ items).
+  - It does **not** share cache between instances efficiently. 500 folders = 500 separate SVG render jobs.
+  - **Result:** Super laggy scrolling in Masonry Grid with hundreds of items.
+
+- **Approach B (ThemeImageProvider in Python):**
+  - Uses standard `Image` element with `image://theme/` provider.
+  - Leverages Qt's massive `QQuickPixmapCache` for RAM caching.
+  - Python renders each unique icon **once** per zoom level.
+  - 5000 folders = 1 render job (all delegates share the cached result).
+  - **Result:** Crisp icons + smooth performance.
+
+### Use Cases
+
+| Use Case | Recommended Approach |
+| :--- | :--- |
+| Toolbar/Menu buttons (5-10 items) | `IconImage` (simple, native) |
+| Data grids/Lists (100+ items) | Custom `ThemeImageProvider` (cached) |
+
+### Lesson Learned
+Native Qt components are not one-size-fits-all. Always test performance with realistic data volumes before committing to an architecture.
+
+
+The "Fixes or changes" I mentioned to make Approach A (IconImage) less laggy were primarily about using the No-Bridge Pattern for delegates.
+
+Basically, IconImage is inherently slow for Grids, but we could make it slightly better by simplifying the Delegate itself, reducing the number of bindings and lookups happening 500 times a frame.
+
+Specifically, the Refactor Plan involves:
+
+Extract FileDelegate.qml: Move the delegate code out of the 
+MasonryView.qml
+ loop into a standalone file.
+Why this helps: It makes the delegate an isolated component. The QML internal compiler can optimize property access inside a standalone Component (
+.qml
+ file) better than it can optimize an inline Component { ... } block inside a giant view.
+Use required property: In the new FileDelegate.qml:
+qml
+required property var modelData // Pass the whole object once
+Why this helps: Instead of 10 individual bindings (model.path, model.iconName, model.width, etc.) crossing the C++/QML boundary for every scroll pixel, we pass one data object. It reduces the "chatter" between the view and the delegate.
+Use Loader for conditionally heavy items: Instead of having both 
+Image
+ (Thumbnail) AND IconImage (Theme) instantiated and just toggling transparency/visibility, use a Loader to only instantiate the one you need.
+qml
+Loader {
+    sourceComponent: model.isVisual ? thumbnailComponent : iconComponent
+}
+Why this helps: IconImage is heavy. If you have 500 photos, you don't want 500 hidden IconImage instances existing in memory. You only want the ones that are actually folders.
+However: Even with these optimizations, IconImage will likely still be slower than the Bitmap Caching method (Approach B) because it fundamentally lacks the "Shared Bitmap Cache".
+
+My advice remains: The Refactor (Steps 1 & 2) is excellent for code quality, but to actually fix the lag, you must ultimately switch the implementation back to Approach B (ThemeImageProvider).
+
+So, if you want "Situation A" (current QML structure) to be fast again, we have to drop IconImage. If you want to keep IconImage, we have to accept the lag or do deep Refactoring that might only improve it by 20%.
+
+if we had used apprach be and had used this qml optmization as well would we have been in some more advantage or opmization ? 
+YES. 100%.
+
+Combining Approach B (ThemeImageProvider) with the Refactored Delegate (Approach "C"?) is the "Holy Grail" of performance for this app.
+
+Here is what that combination gives you:
+
+Backend Speed (Approach B):
+RAM Cache: All 500 folders share one 32KB bitmap in memory.
+Zero CPU: Scrolling costs 0% CPU because it's just blitting a cached texture.
+Frontend Efficiency (Refactored Delegate):
+Reduced Bindings: Passing data cleanly (required property) means fewer lookups.
+Memory Footprint: Using Loader means a "Photo" delegate doesn't even have the code/memory for an "Icon" in it, and vice-versa.
+Compiler Optimization: The QML Engine runs standalone components faster.
+The "Advantage" you get:
+
+Startup Time: Faster (less QML to parse initially).
+Scroll Smoothness: Buttery 60fps even with 10,000 items.
+RAM Usage: Minimal (because caches are shared effectively).
+Code Cleanliness: You can actually read 
+MasonryView.qml
+ without crying.
+Conclusion: Moving to the Refactor is never wasted effort. It multiplies the benefits of whatever backend strategy you choose. Moving to Approach B is the correct backend strategy. Doing both is how you build a professional-grade app like Nautilus or Dolphin.
+
+Shall we proceed with The Refactor now?

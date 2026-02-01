@@ -13,14 +13,12 @@
 
 ### General Maintenance
 
-- [x] Sorting logic (`sorter.py` — implemented with natural sort, folders-first)
-- [x] Parallel file operations (FLAW-003 fixed via QThreadPool)
-- [ ] Sorting UI — Add sort options to right-click background menu
+- [ ] **Search UI** — Add Sort/Filter options to right-click background menu
+- [ ] **Search UI** — Implement QML Search Bar with `SearchWorker` integration
 
 - [/] Fix BUG-007: Rubberband selection ignores sort order (implemented, pending test)
 
-- [ ] Async thumbnail generation (background thread)
-- [x] UI Error Feedback — `ProgressOverlay` show `PARTIAL:N` skipped files
+- [ ] Async thumbnail generation (background thread) - *In Progress*
 - [ ] Sort options context menu
 
 ### Pending Tests
@@ -85,33 +83,7 @@
 
 ---
 
-## 🏗️ Backend Core Overhaul (From Audit)
 
-### Active GitHub Issues (v0.5.0)
-
-- [x] **Sorting Logic** (#6) - Implemented in `core/sorter.py`
-- [x] **Async Thumbnails** (#7) - Implemented via `QQuickAsyncImageProvider`
-- [x] **UI Error Feedback** (#8) - Visual alerts for failures (partial skips)
-
-### Critical Infrastructure
-
-- [x] **Job System Refactor** (`file_operations.py`) — Implemented via QThreadPool
-  - [x] Create `FileJob` dataclass (UUID, status, cancellable)
-  - [x] Per-operation Runnables (`CopyRunnable`, etc.)
-  - [x] `activeJobCount()`, `jobStatus()` queries
-- [x] **Parallelize File Ops (FLAW-003):** Refactored to QThreadPool + QRunnable pattern.
-- [ ] **Address Bar:**
-- [x] **Search Engine Implementation (fd + Gio)**
-  - **Status:** Core backend implemented in `core/search.py` and `core/search_worker.py`.
-  - **Architecture:**
-    - **Primary Engine (`fd`/`fdfind`):** Rust-based, 10-50x faster than `os.walk`. Returns paths via subprocess streaming.
-    - **Fallback Engine (`os.scandir`):** Pure Python, works on Android/Termux when `fd` unavailable.
-    - **Metadata Hydration:** Gio `query_info()` fetches size/date/icon lazily (only for visible items).
-    - **Integration:** `AppBridge.startSearch()` / `cancelSearch()` slots wired to QML.
-  - **Remaining:**
-    - [ ] QML Search Bar UI component
-    - [ ] Progressive loading (Phase 1: names, Phase 2: metadata, Phase 3: thumbnails)
-- [ ] **Search Backend Testing (Pending)**
   - **What Was Tested:**
     - ✅ Engine Detection: `get_search_engine()` correctly returns `FdSearchEngine` when `fd` is installed.
     - ✅ FdSearchEngine: Streams results via `python3 -m core.search_worker ~ ".py$"`.
@@ -212,6 +184,26 @@
 - [x] `ui/models/shortcuts_model.py` (Centralized keybinds) - *Moved from core*
 - [x] `core/undo_manager.py` (Implemented: async-aware undo/redo logic, transaction support)
 - [x] `core/transaction_manager.py` (Implemented and Integrated)
+
+---
+
+## ✅ Recently Completed (v0.5 - v0.7.4)
+
+### Core Backend
+- [x] **Transaction Manager:** Conflict resolution, Pause/Resume, and Undo/Redo backend logic complete.
+- [x] **Trash Management:** Full `trash://` support (List, Restore, Empty) with permission fallbacks.
+- [x] **Parallel I/O:** `QThreadPool` architecture for all file operations (Copy/Move/Trash).
+- [x] **Search Engine:** Hybrid `fd` (subprocess) + `os.scandir` (fallback) backend.
+- [x] **Sorting:** Natural sort with folders-first logic.
+
+### UI Safety & Feedback
+- [x] **Error Feedback:** `ProgressOverlay` handles partial failures (`PARTIAL:N`) without vanishing.
+- [x] **Visuals:** Async thumbnail generation via `QQuickAsyncImageProvider`.
+- [x] **Navigation:** `NavigationManager` implemented (Back/Forward logic).
+
+### Refactoring
+- [x] **Managers:** Migrated to `ui/managers/` (Action, File, View, Navigation).
+- [x] **Stubs:** Completed implementation of `undo_manager.py`, `file_properties_model.py`.
 
 ---
 

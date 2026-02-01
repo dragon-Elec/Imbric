@@ -48,6 +48,9 @@ Thumbs.db
 *.csv
 .cache/
 assets/template/
+assets/dflynav-src/
+
+
 
 # Reference code (not part of project)
 

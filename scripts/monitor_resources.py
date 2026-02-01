@@ -24,7 +24,8 @@ def print_dashboard(metrics, command, pid, log_file):
     cpu_color = "\033[1;31m" if metrics['cpu'] > 50 else "\033[1;32m"
     print(f"CPU Usage:       {cpu_color}{metrics['cpu']:>6.1f}%\033[0m (Total incl. children)")
     
-    print(f"Memory (RSS):    \033[1;33m{metrics['rss']:>6.2f} MB\033[0m")
+    print(f"Memory (RSS):    \033[1;33m{metrics['rss']:>6.2f} MB\033[0m (Total w/ arena)")
+    print(f"Memory (USS):    \033[1;32m{metrics['uss']:>6.2f} MB\033[0m (Actual app usage)")
     print(f"Memory (VMS):    {metrics['vms']:>6.2f} MB")
     print(f"Threads:         {metrics['threads']:>6}")
     
@@ -73,7 +74,7 @@ def monitor_pid(pid, interval, output_file, live_mode, app_cmd=None):
             os.makedirs(output_dir)
         csv_f = open(output_file, 'w', newline='')
         writer = csv.writer(csv_f)
-        writer.writerow(['timestamp', 'cpu_percent', 'rss_mb', 'vms_mb', 'num_threads', 'num_fds', 'read_mb_s', 'write_mb_s'])
+        writer.writerow(['timestamp', 'cpu_percent', 'rss_mb', 'uss_mb', 'vms_mb', 'num_threads', 'num_fds', 'read_mb_s', 'write_mb_s'])
 
     try:
         while proc.is_running():
@@ -88,6 +89,7 @@ def monitor_pid(pid, interval, output_file, live_mode, app_cmd=None):
                 total_cpu = 0.0
                 total_rss = 0.0
                 total_vms = 0.0
+                total_uss = 0.0  # Unique Set Size (actual app memory)
                 total_threads = 0
                 total_fds = 0
                 total_read_bytes = 0
@@ -106,6 +108,15 @@ def monitor_pid(pid, interval, output_file, live_mode, app_cmd=None):
                             mem = p.memory_info()
                             total_rss += mem.rss
                             total_vms += mem.vms
+                            
+                            # Get USS (Unique Set Size) - actual app memory
+                            try:
+                                mem_full = p.memory_full_info()
+                                total_uss += mem_full.uss
+                            except (AttributeError, psutil.AccessDenied):
+                                # Fallback: USS not available on all platforms
+                                total_uss += mem.rss  # Use RSS as approximation
+                            
                             total_threads += p.num_threads()
                             try:
                                 total_fds += p.num_fds()
@@ -126,6 +137,7 @@ def monitor_pid(pid, interval, output_file, live_mode, app_cmd=None):
                     'timestamp': timestamp_display,
                     'cpu': total_cpu,
                     'rss': total_rss / (1024 * 1024),
+                    'uss': total_uss / (1024 * 1024),
                     'vms': total_vms / (1024 * 1024),
                     'threads': total_threads,
                     'fds': total_fds,
@@ -138,7 +150,7 @@ def monitor_pid(pid, interval, output_file, live_mode, app_cmd=None):
                     print_dashboard(metrics, app_cmd, pid, "Use main terminal for logs")
                 
                 if writer:
-                    writer.writerow([timestamp_iso, f"{total_cpu:.1f}", f"{metrics['rss']:.2f}", f"{metrics['vms']:.2f}", 
+                    writer.writerow([timestamp_iso, f"{total_cpu:.1f}", f"{metrics['rss']:.2f}", f"{metrics['uss']:.2f}", f"{metrics['vms']:.2f}", 
                                    total_threads, total_fds, f"{read_rate:.2f}", f"{write_rate:.2f}"])
                     csv_f.flush()
                 

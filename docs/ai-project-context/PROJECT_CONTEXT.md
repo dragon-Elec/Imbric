@@ -13,7 +13,7 @@
 >
 > **Update Rules:** Session notes → Section 8 only. No changelog prose.
 
-> **Version:** 0.4-alpha | **Updated:** 2026-01-24 | **Status:** Active  
+> **Version:** 0.7.4-alpha | **Updated:** 2026-01-31 | **Status:** Active  
 > **Target:** Linux (GNOME) | **Stack:** Python 3.10+ / PySide6 / QML / Gio / GnomeDesktop
 
 ---
@@ -48,7 +48,7 @@
 **File Status Markers:**
 - `[STUB]` — Structure defined, no implementation (raises `NotImplementedError`)
 - `[WIP]` — Implementation in progress, not fully tested
-- `[DONE]` — Implemented, tested, battle-tested — don't touch unless broken
+- `[DONE]` — Implemented, tested — don't touch unless broken
 
 **Stub File Convention:**
 - Each stub has a docstring header: `"""[STUB] Description..."""`
@@ -72,14 +72,14 @@
 
 ### 1.1. Core Layer (`core/`)
 
-#### `core/metadata_utils.py` — File Metadata Logic (~250 lines) `[NEW]`
+#### `core/metadata_utils.py` — File Metadata Logic `[NEW]`
 Unified utility for Gio metadata extraction. Single source of truth for:
 - `get_file_info(path)` → `FileInfo` dataclass
 - `format_size(bytes)`
 - `resolve_mime_icon(gfile)`
 Used by `FileOperations`, `TrashManager`, and `FilePropertiesModel`.
 
-#### `core/file_operations.py` — Operations Controller (~220 lines) `[REFACTORED]`
+#### `core/file_operations.py` — Operations Controller `[REFACTORED]`
 Unified controller for all I/O (Standard + Trash). Orchestrates workers via `QThreadPool`.
 
 - **Role:** Single source of truth for UI. Manages `jobs` dict and signals.
@@ -90,15 +90,16 @@ Unified controller for all I/O (Standard + Trash). Orchestrates workers via `QTh
   - `setUndoManager(mgr)` — dependency injection
 - **Signals:** Unified `operationStarted`, `operationProgress`, `operationFinished`, `operationError`.
 
-#### `core/file_workers.py` — Standard Ops Logic (~280 lines) `[NEW]`
+#### `core/file_workers.py` — Standard Ops Logic `[DONE]`
 Contains the `QRunnable` implementations for standard file operations.
-- `FileJob` (dataclass): Shared state (UUID, status, paths).
-- `CopyRunnable`: Recursive copy with progress.
-- `MoveRunnable`: Move with "Directory Merge" logic and fallback strategies.
+- **Race Condition Safety:** Uses Atomic Retry Loops for `CreateFolder` and `Transfer` (auto-rename).
+- `FileJob` (dataclass): Shared state (UUID, status, paths, auto-rename).
+- `CopyRunnable`: Atomic rename loop + recursive copy.
+- `MoveRunnable`: Move with "Directory Merge" logic and cross-device fallbacks.
 - `RenameRunnable`: Wraps `Gio.set_display_name`.
-- `CreateFolderRunnable`: Wraps `Gio.make_directory`.
+- `CreateFolderRunnable`: Atomic retry loop for unique folder creation.
 
-#### `core/trash_workers.py` — Trash Ops Logic (~200 lines) `[NEW]`
+#### `core/trash_workers.py` — Trash Ops Logic `[NEW]`
 Contains the `QRunnable` implementations for Trash operations.
 - `SendToTrashRunnable`: Wraps `Gio.trash`.
 - `RestoreFromTrashRunnable`: Restores via `trash://` URI, handles rename-on-restore.
@@ -108,7 +109,7 @@ Contains the `QRunnable` implementations for Trash operations.
 
 ---
 
-#### `core/gio_bridge/scanner.py` — Async Directory Enum (127 lines)
+#### `core/gio_bridge/scanner.py` — Async Directory Enum
 True async file listing via `Gio.enumerate_children_async`. Batches of 50.
 
 - `FileScanner`:
@@ -119,14 +120,14 @@ True async file listing via `Gio.enumerate_children_async`. Batches of 50.
 
 ---
 
-#### `core/gio_bridge/bookmarks.py` — GTK Bookmarks (53 lines)
+#### `core/gio_bridge/bookmarks.py` — GTK Bookmarks
 Parses `~/.config/gtk-3.0/bookmarks`.
 
 - `BookmarksBridge.get_bookmarks()` → `[{name, path, icon}]`
 
 ---
 
-#### `core/gio_bridge/count_worker.py` — Recursive Item Counter (115 lines) [NEW]
+#### `core/gio_bridge/count_worker.py` — Recursive Item Counter [NEW]
 Background worker using `QThreadPool` + `os.scandir` for non-blocking directory size calc.
 
 - `ItemCountWorker`:
@@ -136,14 +137,14 @@ Background worker using `QThreadPool` + `os.scandir` for non-blocking directory 
 
 ---
 
-#### `core/gio_bridge/volumes.py` — Mounted Volumes (35 lines)
+#### `core/gio_bridge/volumes.py` — Mounted Volumes
 Wraps `Gio.VolumeMonitor`.
 
 - `VolumesBridge.get_volumes()` → `[{name, path, icon, type}]`
 
 ---
 
-#### `core/image_providers/thumbnail_provider.py` — Thumbnails (132 lines)
+#### `core/image_providers/thumbnail_provider.py` — Thumbnails
 `QQuickImageProvider` using GNOME shared cache.
 
 - `ThumbnailProvider.requestImage(id_path, size, requestedSize)`:
@@ -158,7 +159,7 @@ Wraps `Gio.VolumeMonitor`.
 
 
 
-#### `core/file_monitor.py` — Directory Watcher (126 lines)
+#### `core/file_monitor.py` — Directory Watcher
 `Gio.FileMonitor` wrapper for live directory changes.
 
 - `watch(path)` — start monitoring
@@ -168,18 +169,20 @@ Wraps `Gio.VolumeMonitor`.
 ---
 
 #### `core/undo_manager.py` — Undo/Redo Stack `[DONE]`
-Tracks file operations for undo/redo capability.
-
-- `push(operation)` — record operation after completion
-- `undo()` / `redo()` — reverse/replay last operation
-- `canUndo()` / `canRedo()` — check stack availability
-- **Signals:** `undoAvailable(bool)`, `redoAvailable(bool)`
-- **Note:** Trash restore delegated to `TrashManager`.
+Tracks file operations with robust asynchronous job tracking.
+- **Sync/Async Logic:** Captures `job_id`s from `FileOperations` and waits for `finished` signals before committing state.
+- `undo()` / `redo()` — Entry points (pops tx, sets pending state).
+- `setFileOperations()` — Signal wiring for completion tracking.
+- `operationFinished` signal — Reports final outcome for UI feedback.
+- **Note:** Prevents desync by validating filesystem outcome before rotating stacks.
 
 ---
 
-
-
+#### `core/diagnostics.py` — Memory Profiling `[DONE]`
+Internal debugging tool for tracking memory usage and object leaks.
+- `MemoryProfiler`: Static utility class.
+- `start()`: Enables `tracemalloc`.
+- `print_report()`: Forces GC and prints object counts (focused on Imbric classes).
 ---
 
 #### `core/sorter.py` — File Sorting `[DONE]`
@@ -191,7 +194,7 @@ Sorts file lists by name, date, size, or type.
 
 ---
 
-#### `core/transaction.py` — Transaction Data Models (52 lines)
+#### `core/transaction.py` — Transaction Data Models
 Data definitions for batch operations.
 
 - `Transaction` (dataclass): Batch wrapper with ID, description, status.
@@ -210,17 +213,16 @@ Central nervous system for batch operations and conflict handling.
 
 ---
 
-#### `core/search.py` — File Search `[STUB]`
-Async file search with glob patterns.
+#### `core/search.py` — File Search `[DONE]`
+Unified search engine with multiple backends.
+- `FdSearchEngine`: Fast discovery via `fd` subprocess.
+- `ScandirSearchEngine`: Pure Python `os.scandir` fallback.
+- `get_search_engine()`: Auto-detection factory.
 
-- `search(directory, pattern, recursive)` — async search (migrating to `scandir-rs`)
-- `filter(files, pattern)` → sync in-memory filter
-- **Signals:** `resultsFound(list)`, `searchFinished(count)`
-
-#### `core/search_worker.py` — Background Search Worker (50 lines)
-`QThread` implementation for running blocking search operations off the main thread.
-- Wraps `core.search.search_files`.
-- Emits results back to UI via Qt signals.
+#### `core/search_worker.py` — Background Search Worker `[DONE]`
+`QThread` implementation for non-blocking search.
+- Batched results (50 items) for UI responsiveness.
+- Supports runtime cancellation.
 
 ---
 
@@ -228,23 +230,24 @@ Async file search with glob patterns.
 
 ### 1.2. UI Managers (`ui/managers/`) [NEW]
 
-#### `ui/managers/action_manager.py` — Actions & Shortcuts
-Central Action registry. Replaces `ShortcutsModel`.
+#### `ui/managers/action_manager.py` — Actions & Shortcuts `[DONE]`
+Central Action registry.
 - `setup_actions()` — registers QActions with global shortcuts
-- `get_action(name)` — retrieval for menus
+- `get_action(name)` — retrieval for context menus
 
-#### `ui/managers/file_manager.py` — High-Level Logic
-Consolidates Clipboard and Complex Ops.
-- `copy_selection()`, `cut_selection()`, `paste_to_current()`
-- `trash_selection()`, `rename_selection()`
-- `handle_drop(urls, dest)` — handles drag & drop
-- `get_clipboard_files()`, `is_cut_mode()` — clipboard state
+#### `ui/managers/navigation_manager.py` — History & Paths `[NEW]`
+Manages navigation state (Back/Forward history).
+- `navigate(path)`, `back()`, `forward()`.
+- Tracks `canGoBack` / `canGoForward` states.
 
-#### `ui/managers/view_manager.py` — Layout & Selection
-Module containing View logic classes.
-- `ViewManager` (Global): Orchestrates Zoom (`zoom_in/out`) and `select_all`.
-- `ColumnSplitter` (Per-Tab): Round-robin layout logic.
-- `SelectionHelper` (Per-Tab): Rubberband geometry calculation.
+#### `ui/managers/file_manager.py` — File Ops Coordinator `[DONE]`
+High-level orchestration of clipboard and complex operations.
+- `copy_selection()`, `trash_selection()`, `handle_drop()`.
+- Interface for `TransactionManager`.
+
+#### `ui/managers/view_manager.py` — Layout & Selection `[DONE]`
+Orchestrates Zoom, `select_all`, and Tab-specific visual state.
+- Delegates to `ColumnSplitter` (Layout) and `SelectionHelper` (Marquee).
 
 ---
 
@@ -263,7 +266,7 @@ Simplified QML interface. Delegates heavy logic to Managers.
 
 ---
 
-#### `ui/models/sidebar_model.py` — Sidebar Data (61 lines)
+#### `ui/models/sidebar_model.py` — Sidebar Data
 Combines bookmarks + volumes for sidebar QTreeView.
 
 - `SidebarModel`: merges `BookmarksBridge` + `VolumesBridge`
@@ -294,6 +297,9 @@ Wraps `QTabWidget`. Each tab owns its own `ViewManager` components.
 #### `ui/components/navigation_bar.py` — Toolbar
 #### `ui/components/sidebar.py` — Sidebar Widget
 #### `ui/components/status_bar.py` — Status Feedback
+Shows item counts (folders/files) and selection info.
+- `updateAttribute(path, attr, value)` — Handles async scanner updates (child counts).
+- `setMessage(str)` — Temporary status feedback.
 #### `ui/components/progress_overlay.py` — Op Progress
 
 ---
@@ -367,7 +373,7 @@ See `usefulness.md` for full analysis.
 ### 2.1. Component Hierarchy
 ```
 [SHELL] MainWindow (QMainWindow)
-   ├── Managers: ActionManager, FileManager, ViewManager
+   ├── Managers: ActionManager, FileManager, ViewManager, NavigationManager
    ├── Components: Toolbar, Sidebar, StatusBar
    ↓
 [TABS] TabManager (QTabWidget)
@@ -392,7 +398,7 @@ Dependencies flow **downwards** only.
 
 ### 2.3. Component Status
 
-- ✅ `ActionManager`, `FileManager`, `ViewManager` — VERIFIED
+- ✅ `ActionManager`, `FileManager`, `ViewManager`, `NavigationManager` — VERIFIED
 - ✅ `MainWindow`, `TabManager`, `MasonryView` — VERIFIED
 - ✅ `ProgressOverlay`, `StatusBar`, `FileScanner`, `ThumbnailProvider` — VERIFIED
 - ✅ `ConflictDialog`, `PropertiesDialog` — VERIFIED
@@ -528,20 +534,17 @@ QMetaObject.invokeMethod(
 )
 ```
 
-### Search Architecture (Planned)
+### Search Architecture
 
 | Engine | Use Case | Status |
 |:-------|:---------|:-------|
-| `scandir-rs` (Rust/jwalk) | Fast path discovery | 📋 Planned (Replaces `fd`) |
-| `os.scandir` | Fallback (Termux) | ✅ Implemented |
-| `python-ripgrep` | Content search | 📋 Planned (Wrapper around `rg`) |
-| `rapidfuzz` | Fuzzy matching | 📋 Planned |
-- **Decision:** Replace `fd` (subprocess) with `scandir-rs` (native bindings).
-  - **Why:** `scandir-rs` uses `jwalk` internally but exposes results as Python objects.
-  - **Benefit:** "Nautilus-like" search requires rich metadata (size, time) during the walk. `fd` requires parsing text output and separate `stat` calls (slow). `scandir-rs` provides this efficiently in-process.
-- **Regex Support:** `scandir-rs` handles fast traversal; Python's `re` module handles regex filtering on the returned objects.
-- **Content Search:** Dedicated `ripgrep` binding/binary for file content (too heavy for Python loop).
+| `fd` (fdfind) | Fast path discovery | ✅ Active (Primary) |
+| `os.scandir` | Fallback (Pure Python) | ✅ Active (Fallback) |
+| `scandir-rs` | Native performance | 📋 Planned (Optimization) |
+| `ripgrep` | Content search | 📋 Planned |
 
+- **Current State:** Hybrid `fd` + `os.scandir` via `SearchWorker`.
+- **Planned:** Migration to `scandir-rs` to remove subprocess overhead and provide rich metadata (size, dates) without extra `stat` calls.
 - **Inline Rename in QML:** Used QML `TextInput` over Widget to maintain scroller sync and visual cohesion.
 - **Smart Rename Logic:** Windows-style numbering `(2)` for renames vs `(Copy)` for duplicates.
 
@@ -551,46 +554,17 @@ QMetaObject.invokeMethod(
 
 ## 6. AI Session Notes
 
-### 6.1. Session: 2026-01-18 (Phase 5 - Interactions)
+### 6.1. Recent Updates (v0.7.4-alpha)
 
-**Completed:**
-- **Inline Rename:** Implemented F2 / Context Menu rename with in-place editing.
-- **Smart Conflict Handling:** Unified conflict logic. Added "Rename" styling `(2)` vs `(Copy)`.
-- **Async Verification:** Confirmed `Gio` async enumeration + `QThread` file ops = True non-blocking.
-- **Selection Persistence:** Files remain selected after renaming.
+- **Critical Bug Fixes (2026-01-31):** Resolved Race Conditions in file workers via Atomic Retry Loops. Hardened `UndoManager` with robust asynchronous tracking to prevent state desync. Fixed disconnected `Scanner` signals for directory counts. Verified all via isolated test suites.
+- **Navigation System (2026-01-30):** Full Back/Forward/Path management via `NavigationManager`. History stacks integrated with `MainWindow` updates.
+- **System Stability (2026-01-29):** Resolved "RAM Explosion" and memory leaks in `FileScanner` caused by shared icon caching and zombie recursion. Optimized QML bindings for performance.
+- **Feature-Centric Refactor (2026-01-28):** Finalized transition from technical models to capability-centric Managers (`ui/managers/`). Cleaned up legacy `ShortcutsModel`, `ClipboardManager`, and `SelectionHelper`.
+- **Backend Hardening (2026-01-27):** Fixed critical safety bugs in `TransactionManager` (conflict resolution logic) and `file_workers.py` (permission errors and absolute path calculation for Undo).
 
-**Refactoring:**
-- Consolidated `ConflictResolver` logic into `_resolve_internal` to share code between Copy/Rename modes.
-- Renamed "Cancel" to "Cancel All" in conflict dialog for clarity.
+### 6.2. Session Retrospective (Critical Engineering Failures)
 
-### 6.2. AI Observations (User Preferences)
-
-- **Visual Style:** GTK-like aesthetics — padding, flat borders, native icons
-- **"Lens not Engine":** Applies to UI too — mimic native shell as close as possible
-- **Keybinds:** Should match Nautilus conventions
-- **Code Organization:** Extract bridges/controllers, avoid "God classes" in MainWindow
-- **Naming:** User prefers specific, native-aligned naming over generic
-- **Safety:** Explicit confirmation for overwrites, no silent failures.
-- **Architecture:** User is asking about splitting QML `delegate` code into separate files (concern about "God Object" files).
-
-### 6.3. Cross-Reference
-
-> **Bugs:** See [BUGS_AND_FLAWS.md](./BUGS_AND_FLAWS.md)  
-> **TODOs:** See [todo.md](./todo.md)
-
-### 6.4. Session History (Recent)
-
-- **2026-01-19** New Folder — Fixed path, auto-numbering, auto-select
-- **2026-01-19** Input Refactor — Per-delegate TapHandler/DragHandler, simplified marquee
-- **2026-01-18** Inline Rename — F2, Smart Conflict Logic, Context Menu Fixes
-- **2026-01-18** Multi-Tab — TabManager, Separation of Concerns, Crash Fixes
-- **2026-01-17** Async I/O — QThread file ops, ProgressOverlay
-
-> Older sessions archived. See git history for full changelog.
-
-### 6.5. Session Retrospective (Lessons Learned)
-
-**Critial Engineering Failures & Fixes:**
+**Key Lessons (Preserved for History):**
 1.  **Z-Order Regression:** Adding a full-screen `MouseArea` ("God Object" for selection) accidentally blocked interaction with underlying components (Context Menu, Text Input) because it was declared *after* the ScrollView.
     *   *Fix:* Ensure overlay `MouseAreas` handle pass-through or explicit focus properly.
     *   *Future:* Split interactions into separate layers or components.
@@ -599,10 +573,4 @@ QMetaObject.invokeMethod(
 3.  **Focus Fighting:** `F2` logic split between `rubberBandArea` (global) and `TextInput` (local) caused "dead keys".
     *   *Fix:* Centralized Key handling in the `Root` item to catch bubbling events from anywhere.
     *   *Fix:* Explicit `forceActiveFocus` required when destroying QML components (Loader) to prevent focus drifting to "nowhere".
-
-### 6.6. Session: 2026-01-28 (Frontend Refactor) [NEW]
-- **Feature-Centric Architecture:** Moved from `models/elements` to `managers/dialogs/components`.
-- **Managers:** Introduced `ActionManager`, `FileManager`, `ViewManager`.
-- **Cleanup:** Removed `ShortcutsModel`, `ClipboardManager`, `ColumnSplitter`, `SelectionHelper`.
-- **Consolidation:** Logic now grouped by capability (View, File Ops, Actions) rather than technical type.
 

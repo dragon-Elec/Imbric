@@ -12,6 +12,7 @@
 3. **Same-Category Bugs.** If a bug relates to an existing entry, add to that entry (don't duplicate).
 4. **Root Cause.** Always document **why** the bug exists, not just **what** it does.
 5. **Verification.** Mark `FIXED` only after user confirms. Use `IMPLEMENTED` otherwise.
+6. **Chronological Focus.** Always prioritize the *Resolve Dependencies* chain (see Section 2.1) over random fixes. Stability > Features.
 
 ---
 
@@ -23,6 +24,31 @@
 3. Interaction (responsiveness, focus)
 4. Polish (visual glitches, edge cases)
 ```
+
+## 🔗 Chronological Resolution Path (Dependency Chain)
+
+This section outlines the optimal order for fixing active bugs. Fixing these in order prevents regressions and simplifies subsequent fixes.
+
+### Phase 1: Foundation (Stability & Data Integrity)
+
+1.  **[BUG-012: Race Condition in "New Folder"](./BUGS_AND_FLAWS.md#bug-012)**
+    *   **Status:** FIXED (2026-01-30)
+    *   **Why First:** Prevents phantom file operations and race conditions in `AppBridge`.
+    *   **Unlocks:** Reliable transaction recording for folder creation (BUG-023).
+
+2.  **[BUG-023: Missing Transactions (Rename/New Folder)](./BUGS_AND_FLAWS.md#bug-023)**
+    *   **Why Second:** Ensures *every* file operation (even simple ones like Rename) has a Transaction ID for Undo history.
+    *   **Unlocks:** Complete Undo/Redo coverage (currently fails for renames).
+
+3.  **[FLAW-004: Incomplete Undo Atomicity](./BUGS_AND_FLAWS.md#flaw-004)**
+    *   **Why Third:** Now that we have transactions for everything (Step 2), we must ensure they roll back cleanly even if partially failed.
+    *   **Unlocks:** Bulletproof Undo/Redo system.
+
+### Phase 2: User Experience (Feedback)
+
+4.  **[BUG-016: Search Blindness](./BUGS_AND_FLAWS.md#bug-016)**
+    *   **Why Last:** Pure UI feedback issue. Doesn't risk data integrity.
+    *   **Dependency:** None (independent), but lower priority than data safety.
 
 ---
 
@@ -68,9 +94,26 @@ Path: Ignore for Linux. Use QTimer/Thread for Windows.
 ### BUG-006: F2 Inline Rename Focus Loss
 
 [MasonryView.qml](file:///home/ray/Desktop/files/wrk/Imbric/ui/qml/views/MasonryView.qml) | LOW (Qt Quirk) | OPEN
-Was: F2 rename field loses focus immediately (~1/15 times).
-Why: QML `Loader` emits transient `activeFocusChanged=false`. Hard to fix.
-Path: 1. Monitor Qt updates. 2. Scan Qt forums for Loader solutions.
+
+**Was:** F2 rename field loses focus immediately (~1/15 times).
+
+**Why (Investigation 2026-02-01):** Focus race condition. When `pathBeingRenamed` changes, `RenameField` becomes visible and calls `forceActiveFocus()` in `onActiveChanged`. However, if the ListView delegate is being recycled/reparented during layout updates, focus acquisition fails silently.
+
+**Root Cause:** `RenameField.qml` line 46 (`forceActiveFocus()`) executes synchronously, but QML's focus scope updates happen asynchronously relative to `visible`/`active` property changes.
+
+**Potential Fix (Not Implemented):**
+Add a retry timer in `RenameField.qml`:
+```qml
+Timer {
+    id: focusEnforcer
+    interval: 50
+    running: root.active && !root.activeFocus
+    repeat: false
+    onTriggered: root.forceActiveFocus()
+}
+```
+
+**Path:** Low priority. Monitor Qt 6.x updates for improved focus stability. Potential fix documented but not enforced (user decision pending).
 
 ---
 
@@ -128,6 +171,18 @@ Was: Undo Rename failed because worker returned relative path `renamed.txt`.
 Why: `Gio` sometimes returns relative paths; `TransactionManager` needs absolute for Undo.
 Path: Forced absolute path calculation in `RenameRunnable`. Verified with `test_undo_logic.py`.
 
+### ✅ BUG-024: The One Job Issue (UI Jitter)
+[core/file_operations.py](file:///home/ray/Desktop/files/wrk/Imbric/core/file_operations.py) | HIGH | FIXED (2026-02-01)
+Was: Mult-file operations fired N separate signals, overloading UI and causing jitter.
+Why: Loop-based implementation (`for path in paths: trash(path)`).
+Path: Wrapped batch operations in a Transaction; `TransactionManager` now aggregates progress and emits 1 signal per batch update.
+
+### ✅ BUG-025: Job System Refactor
+[core/file_operations.py](file:///home/ray/Desktop/files/wrk/Imbric/core/file_operations.py) | HIGH | FIXED (2026-02-01)
+Was: Blocking file operations and sequential queue.
+Why: Legacy single-threaded architecture.
+Path: Implemented `QThreadPool` + `FileJob` + `TransactionManager`. Logic fully migrated.
+
 ---
 
 ## 🆕 Unresolved Flaws (Jan 25 Analysis)
@@ -140,29 +195,34 @@ Path: Forced absolute path calculation in `RenameRunnable`. Verified with `test_
 **Severity:** HIGH
 **Status:** IMPLEMENTED (Backend) (2026-01-27)
 **Symptom:** "Overwrite" action on a folder might replace the *entire* target folder structure instead of merging.
-**Path:** Backend logic in `_recursive_merge` confirmed in `file_workers.py`. UI "Merge" button still needed for explicit user choice, but backend is safe.
+**Path:** Backend logic in `_recursive_merge` confirmed in `file_workers.py`.
+
+### ✅ BUG-013: Event Flooding (Performance)
+**Files:** `core/file_monitor.py`
+**Severity:** HIGH
+**Status:** IMPLEMENTED (2026-01-28)
+**Symptom:** Pasting 5,000 files triggers flood of UI refreshes.
+**Path:** Implemented signal coalescing in `FileMonitor`.
+
+### ✅ BUG-014: Stale Metadata
+**Files:** `core/file_monitor.py`
+**Severity:** LOW
+**Status:** IMPLEMENTED (2026-01-28)
+**Symptom:** File sizes/dates do not update if changed externally.
+**Path:** Enabled `CHANGED` event monitoring with throttling.
 
 
 
-### BUG-012: Race Condition in "New Folder"
-**Files:** `ui/models/app_bridge.py`
+### ✅ BUG-012: Race Condition in "New Folder"
+**Files:** `ui/models/app_bridge.py` / `core/file_workers.py`
 **Severity:** MEDIUM
+**Status:** FIXED (2026-01-30)
 **Symptom:** Rapidly clicking "New Folder" can cause backend errors if the second click happens before the first folder is physically created.
-**Path:** Add a "creating_folder" semaphore/flag in `AppBridge` to block subsequent requests until completion.
+**Path:** Implemented atomic "Try Create -> If Exists, Auto-Rename" loop in `CreateFolderRunnable`.
 
 ### 🟡 Performance & Events
 
-### BUG-013: Event Flooding
-**Files:** `core/file_monitor.py`
-**Severity:** HIGH (Performance)
-**Symptom:** Pasting 5,000 files triggers 5,000 individual UI refreshes, freezing the app.
-**Path:** Implement "Event Coalescing" (debounce timer). Wait 100-200ms after an event before emitting `directoryChanged`.
 
-### BUG-014: Stale Metadata
-**Files:** `core/file_monitor.py`
-**Severity:** LOW
-**Symptom:** Explicitly ignores `Gio.FileMonitorEvent.CHANGED`. File sizes/dates do not update if changed externally (e.g. by a download).
-**Path:** Enable `CHANGED` event handling but throttle it heavily to avoid spam.
 
 ### BUG-015: Blind Status Bar
 **Files:** `ui/elements/status_bar.py`
@@ -174,7 +234,7 @@ Path: Forced absolute path calculation in `RenameRunnable`. Verified with `test_
 
 ### BUG-016: Search Blindness
 **Files:** `core/search_worker.py`
-**Severity:** MEDIUM
+**Severity:** low becase search bar is not impelemented
 **Symptom:** No progress feedback during search. Long searches look like the app has hung.
 **Path:** Emit periodic "progress" signals (e.g., "Scanned 1000 files...") or indefinite spinner state.
 
