@@ -40,8 +40,6 @@ class FileOperations(QObject):
     operationFinished = Signal(str, str, str, str, bool, str)   # (tid, job_id, op_type, result_path, success, message)
     operationError = Signal(str, str, str, str, str, object)    # (tid, job_id, op_type, path, message, conflict_data)
     
-    # Legacy/UI Compatibility Signals
-    operationCompleted = Signal(str, str, str)   # (op_type, path, result) 
     
     # Trash Specific Signals
     itemListed = Signal(object)             # TrashItem
@@ -85,9 +83,6 @@ class FileOperations(QObject):
                 del self._jobs[job_id]
         
         self.operationFinished.emit(tid, job_id, op_type, result_path, success, message)
-        
-        if success:
-            self.operationCompleted.emit(op_type, result_path, message)
 
     def _on_error(self, tid: str, job_id: str, op_type: str, path: str, message: str, conflict_data: object):
         self.operationError.emit(tid, job_id, op_type, path, message, conflict_data)

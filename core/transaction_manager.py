@@ -38,6 +38,10 @@ class TransactionManager(QObject):
     
     # NEW: UI-friendly batch update (description + counts)
     transactionUpdate = Signal(str, str, int, int)  # (tid, description, completed, total)
+    
+    # Granular job completion for UI reactions (select file, enter rename mode)
+    # This replaces the legacy operationCompleted signal from FileOperations
+    jobCompleted = Signal(str, str, str)  # (op_type, result_path, message)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -223,6 +227,11 @@ class TransactionManager(QObject):
 
     @Slot(str, str, str, str, bool, str)
     def onOperationFinished(self, tid, job_id, op_type, result_path, success, message):
+        # [FIX] Always emit jobCompleted for UI, even for orphan jobs (no transaction)
+        # This provides granular feedback for Smart UI behaviors (select after rename, etc.)
+        if success:
+            self.jobCompleted.emit(op_type, result_path, message)
+        
         if tid not in self._active_transactions:
             return
 
