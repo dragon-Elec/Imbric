@@ -108,17 +108,15 @@ class MainWindow(QMainWindow):
         self.transaction_manager.transactionUpdate.connect(self.progress_overlay.onBatchUpdate)
         self.transaction_manager.transactionFinished.connect(self.progress_overlay.onBatchFinished)
         
-        # FALLBACK: Connect to FileOperations for single-file ops (without transactions)
-        self.file_ops.operationStarted.connect(self.progress_overlay.onOperationStarted)
-        self.file_ops.operationCompleted.connect(self.progress_overlay.onOperationCompleted)
-        self.file_ops.operationError.connect(self.progress_overlay.onOperationError)
+        # FALLBACK connections removed: All operations now go through TransactionManager.
+        # The legacy operationCompleted signal has been deprecated.
         
         # Cancel support
         self.progress_overlay.cancelRequested.connect(self._on_cancel_requested)
         central_layout.addWidget(self.progress_overlay)
         
-        # Logic Wiring for Progress
-        self.file_ops.operationCompleted.connect(self._on_op_completed)
+        # Granular job completion for Smart UI (select after rename, enter edit mode, etc.)
+        self.transaction_manager.jobCompleted.connect(self._on_op_completed)
         
         self.setCentralWidget(central_widget)
         

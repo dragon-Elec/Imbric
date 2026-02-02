@@ -84,163 +84,44 @@ Item {
                         model: modelData
                         
                         delegate: Item {
-                            id: delegateItem
+                            id: delegateWrapper
                             width: root.columnWidth
+                            height: fileDelegate.height
                             
-                            readonly property real imgHeight: {
-                                if (model.isDir) return width * 0.8
-                                
-                                // 1. Fast Path: Use model dimensions if known (stable layout)
-                                if (model.width > 0 && model.height > 0) 
-                                    return (model.height / model.width) * width
-                                
-                                // 2. Deferred Path: Use loaded thumbnail dimensions
-                                if (img.status === Image.Ready && img.implicitWidth > 0)
-                                    return (img.implicitHeight / img.implicitWidth) * width
-                                    
-                                // 3. Loading State: Square placeholder
-                                return width
-                            }
-                            readonly property int footerHeight: 36
-                            height: imgHeight + footerHeight
-                            
-                            // Fix reactivity: Direct binding is safer than function call which might hide dependency
+                            // Selection state (computed here, passed to delegate)
                             readonly property bool selected: selectionModel.selection.indexOf(model.path) !== -1
 
-                            Rectangle {
+                            Components.FileDelegate {
+                                id: fileDelegate
                                 anchors.fill: parent
-                                anchors.margins: 4
-                                radius: 4
                                 
-                                // Color Logic:
-                                // 1. Selected -> Highlight
-                                // 2. Drag Over Folder -> Highlight (Visual Feedback)
-                                // 3. Hover -> Light tint
-                                color: {
-                                    if (delegateItem.selected) return activePalette.highlight
-                                    if (model.isDir && itemDropArea.containsDrag) return activePalette.highlight
-                                    if (hoverHandler.hovered) return Qt.rgba(activePalette.text.r, activePalette.text.g, activePalette.text.b, 0.1)
-                                    return "transparent"
-                                }
+                                // Model roles
+                                path: model.path
+                                name: model.name
+                                isDir: model.isDir
+                                isVisual: model.isVisual
+                                iconName: model.iconName
+                                modelWidth: model.modelWidth
+                                modelHeight: model.modelHeight
+                                index: model.index
                                 
-                                // Dim items that are in "cut" state (pending move)
-                                // Safety check: appBridge might be null during shutdown
-                                opacity: (appBridge && appBridge.cutPaths && appBridge.cutPaths.indexOf(model.path) >= 0) ? 0.5 : 1.0
+                                // View layout
+                                columnWidth: root.columnWidth
                                 
-                                // Drop Area for Folders (Allows dragging files INTO a folder)
-                                DropArea {
-                                    id: itemDropArea
-                                    anchors.fill: parent
-                                    enabled: model.isDir // Only folders accept drops
-                                    
-                                    onEntered: (drag) => {
-                                        drag.accept(Qt.CopyAction)
-                                    }
-                                    
-                                    onDropped: (drop) => {
-                                        if (drop.hasUrls) {
-                                            drop.accept()
-                                            var urls = []
-                                            for (var i = 0; i < drop.urls.length; i++) {
-                                                urls.push(drop.urls[i].toString())
-                                            }
-                                            // Handle drop INTO this folder
-                                            appBridge.handleDrop(urls, model.path)
-                                        }
-                                    }
-                                }
+                                // State props
+                                selected: delegateWrapper.selected
+                                renamingPath: root.pathBeingRenamed
+                                cutPaths: appBridge ? appBridge.cutPaths : []
                                 
-                                // Photo Thumbnail (Async, Cached Bitmap)
-                                Image {
-                                    id: img
-                                    visible: model.isVisual
-                                    width: parent.width - 8
-                                    height: delegateItem.imgHeight - 8
-                                    anchors.top: parent.top
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    anchors.topMargin: 4
-                                    
-                                    source: model.isVisual ? "image://thumbnail/" + model.path : ""
-                                    fillMode: Image.PreserveAspectCrop
-                                    asynchronous: true
-                                    cache: true
-                                }
+                                // Services
+                                appBridge: appBridge
+                                selectionModel: selectionModel
                                 
-                                // Theme Icon (Vector, Crisp at Any Size)
-                                Image {
-                                    id: themeIcon
-                                    visible: !model.isVisual
-                                    width: parent.width - 8
-                                    height: delegateItem.imgHeight - 8
-                                    anchors.top: parent.top
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    anchors.topMargin: 4
-                                    
-                                    // Qt's theme engine handles SVG/PNG selection
-                                    source: !model.isVisual ? "image://theme/" + model.iconName : ""
-                                    fillMode: Image.PreserveAspectFit
-                                    asynchronous: false  // Theme icons are fast (no I/O)
-                                    cache: false         // Re-render at current size on zoom
-                                    
-                                    // Request icon at current display size for crispness
-                                    sourceSize: Qt.size(width, height)
-                                }
-                                
-                                Item {
-                                    anchors.bottom: parent.bottom
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    anchors.bottomMargin: 4
-                                    width: parent.width - 8
-                                    height: 20
-
-                                    Text {
-                                        anchors.fill: parent
-                                        text: model.name
-                                        visible: root.pathBeingRenamed !== model.path
-                                        color: (delegateItem.selected || (model.isDir && itemDropArea.containsDrag)) ? activePalette.highlightedText : activePalette.text
-                                        font.pixelSize: 12
-                                        elide: Text.ElideMiddle
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                    }
-
-                                    Components.RenameField {
-                                        anchors.fill: parent
-                                        visible: root.pathBeingRenamed === model.path
-                                        active: visible
-                                        originalName: model.name
-                                        
-                                        onCommit: (newName) => {
-                                            if (newName !== model.name) {
-                                                appBridge.renameFile(model.path, newName)
-                                            }
-                                            root.pathBeingRenamed = ""
-                                        }
-                                        
-                                        onCancel: {
-                                            root.pathBeingRenamed = ""
-                                            rubberBandArea.forceActiveFocus()
-                                        }
-                                    }
-                                }
-                                
-                                HoverHandler { id: hoverHandler }
-                                
-                                // TapHandler removed: Logic moved to global MouseArea for reliable modifier support
-                                // DragHandler remains for Drag-and-Drop (handled separately)
-                                DragHandler {
-                                    id: delegateDragHandler
-                                    target: null // Don't move the visual
-                                    
-                                    onActiveChanged: {
-                                        if (active) {
-                                            // Ensure item is selected before starting drag
-                                            if (!delegateItem.selected) {
-                                                selectionModel.select(model.path)
-                                            }
-                                            appBridge.startDrag(selectionModel.selection)
-                                        }
-                                    }
+                                // Handle rename events
+                                onRenameCommitted: root.pathBeingRenamed = ""
+                                onRenameCancelled: {
+                                    root.pathBeingRenamed = ""
+                                    rubberBandArea.forceActiveFocus()
                                 }
                             }
                         }
@@ -255,7 +136,7 @@ Item {
             id: rubberBandArea
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            hoverEnabled: true
+            // hoverEnabled: true -- BLOCKS underlying items! Only needed if we tracked cursor without drag.
             
             property point startPoint
             property bool isDragging: false

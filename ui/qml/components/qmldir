@@ -2,3 +2,4 @@ module components
 RubberBand 1.0 RubberBand.qml
 SelectionModel 1.0 SelectionModel.qml
 RenameField 1.0 RenameField.qml
+FileDelegate 1.0 FileDelegate.qml

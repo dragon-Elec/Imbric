@@ -191,6 +191,9 @@ class BrowserTab(QWidget):
         if session_id != self._current_session_id:
             return  # Stale completion signal
         
+        # [FIX] Trigger final sort after streaming load completes
+        self.splitter.finishLoading()
+        
         # Check if there are pending paths to select (e.g., from paste)
         pending = self.bridge.selectPendingPaths()
         if pending:

@@ -23,8 +23,8 @@ class SimpleListModel(QAbstractListModel):
     NameRole = Qt.UserRole + 1
     PathRole = Qt.UserRole + 2
     IsDirRole = Qt.UserRole + 3
-    WidthRole = Qt.UserRole + 4
-    HeightRole = Qt.UserRole + 5
+    ModelWidthRole = Qt.UserRole + 4
+    ModelHeightRole = Qt.UserRole + 5
     SizeRole = Qt.UserRole + 6
     DateModifiedRole = Qt.UserRole + 7
     ChildCountRole = Qt.UserRole + 8
@@ -54,9 +54,9 @@ class SimpleListModel(QAbstractListModel):
             return item.get("isVisual", False)
         elif role == self.IsDirRole:
             return item.get("isDir", False)
-        elif role == self.WidthRole:
+        elif role == self.ModelWidthRole:
             return item.get("width", 0)
-        elif role == self.HeightRole:
+        elif role == self.ModelHeightRole:
             return item.get("height", 0)
         elif role == self.SizeRole:
             return item.get("size", 0)
@@ -74,17 +74,28 @@ class SimpleListModel(QAbstractListModel):
             self.IconNameRole: b"iconName",
             self.IsVisualRole: b"isVisual",
             self.IsDirRole: b"isDir",
-            self.WidthRole: b"width",
-            self.HeightRole: b"height",
+            self.ModelWidthRole: b"modelWidth",
+            self.ModelHeightRole: b"modelHeight",
             self.SizeRole: b"size",
             self.DateModifiedRole: b"dateModified",
             self.ChildCountRole: b"childCount",
         }
 
     def set_items(self, items: list) -> None:
+        """Full reset - used for initial load and final sort."""
         self.beginResetModel()
         self._items = items
         self.endResetModel()
+    
+    def appendItems(self, items: list) -> None:
+        """Append items without resetting. Uses beginInsertRows for efficiency."""
+        if not items:
+            return
+        start = len(self._items)
+        end = start + len(items) - 1
+        self.beginInsertRows(QModelIndex(), start, end)
+        self._items.extend(items)
+        self.endInsertRows()
         
     @Slot(int, result=dict)
     def get(self, row: int) -> dict:
@@ -121,6 +132,9 @@ class ColumnSplitter(QObject):
         self._sorted_items: list = []
         self._path_index: dict = {}
         
+        # [FIX] Streaming mode flag - prevents sorting during scan
+        self._is_loading: bool = False
+        
         self._sorter = Sorter(self)
         self._sorter.sortChanged.connect(self._on_sort_changed)
         
@@ -145,17 +159,50 @@ class ColumnSplitter(QObject):
 
     @Slot(list)
     def setFiles(self, files: list) -> None:
-        self._all_items = files
-        self._redistribute()
+        """Called on navigation to reset the view. Enters streaming mode."""
+        self._all_items = []
+        self._sorted_items = []
+        self._is_loading = True  # Disable sorting during scan
+        self._path_index.clear()
+        
+        # Clear all column models (single reset for empty state)
+        for model in self._column_models:
+            model.set_items([])
 
     @Slot(list)
     def appendFiles(self, new_files: list) -> None:
+        """Append files without full re-sort (streaming mode)."""
+        if not new_files:
+            return
+        
         self._all_items.extend(new_files)
-        self._redistribute()
+        
+        # Distribute new files across columns (round-robin, no sort)
+        start_idx = len(self._sorted_items)
+        for i, item in enumerate(new_files):
+            col_idx = (start_idx + i) % self._column_count
+            model = self._column_models[col_idx]
+            row = model.rowCount()
+            
+            # Use incremental append (no reset)
+            model.appendItems([item])
+            
+            # Update path index
+            self._path_index[item["path"]] = (col_idx, row)
+        
+        self._sorted_items.extend(new_files)
+
+    @Slot()
+    def finishLoading(self) -> None:
+        """Called when scan completes. Applies sorting with a single reset."""
+        self._is_loading = False
+        self._redistribute()  # Single reset with sorted data
 
     @Slot()
     def clear(self) -> None:
         self._all_items = []
+        self._sorted_items = []
+        self._is_loading = False
         self._redistribute()
 
     def _rebuild_models(self) -> None:
