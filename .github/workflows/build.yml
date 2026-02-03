@@ -52,52 +52,54 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
-      - name: Download linuxdeploy
+      - name: Install linuxdeploy and plugins
         run: |
+          # Download linuxdeploy
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy*.AppImage
-      
-      - name: Create AppDir structure
-        run: |
-          mkdir -p AppDir/usr/share/applications
-          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-          mkdir -p AppDir/usr/share/metainfo
+          chmod +x linuxdeploy-x86_64.AppImage
           
-          # Copy runtime application files
-          cp -r core ui main.py qtquickcontrols2.conf AppDir/usr/
-          
-          # Convert SVG icon to PNG
-          if [ -f "ui/icon.svg" ]; then
-            rsvg-convert -w 256 -h 256 ui/icon.svg -o AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png
-          fi
-          
-          # Copy desktop file from repo
-          cp ui/imbric.desktop AppDir/usr/share/applications/${{ env.APP_NAME }}.desktop
-          
-          # Create AppRun
-          cat > AppDir/AppRun << 'EOF'
-          #!/bin/bash
-          SELF=$(readlink -f "$0")
-          HERE=${SELF%/*}
-          export PATH="${HERE}/usr/bin:${PATH}"
-          export PYTHONPATH="${HERE}/usr:${PYTHONPATH}"
-          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
-          export GI_TYPELIB_PATH="${HERE}/usr/lib/girepository-1.0:${GI_TYPELIB_PATH}"
-          exec python3 "${HERE}/usr/main.py" "$@"
-          EOF
-          chmod +x AppDir/AppRun
-          
-          # Copy desktop file to root (required by linuxdeploy)
-          cp AppDir/usr/share/applications/${{ env.APP_NAME }}.desktop AppDir/
-          
-          # Symlink icon to root
-          ln -sf usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png AppDir/${{ env.APP_NAME }}.png
-      
+          # Download Python Plugin
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-python/releases/download/continuous/linuxdeploy-plugin-python-x86_64.AppImage
+          chmod +x linuxdeploy-plugin-python-x86_64.AppImage
+
       - name: Build AppImage
+        env:
+          ARCH: x86_64
+          # Plugin Configuration
+          APP_NAME: imbric
+          APP_MAIN_SCRIPT: usr/src/main.py
+          PIP_REQUIREMENTS: requirements.txt
+          PIP_IGNORE_INSTALLED: 1
+          # Bundle basic GObject/Cairo libs if possible (Note: PyGObject is complex, plugin handles pip side)
+          # We might need to manually ensure typelibs are found in a future refinement
         run: |
-          export ARCH=x86_64
-          export DEPLOY_PYTHON_VERSION=3.11
-          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage || echo "AppImage build completed with warnings"
+          # 1. Prepare AppDir Structure for Source
+          mkdir -p AppDir/usr/src
+          
+          # 2. Copy Application Source
+          # We place source in usr/src so it's clean and isolated
+          cp -r core ui main.py qtquickcontrols2.conf AppDir/usr/src/
+          
+          # 3. Prepare Icon (Convert SVG to PNG for AppImage)
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps/
+          rsvg-convert -w 256 -h 256 ui/icon.svg -o AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png
+          
+          # 4. Run linuxdeploy with Python Plugin
+          # - --appdir: The directory to turn into an AppImage
+          # - --plugin python: Use the python plugin we downloaded (must be in PATH or current dir)
+          # - --desktop-file: Source desktop file (linuxdeploy handles placement)
+          # - --icon-file: Source icon (linuxdeploy handles placement)
+          # - --output: Create an AppImage output
+          
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --plugin python \
+            --desktop-file ui/imbric.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png \
+            --output appimage
+          
+          # 5. Verify Output and Rename (Optional cleanup)
+          ls -lh Imbric*.AppImage
       
       - name: Upload AppImage to Release
         if: startsWith(github.ref, 'refs/tags/')
