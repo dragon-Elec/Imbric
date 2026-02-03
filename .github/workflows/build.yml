@@ -52,28 +52,40 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
-      - name: Install python-appimage
+      - name: Install Nuitka and dependencies
         run: |
-          python -m pip install python-appimage
+          python -m pip install -U nuitka zstandard
+          # zstandard is used by Nuitka for faster decompression
 
-      - name: Build AppImage
+      - name: Build AppImage with Nuitka
         env:
           APP_VERSION: ${{ env.APP_VERSION }}
         run: |
-          # Use python-appimage to bundle everything
-          # This creates a portable Python runtime and handles the AppDir structure
-          python3 -m python_appimage build app \
-            --app-name "${{ env.APP_NAME }}" \
-            --entry-point main.py \
-            --python-version 3.11 \
-            --requirements requirements.txt \
-            --icon ui/icon.svg \
-            --desktop-file ui/imbric.desktop \
-            .
+          # Build standalone AppImage using Nuitka
+          # Flags explained:
+          # --standalone: bundle all libs
+          # --enable-plugin=pyside6: handles Qt dependencies
+          # --include-qt-plugins=qml: ensures QML engine finds its plugins
+          # --enable-plugin=gi: handles GObject Introspection (Gio, etc)
+          # --include-data-dir=ui=ui: include our QML files
+          # --appimage: create the AppImage container
+          # --linux-icon: set the AppImage icon
+          # --output-filename: name of the binary/AppImage
+          
+          python3 -m nuitka \
+            --standalone \
+            --enable-plugin=pyside6 \
+            --enable-plugin=gi \
+            --include-qt-plugins=qml \
+            --include-data-dir=ui=ui \
+            --linux-icon=ui/icon.svg \
+            --output-filename=imbric \
+            --appimage \
+            main.py
             
-          # Rename output to a predictable name for the release step
-          # python-appimage usually outputs something like 'imbric-x86_64.AppImage'
-          mv *.AppImage ${{ env.APP_NAME }}-${{ env.APP_VERSION }}-x86_64.AppImage
+          # Rename output to match release expectations
+          # Nuitka with --appimage usually produces 'imbric.AppImage'
+          mv imbric.AppImage ${{ env.APP_NAME }}-${{ env.APP_VERSION }}-x86_64.AppImage
           ls -lh *.AppImage
       
       - name: Upload AppImage to Release
