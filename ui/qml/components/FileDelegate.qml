@@ -12,6 +12,11 @@ import components as Components
 Item {
     id: delegateRoot
 
+    Component.onCompleted: {
+        console.log("[FileDelegate] Created for:", path, "Width:", width, "ImgHeight:", imgHeight)
+    }
+
+
     // =========================================================================
     // 1. MODEL DATA CONTRACT (Bound from parent - nested component pattern)
     // =========================================================================
@@ -20,8 +25,8 @@ Item {
     required property bool isDir
     required property bool isVisual
     required property string iconName
-    required property int modelWidth   // Renamed from 'width' to avoid FINAL conflict
-    required property int modelHeight  // Renamed from 'height' to avoid FINAL conflict
+    property int modelWidth: 0   // Renamed from 'width', not required to prevent undefined errors
+    property int modelHeight: 0  // Renamed from 'height', not required to prevent undefined errors
     required property int index
 
     // =========================================================================
@@ -118,6 +123,55 @@ Item {
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             cache: true
+            
+            // MEMORY FIX: Downsample large photos to display size
+            // MEMORY FIX: Downsample large photos to display size
+            
+            // LOGIC:
+            // 1. If we know aspect ratio (Fast Path), request exact size -> Efficient
+            // 2. If unknown (Slow Path), request FULL size (undefined) -> Ensures implicit properties are populated
+            //    (Passing 0 height causes some Providers to return empty result)
+            
+            sourceSize: (modelWidth > 0 && modelHeight > 0) 
+                        ? Qt.size(width, (modelHeight / modelWidth) * width) 
+                        : undefined
+
+            onStatusChanged: console.log("[Image]", path, "Status:", status, "Implicit:", implicitWidth, "x", implicitHeight)
+            onSourceSizeChanged: console.log("[Image]", path, "SourceSize:", sourceSize)
+
+            // SHIMMER EFFECT: Visual feedback during loading
+            // sourceSize.height removal avoids "Binding loop" circle (Size -> Layout -> Size)
+
+            // SHIMMER EFFECT: Visual feedback during loading
+            Rectangle {
+                anchors.fill: parent
+                color: activePalette.midlight
+                visible: img.status === Image.Loading
+                
+                Gradient {
+                    id: shimmerGradient
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.3) }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
+                
+                Rectangle {
+                    id: shimmerBar
+                    width: parent.width
+                    height: parent.height
+                    gradient: shimmerGradient
+                    opacity: 0.5
+                    
+                    NumberAnimation on x {
+                        from: -shimmerBar.width
+                        to: shimmerBar.width
+                        duration: 1000
+                        loops: Animation.Infinite
+                        running: img.status === Image.Loading
+                    }
+                }
+            }
         }
         
         // Theme Icon (Vector, Crisp at Any Size)
@@ -143,11 +197,14 @@ Item {
         // Footer with file name or RenameField
         Item {
             id: footerArea
+            // LAYOUT FIX: Anchor to the bottom of the CARD (parent), not the image.
+            // This guarantees text never overlaps image, even if aspect ratio drifts.
             anchors.bottom: parent.bottom
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottomMargin: 4
             width: parent.width - 8
             height: 20
+
 
             // Static text label (shown when NOT renaming)
             Text {

@@ -83,46 +83,36 @@ Item {
                         height: contentHeight
                         model: modelData
                         
-                        delegate: Item {
-                            id: delegateWrapper
-                            width: root.columnWidth
-                            height: fileDelegate.height
+                        delegate: Components.FileDelegate {
+                            id: fileDelegate
                             
-                            // Selection state (computed here, passed to delegate)
-                            readonly property bool selected: selectionModel.selection.indexOf(model.path) !== -1
+                            // 1. DATA BINDINGS
+                            // rely on auto-injection for path, name, etc.
+                            
+                            // Safely bind to the correct MODEL ROLES (defined in view_manager.py)
+                            // "modelWidth" and "modelHeight" are the specific role names that hold the original image dimensions
+                            modelWidth: model.modelWidth || 0
+                            modelHeight: model.modelHeight || 0
 
-                            Components.FileDelegate {
-                                id: fileDelegate
-                                anchors.fill: parent
-                                
-                                // Model roles
-                                path: model.path
-                                name: model.name
-                                isDir: model.isDir
-                                isVisual: model.isVisual
-                                iconName: model.iconName
-                                modelWidth: model.modelWidth
-                                modelHeight: model.modelHeight
-                                index: model.index
-                                
-                                // View layout
-                                columnWidth: root.columnWidth
-                                
-                                // State props
-                                selected: delegateWrapper.selected
-                                renamingPath: root.pathBeingRenamed
-                                cutPaths: appBridge ? appBridge.cutPaths : []
-                                
-                                // Services
-                                appBridge: appBridge
-                                selectionModel: selectionModel
-                                
-                                // Handle rename events
-                                onRenameCommitted: root.pathBeingRenamed = ""
-                                onRenameCancelled: {
-                                    root.pathBeingRenamed = ""
-                                    rubberBandArea.forceActiveFocus()
-                                }
+                            // 2. VIEW LAYOUT
+                            columnWidth: root.columnWidth
+                            
+                            // 3. STATE PROPS
+                            // Fix reactivity: Use root alias to avoid scope null crash
+                            // Use 'path' property which is auto-injected
+                            selected: root.currentSelection.indexOf(path) !== -1
+                            renamingPath: root.pathBeingRenamed
+                            cutPaths: appBridge ? appBridge.cutPaths : []
+                            
+                            // Services
+                            appBridge: appBridge
+                            selectionModel: selectionModel
+                            
+                            // Handle rename events
+                            onRenameCommitted: root.pathBeingRenamed = ""
+                            onRenameCancelled: {
+                                root.pathBeingRenamed = ""
+                                rubberBandArea.forceActiveFocus()
                             }
                         }
                     }
