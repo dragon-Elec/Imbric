@@ -86,19 +86,6 @@ jobs:
           files: "*.AppImage"
           prerelease: true
           generate_release_notes: true
-          body: |
-            ## 🩹 Hotfix: Layout & Selection
-            - **Fixed:** Resolved a critical regression where thumbnails and text would overlap.
-            - **Fixed:** Restored selection highlighting functionality.
-
-            ## ✨ New Features & Improvements
-            - **Streaming Load:** Implemented incremental item loading for smoother folder navigation.
-            - **Visual Polish:** Added shimmer/skeleton loading effects during thumbnail generation.
-            - **Refactor:** Major cleanup of `MasonryView` by extracting `FileDelegate` for better maintainability.
-            - **Build:** Modernized AppImage build workflow.
-
-            ---
-            *Includes changes from v0.7.5-alpha.*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
