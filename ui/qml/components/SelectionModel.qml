@@ -204,4 +204,15 @@ QtObject {
     function count() {
         return selection.length
     }
+
+    /**
+     * Selects all items.
+     */
+    function selectAll(allItems) {
+        var paths = []
+        for (var i = 0; i < allItems.length; i++) {
+            paths.push(allItems[i].path)
+        }
+        selection = paths
+    }
 }

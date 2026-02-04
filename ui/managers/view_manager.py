@@ -329,13 +329,13 @@ class ViewManager(QObject):
     @Slot()
     def zoom_in(self):
         if tab := self.mw.tab_manager.current_tab:
-            tab.change_zoom(-1)
+            tab.change_zoom(1)
             self.zoomChanged.emit(tab._target_column_width) # logical approximation
         
     @Slot()
     def zoom_out(self):
         if tab := self.mw.tab_manager.current_tab:
-            tab.change_zoom(1)
+            tab.change_zoom(-1)
             self.zoomChanged.emit(tab._target_column_width)
 
     @Slot()

@@ -11,12 +11,22 @@ Item {
     property int columnCount: columnModels ? columnModels.length : 0
     property real columnWidth: appBridge ? appBridge.targetCellWidth : 250
     
+    // Services (Ensure appBridge is available globally or injected)
+    // In some contexts, appBridge might be context property, but let's be explicit if needed.
+    // Define property to resolve global context
+    property var bridge: appBridge
+    
     // EXPOSED PROPERTY: For Python Key Shortcuts (Copy/Cut/Trash)
     property alias currentSelection: selectionModel.selection
     
     // EXPOSED FUNCTION: For Python to set selection (e.g., after paste)
     function selectPaths(paths) {
         selectionModel.selection = paths
+    }
+
+    // EXPOSED FUNCTION: For Python select-all shortcut
+    function selectAll() {
+        selectionModel.selectAll(columnSplitter.getAllItems())
     }
     
     // STATE: Inverse of SelectionModel, tracks which ONE file is being renamed
@@ -37,82 +47,180 @@ Item {
     // --- SYSTEM PALETTE ---
     SystemPalette { id: activePalette; colorGroup: SystemPalette.Active }
 
-    // --- ROOT CONTAINER ---
-    Rectangle {
-        anchors.fill: parent
-        color: activePalette.base
-        focus: true // Root container takes focus by default if nothing else has it
+        // ROOT CONTAINER
+        Rectangle {
+            anchors.fill: parent
+            color: activePalette.base
+            focus: true // Root container takes focus by default if nothing else has it
 
-        // Global Key Handler (F2)
-        Keys.onPressed: (event) => {
-            if (event.isAutoRepeat) return
-            
-            if (event.key === Qt.Key_F2) {
-                var sel = selectionModel.selection
-                if (sel.length === 1) {
-                    if (root.pathBeingRenamed === sel[0]) {
-                        root.pathBeingRenamed = ""
-                        rubberBandArea.forceActiveFocus()
-                    } else {
-                        root.pathBeingRenamed = sel[0]
-                    }
-                    event.accepted = true
-                }
-            }
-        }
-
-        // Layer 1: Content
-        ScrollView {
+            // Layer 1: Content
+            ScrollView {
             id: scrollView
             anchors.fill: parent
             clip: true
             
-            Row {
-                id: columnsRow
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: 10
-                
-                Repeater {
-                    id: columnRepeater
-                    model: root.columnModels
-                    
-                    delegate: ListView {
-                        id: columnListView
-                        width: root.columnWidth
-                        interactive: false
-                        height: contentHeight
-                        model: modelData
-                        
-                        delegate: Components.FileDelegate {
-                            id: fileDelegate
-                            
-                            // 1. DATA BINDINGS
-                            // rely on auto-injection for path, name, etc.
-                            
-                            // Safely bind to the correct MODEL ROLES (defined in view_manager.py)
-                            // "modelWidth" and "modelHeight" are the specific role names that hold the original image dimensions
-                            modelWidth: model.modelWidth || 0
-                            modelHeight: model.modelHeight || 0
+            // CONTAINER: Wraps content so ScrollView sees a single child
+            Item {
+                id: contentContainer
+                // Width: At least window width, but grows if content is wider
+                implicitWidth: Math.max(scrollView.availableWidth, columnsRow.width + 20)
+                // Height: At least window height (for marquee in empty space), but grows with content
+                implicitHeight: Math.max(scrollView.availableHeight, columnsRow.height + 20)
 
-                            // 2. VIEW LAYOUT
-                            columnWidth: root.columnWidth
+                // 1. MARQUEE & BACKGROUND HANDLER
+                // Handles Marquee Selection & Background Clicks
+                MouseArea {
+                    id: marqueeArea
+                    anchors.fill: parent
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    hoverEnabled: false 
+                    preventStealing: true // Prevents ScrollView from panning when we are dragging the marquee
+
+                    // ZOOM SUPPORT (Ctrl + Wheel)
+                    onWheel: (wheel) => {
+                        if (wheel.modifiers & Qt.ControlModifier) {
+                            let zoomDelta = wheel.angleDelta.y > 0 ? 1 : -1
+                            if (root.bridge) root.bridge.zoom(zoomDelta)
+                            wheel.accepted = true
+                        } else {
+                            wheel.accepted = false // Let ScrollView handle normal scroll
+                        }
+                    }
+
+                    property point startPoint
+                    property bool isDragging: false
+
+                    onPressed: (mouse) => {
+                        // RIGHT CLICK: Background Context Menu
+                        if (mouse.button === Qt.RightButton) {
+                            console.log("[Background] Right Click -> Menu")
+                            if (root.bridge) root.bridge.showBackgroundContextMenu()
+                            return
+                        }
+
+                        // LEFT CLICK: Start Marquee Check
+                        startPoint = Qt.point(mouse.x, mouse.y)
+                        isDragging = false
+                        
+                        // "Eat" the event to prevent ScrollView from Panning (Touch style)
+                        mouse.accepted = true
+                        rubberBandArea.forceActiveFocus()
+                        root.pathBeingRenamed = ""
+                    }
+                    
+                    onPositionChanged: (mouse) => {
+                        // Logic: Only start drag after threshold
+                        if (!isDragging && (Math.abs(mouse.x - startPoint.x) > 5 || Math.abs(mouse.y - startPoint.y) > 5)) {
+                            isDragging = true
+                            rubberBand.visible = true
+                            rubberBand.update(startPoint.x, startPoint.y, startPoint.x, startPoint.y)
+                        }
+                        
+                        if (isDragging) {
+                            rubberBand.update(startPoint.x, startPoint.y, mouse.x, mouse.y)
                             
-                            // 3. STATE PROPS
-                            // Fix reactivity: Use root alias to avoid scope null crash
-                            // Use 'path' property which is auto-injected
-                            selected: root.currentSelection.indexOf(path) !== -1
-                            renamingPath: root.pathBeingRenamed
-                            cutPaths: appBridge ? appBridge.cutPaths : []
+                            // SELECTION LOGIC
+                            // Map Marquee Rect to ColumnsRow (for SelectionHelper)
+                            var rect = rubberBand.getRect()
+                            // contentContainer is the parent of columnsRow, so coords are already roughly correct,
+                            // but let's be precise if columnsRow has margins.
+                            var mappedPt = columnsRow.mapFromItem(contentContainer, rect.x, rect.y)
                             
-                            // Services
-                            appBridge: appBridge
-                            selectionModel: selectionModel
+                            var hits = selectionHelper.getMasonrySelection(
+                                columnSplitter, 
+                                root.columnCount, 
+                                root.columnWidth, 
+                                10,
+                                mappedPt.x, 
+                                mappedPt.y, 
+                                rect.width, 
+                                rect.height
+                            )
+                            selectionModel.selectRange(hits, (mouse.modifiers & Qt.ControlModifier))
+                        }
+                    }
+                    
+                    onReleased: (mouse) => {
+                        if (mouse.button === Qt.LeftButton) {
+                            if (isDragging) {
+                                rubberBand.visible = false
+                                isDragging = false
+                            } else {
+                                // Simple Click on Background -> Clear Selection
+                                selectionModel.clear()
+                            }
+                        }
+                    }
+                    
+                    // 3. RUBBER BAND VISUAL
+                    Components.RubberBand {
+                        id: rubberBand
+                        visible: false
+                        z: 100 
+                    }
+                }
+
+                // 2. THE CONTENT (Files)
+                Row {
+                    id: columnsRow
+                    // LEFT ALIGNMENT: No anchor to horizontalCenter. 
+                    // Use margins to give a little breathing room.
+                    x: 10 
+                    spacing: 10
+                    
+                    Repeater {
+                        id: columnRepeater
+                        model: root.columnModels
+                        
+                        delegate: ListView {
+                            id: columnListView
+                            width: root.columnWidth
+                            interactive: false
+                            height: contentHeight
+                            model: modelData
                             
-                            // Handle rename events
-                            onRenameCommitted: root.pathBeingRenamed = ""
-                            onRenameCancelled: {
-                                root.pathBeingRenamed = ""
-                                rubberBandArea.forceActiveFocus()
+                            delegate: Components.FileDelegate {
+                                id: fileDelegate
+                                
+                                // 1. DATA BINDINGS
+                                modelWidth: model.modelWidth || 0
+                                modelHeight: model.modelHeight || 0
+
+                                // 2. VIEW LAYOUT
+                                columnWidth: root.columnWidth
+                                
+                                // 3. STATE PROPS
+                                selected: root.currentSelection.indexOf(path) !== -1
+                                renamingPath: root.pathBeingRenamed
+                                cutPaths: appBridge ? appBridge.cutPaths : []
+                                
+                                // Services
+                                bridge: appBridge
+                                selModel: selectionModel
+                                
+                                // Handle rename events
+                                onRenameCommitted: root.pathBeingRenamed = ""
+                                onRenameCancelled: {
+                                    root.pathBeingRenamed = ""
+                                    rubberBandArea.forceActiveFocus()
+                                }
+
+                                // 4. INTERACTIONS
+                                onClicked: (button, modifiers) => {
+                                    console.log("[MasonryView] Delegate Clicked:", path)
+                                    if (button === Qt.RightButton) {
+                                        if (!selectionModel.isSelected(path)) selectionModel.select(path)
+                                        appBridge.showContextMenu(selectionModel.selection)
+                                    } else {
+                                        var ctrl = (modifiers & Qt.ControlModifier)
+                                        var shift = (modifiers & Qt.ShiftModifier)
+                                        selectionModel.handleClick(path, ctrl, shift, columnSplitter.getAllItems())
+                                    }
+                                }
+                                onDoubleClicked: {
+                                    console.log("[MasonryView] Delegate DoubleClicked:", path)
+                                    appBridge.openPath(path)
+                                }
                             }
                         }
                     }
@@ -120,190 +228,19 @@ Item {
             }
         }
         
-        // Layer 2: Background Interaction (ON TOP but passes item events through)
-        // Handles: Rubberband selection, background clicks, zoom
-        MouseArea {
-            id: rubberBandArea
-            anchors.fill: parent
-            acceptedButtons: Qt.LeftButton | Qt.RightButton
-            // hoverEnabled: true -- BLOCKS underlying items! Only needed if we tracked cursor without drag.
-            
-            property point startPoint
-            property bool isDragging: false
-            property bool wasMarqueeSelecting: false // Survives release-click sequence
-            property bool isOnItem: false // Track if press was on an item
+        // Layer 2: Background Interaction (Pointer Handlers)
+        // [MOVED TO contentContainer MOUSEAREA]
 
-            // Zoom Support (Ctrl+Scroll)
-            onWheel: (wheel) => {
-                if (wheel.modifiers & Qt.ControlModifier) {
-                    var delta = wheel.angleDelta.y > 0 ? -1 : 1
-                    appBridge.zoom(delta)
-                    wheel.accepted = true
-                } else {
-                    wheel.accepted = false
-                }
-            }
+        // 3. RUBBER BAND VISUAL
+        // [MOVED TO contentContainer MOUSEAREA]
+        
+        // Dummy Item for Focus stealing (fallback)
+        Item { id: rubberBandArea; focus: true }
 
-            onPressed: (mouse) => {
-                wasMarqueeSelecting = false
-                
-                // --- 1. Accurate Hit-Test using QML ---
-                // We ask the specific ListView column: "Is there an item under this pixel?"
-                // This handles padding, margins, and exact rendering perfectly.
-                isOnItem = false
-                
-                // Map global mouse to the Row (which handles the scrolling offset)
-                var rowPt = columnsRow.mapFromItem(root, mouse.x, mouse.y)
-                
-                // Find which column we are over
-                // (Assuming equal width + spacing)
-                var totalColWidth = root.columnWidth + columnsRow.spacing
-                var colIndex = Math.floor(rowPt.x / totalColWidth)
-                
-                if (colIndex >= 0 && colIndex < columnRepeater.count) {
-                    var targetListView = columnRepeater.itemAt(colIndex)
-                    if (targetListView) {
-                        // Map Row point to ListView (should be just local X adjustment)
-                        var lvPt = targetListView.mapFromItem(columnsRow, rowPt.x, rowPt.y)
-                        
-                        // Check indexAt in the ListView
-                        // Note: MasonryView uses expanded ListView (non-interactive), 
-                        // so contentY is effectively 0 relative to the Item itself,
-                        // but let's be safe and use standard lookup.
-                        var idx = targetListView.indexAt(lvPt.x, lvPt.y)
-                        
-                        if (idx !== -1) {
-                            // WE HIT AN ITEM!
-                            isOnItem = true
-                            
-                            // Retrieve Data from Python Model
-                            var itemData = targetListView.model.get(idx)
-                            if (itemData && itemData.path) {
-                                if (mouse.button === Qt.RightButton) {
-                                    // Right Click Logic
-                                    if (!selectionModel.isSelected(itemData.path)) {
-                                        selectionModel.select(itemData.path)
-                                    }
-                                    appBridge.showContextMenu(selectionModel.selection)
-                                } else {
-                                    // Left Click Logic
-                                    // Using mouse.modifiers directly from the MouseArea (Reliable!)
-                                    var ctrl = (mouse.modifiers & Qt.ControlModifier)
-                                    var shift = (mouse.modifiers & Qt.ShiftModifier)
-                                    selectionModel.handleClick(itemData.path, ctrl, shift, columnSplitter.getAllItems())
-                                }
-                            }
-                            
-                            mouse.accepted = true // Consume event
-                            return
-                        }
-                    }
-                }
-                
-                // --- 2. Background Interaction ---
-                // If we got here, we clicked the background (gaps or empty space)
-                
-                // Don't start marquee if renaming
-                if (root.pathBeingRenamed !== "") {
-                    // If renaming, background click should confirm (or cancel?)
-                    // Currently handled by TextField focus loss or other logic, 
-                    // but let's consume it to be safe.
-                     // Actually, we want to let the focus change happen?
-                     // Let's consume it to prevent clearing selection immediately 
-                     // if that is desired, OR let it clear.
-                     // Standard behavior: Click outside -> Commit & Deselect?
-                     // For now, let's just NOT start marquee.
-                    mouse.accepted = false
-                    return
-                }
-                
-                // Start marquee on empty space
-                startPoint = Qt.point(mouse.x, mouse.y)
-                isDragging = false
-            }
-
-            onPositionChanged: (mouse) => {
-                if (isOnItem) return // Item is handling this
-                if (!(mouse.buttons & Qt.LeftButton)) return
-                
-                // Start marquee after small movement
-                if (!isDragging && (Math.abs(mouse.x - startPoint.x) > 5 || Math.abs(mouse.y - startPoint.y) > 5)) {
-                    isDragging = true
-                    rubberBand.show()
-                }
-
-                if (isDragging) {
-                    rubberBand.update(startPoint.x, startPoint.y, mouse.x, mouse.y)
-                    
-                    var rect = rubberBand.getRect()
-                    var mappedPt = columnsRow.mapFromItem(root, rect.x, rect.y)
-                    
-                    var hits = selectionHelper.getMasonrySelection(
-                        columnSplitter, 
-                        root.columnCount, 
-                        root.columnWidth, 
-                        10,
-                        mappedPt.x, 
-                        mappedPt.y, 
-                        rect.width, 
-                        rect.height
-                    )
-                    selectionModel.selectRange(hits, (mouse.modifiers & Qt.ControlModifier))
-                }
-            }
-
-            onReleased: (mouse) => {
-                rubberBand.hide()
-                if (isDragging) {
-                    wasMarqueeSelecting = true // Mark that we just did a marquee
-                }
-                isDragging = false
-            }
-
-            onClicked: (mouse) => {
-                // Skip if we just finished marquee selection or if we're on an item
-                if (wasMarqueeSelecting || isOnItem) return
-                
-                // Click on empty space (not a drag, not on item)
-                if (mouse.button === Qt.RightButton) {
-                    selectionModel.clear()
-                    appBridge.showBackgroundContextMenu()
-                } else {
-                    selectionModel.clear()
-                }
-            }
-            
-            onDoubleClicked: (mouse) => {
-                // Replicate Hit-Test logic for Open action
-                var rowPt = columnsRow.mapFromItem(root, mouse.x, mouse.y)
-                var totalColWidth = root.columnWidth + columnsRow.spacing
-                var colIndex = Math.floor(rowPt.x / totalColWidth)
-                
-                if (colIndex >= 0 && colIndex < columnRepeater.count) {
-                    var targetListView = columnRepeater.itemAt(colIndex)
-                    if (targetListView) {
-                        var lvPt = targetListView.mapFromItem(columnsRow, rowPt.x, rowPt.y)
-                        var idx = targetListView.indexAt(lvPt.x, lvPt.y)
-                        
-                        if (idx !== -1) {
-                            var itemData = targetListView.model.get(idx)
-                            if (itemData && itemData.path && mouse.button === Qt.LeftButton) {
-                                appBridge.openPath(itemData.path)
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // RubberBand visual
-            Components.RubberBand {
-                id: rubberBand
-            }
-        }
         // Layer 3: Drop Area (Handles incoming files)
         DropArea {
             anchors.fill: parent
-            z: -1 // Behind items (items will get drops first if we add DropArea to them later)
+            z: -1 // Behind items
             
             onEntered: (drag) => {
                 drag.accept(Qt.CopyAction)
@@ -312,7 +249,6 @@ Item {
             onDropped: (drop) => {
                 if (drop.hasUrls) {
                     drop.accept()
-                    // Convert URLs to array of strings
                     var urls = []
                     for (var i = 0; i < drop.urls.length; i++) {
                         urls.push(drop.urls[i].toString())

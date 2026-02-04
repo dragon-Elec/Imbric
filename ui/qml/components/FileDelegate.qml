@@ -44,14 +44,17 @@ Item {
     // =========================================================================
     // 4. SERVICES (Passed from parent - per-tab context)
     // =========================================================================
-    property var appBridge: null
-    property var selectionModel: null
+    property var bridge: null
+    property var selModel: null
 
     // =========================================================================
     // 5. SIGNALS (For parent to handle)
     // =========================================================================
     signal renameCommitted(string newName)
     signal renameCancelled()
+    // Interaction Signals (Bubbling up to Parent)
+    signal clicked(int button, int modifiers)
+    signal doubleClicked()
 
     // =========================================================================
     // 6. COMPUTED PROPERTIES
@@ -102,7 +105,7 @@ Item {
         color: {
             if (delegateRoot.selected) return activePalette.highlight
             if (delegateRoot.isDir && itemDropArea.containsDrag) return activePalette.highlight
-            if (hoverHandler.hovered) return Qt.rgba(activePalette.text.r, activePalette.text.g, activePalette.text.b, 0.1)
+            if (delegateMouseArea.containsMouse) return Qt.rgba(activePalette.text.r, activePalette.text.g, activePalette.text.b, 0.1)
             return "transparent"
         }
         
@@ -228,8 +231,8 @@ Item {
                 originalName: name
                 
                 onCommit: (newName) => {
-                    if (newName !== name && appBridge) {
-                        appBridge.renameFile(path, newName)
+                    if (newName !== name && bridge) {
+                        bridge.renameFile(path, newName)
                     }
                     delegateRoot.renameCommitted(newName)
                 }
@@ -240,14 +243,32 @@ Item {
             }
         }
         
-        HoverHandler { id: hoverHandler }
+        // HoverHandler removed (using MouseArea.hoverEnabled)
     }
     
     // =========================================================================
     // 9. INTERACTION HANDLERS
     // =========================================================================
     
-    // Drop Area for Folders (Allows dragging files INTO a folder)
+    // 1. MOUSE AREA (Handles Clicks & Context Menu locally)
+    MouseArea {
+        id: delegateMouseArea
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        hoverEnabled: true // For hover styling
+
+        onClicked: (mouse) => {
+            console.log("[Delegate] Clicked:", path, "Button:", mouse.button)
+            delegateRoot.clicked(mouse.button, mouse.modifiers)
+        }
+
+        onDoubleClicked: (mouse) => {
+             console.log("[Delegate] DoubleClicked:", path)
+             delegateRoot.doubleClicked()
+        }
+    }
+
+    // 2. Drop Area for Folders (Allows dragging files INTO a folder)
     DropArea {
         id: itemDropArea
         anchors.fill: parent
@@ -264,26 +285,30 @@ Item {
                 for (var i = 0; i < drop.urls.length; i++) {
                     urls.push(drop.urls[i].toString())
                 }
-                if (appBridge) {
-                    appBridge.handleDrop(urls, path)
+                if (bridge) {
+                    bridge.handleDrop(urls, path)
                 }
             }
         }
     }
     
-    // DragHandler for Drag-and-Drop (initiating drag FROM this item)
+    // 4. DragHandler for Drag-and-Drop (initiating drag FROM this item)
     DragHandler {
         id: delegateDragHandler
         target: null // Don't move the visual
         
+        // Assert Dominance: Win against parent marquee
+        grabPermissions: PointerHandler.CanTakeOverFromAnything
+
         onActiveChanged: {
             if (active) {
+                console.log("[Delegate] Drag Started on:", path)
                 // Ensure item is selected before starting drag
-                if (!delegateRoot.selected && selectionModel) {
-                    selectionModel.select(path)
+                if (!delegateRoot.selected && selModel) {
+                    selModel.select(path)
                 }
-                if (appBridge && selectionModel) {
-                    appBridge.startDrag(selectionModel.selection)
+                if (bridge && selModel) {
+                    bridge.startDrag(selModel.selection)
                 }
             }
         }

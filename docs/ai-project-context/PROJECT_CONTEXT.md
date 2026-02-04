@@ -13,8 +13,9 @@
 >
 > **Update Rules:** Session notes → Section 8 only. No changelog prose.
 
-> **Version:** 0.7.4-alpha | **Updated:** 2026-01-31 | **Status:** Active  
+> **Version:** 0.7.5-alpha | **Updated:** 2026-02-02 | **Status:** Active  
 > **Target:** Linux (GNOME) | **Stack:** Python 3.10+ / PySide6 / QML / Gio / GnomeDesktop
+> **Issue Tracking:** See @[todo.md](todo.md) and @[BUGS_AND_FLAWS.md](BUGS_AND_FLAWS.md) for active tasks/bugs.
 
 ---
 
@@ -22,7 +23,7 @@
 
 **What:** Photo-first file manager with Masonry layout, native GNOME integration.
 
-**Current Phase:** Phase 5 (Async I/O) — Non-blocking file ops with progress overlay.
+**Current Phase:** Phase 6 (Robustness) — Architectural validation and signal hardening.
 
 **Critical Patterns:**
 - **"Lens, not Engine":** Defer I/O to `Gio`, thumbnails to `GnomeDesktop`
@@ -118,6 +119,11 @@ True async file listing via `Gio.enumerate_children_async`. Batches of 50.
   - `_on_files_retrieved()` — filters hidden, reads image dimensions via `QImageReader`
 - **Signals:** `filesFound(list[dict])`, `scanFinished()`, `scanError(str)`
 
+#### `core/image_providers/theme_provider.py` — Native System Icons `[NEW]`
+Unified provider for system theme icons.
+- `ThemeImageProvider`: QQuickImageProvider handling `image://theme/` requests.
+- Returns pixmaps consistent with system theme (Adwaita/Yaru/etc).
+
 ---
 
 #### `core/gio_bridge/bookmarks.py` — GTK Bookmarks
@@ -210,6 +216,7 @@ Central nervous system for batch operations and conflict handling.
 - `addOperation(tid, op_type, src, dest)` — registers intent
 - `resolveConflict(job_id, resolution, new_name)` — handles pause/resume logic
 - **Signals:** `transactionStarted`, `transactionFinished`, `transactionProgress`, `conflictDetected`, `conflictResolved`
+- **Updated:** Now the primary source of truth for UI. Aggregates all worker signals.
 
 ---
 
@@ -301,6 +308,10 @@ Shows item counts (folders/files) and selection info.
 - `updateAttribute(path, attr, value)` — Handles async scanner updates (child counts).
 - `setMessage(str)` — Temporary status feedback.
 #### `ui/components/progress_overlay.py` — Op Progress
+Visual overlay for batch operations. 
+- Subscribes to `TransactionManager` signals. 
+- Shows progress bars for active batches and individual job details.
+- **Signals:** `cancelRequested(str)`.
 
 ---
 
@@ -323,7 +334,14 @@ Main photo grid with N `ListView` columns.
 - Binds to `ColumnSplitter.getModels()` (via context property)
 - Signals to `AppBridge`: `showContextMenu`, `startDrag`, `handleDrop`, `selectPath`
 - **Inline Rename:** `F2` triggers `Loader` using reusable `RenameField.qml`.
+- **Signals:** `showContextMenu`, `startDrag`, `handleDrop`, `selectPath`
 - **Properties:** `currentSelection` (exposed to Python), `pathBeingRenamed`
+
+#### `ui/qml/components/FileDelegate.qml` — Item Component `[EXTRACTED]`
+Extracted from MasonryView for performance and isolation.
+- Handles rendering of singular file/folder cards.
+- Manages internal state: Hover, Selection visuals, Rename overlay.
+- Uses `Loader` for heavy elements (Thumbnails) to improve scrolling performance.
 
 ---
 
@@ -574,3 +592,12 @@ QMetaObject.invokeMethod(
     *   *Fix:* Centralized Key handling in the `Root` item to catch bubbling events from anywhere.
     *   *Fix:* Explicit `forceActiveFocus` required when destroying QML components (Loader) to prevent focus drifting to "nowhere".
 
+### 6.3. Recent Updates (v0.7.5-alpha)
+
+- **QML Component Extraction (2026-02-02):** Extracted `FileDelegate.qml` from `MasonryView.qml`.
+    - *Why:* Infinite scrolling performance was degraded by monolithic file.
+    - *Result:* 234 lines moved to reusable component. Streaming loading enabled.
+- **Core Signal Consolidation (2026-02-02):** Centralized operation signals through `TransactionManager`.
+    - *Why:* "Ghost Transactions" caused by `FileOperations` emitting completion signals that `TransactionManager` missed or double-counted.
+    - *Result:* `MainWindow` now listens ONLY to `TransactionManager`.
+- **System Icons (2026-02-01):** Implemented `ThemeImageProvider` to correctly fetch and render native GTK icons (Adwaita/Yaru) in QML, solving "fuzzy icon" issues.

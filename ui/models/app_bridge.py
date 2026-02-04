@@ -191,7 +191,8 @@ class AppBridge(QObject):
     
     @Slot(int)
     def zoom(self, delta):
-        self.mw.view_manager.zoom_in() if delta < 0 else self.mw.view_manager.zoom_out()
+        # FIX: Wheel Up (Positive) should Zoom In
+        self.mw.view_manager.zoom_in() if delta > 0 else self.mw.view_manager.zoom_out()
     
     # -------------------------------------------------------------------------
     # SEARCH API
