@@ -16,7 +16,7 @@
 - [ ] **Search UI** — Add Sort/Filter options to right-click background menu
 - [ ] **Search UI** — Implement QML Search Bar with `SearchWorker` integration
 
-- [/] Fix BUG-007: Rubberband selection ignores sort order (implemented, pending test)
+
 
 - [ ] Async thumbnail generation (background thread) - *In Progress*
 - [ ] Sort options context menu
@@ -53,10 +53,10 @@
 ## Backlog
 
 - [ ] File Preview (Spacebar fullscreen)
-- [ ] Keyboard Navigation (Arrow keys in grid)
+- [ ] Keyboard Navigation (Native ListView Arrow keys)
 - [ ] EXIF/Metadata Panel
 - [ ] Symlink overlay icons
-- [ ] Column-Major layout option (Pinterest-style, post-alpha)
+
 
 ### Conflict Dialog Improvements (post-alpha)
 
@@ -79,7 +79,7 @@
 | Icon theming | Non-image items need proper icons |
 | Error fallbacks | Scanner/Provider graceful degradation |
 | Unit tests | None yet |
-| Aspect cache | Read dimensions before layout |
+| Aspect cache | CRITICAL: Required for `JustifiedView` row packing |
 
 ---
 
@@ -229,75 +229,3 @@
 
 ---
 
-## Notes
-
-```python
-# Open With helper (for future context menu)
-from gi.repository import Gio
-
-def get_apps_for_file(path: str) -> list[dict]:
-    file = Gio.File.new_for_path(path)
-    info = file.query_info("standard::content-type", Gio.FileQueryInfoFlags.NONE)
-    apps = Gio.AppInfo.get_all_for_type(info.get_content_type())
-    return [{"name": a.get_name(), "app_info": a} for a in apps]
-```
-
-Benefits of the Current Approach
-Benefit    Explanation
-True Masonry Layout    Each item has its own height based on aspect ratio — visually appealing, like Pinterest.
-Reactive Zoom    Changing columnWidth instantly updates all items — no manual refresh needed.
-Simple Code    Everything is declarative QML — no complex imperative logic.
-Fallbacks    Handles loading states (placeholder), missing dimensions, and directories gracefully.
-Can We Offload Calculations to Python/Rust/Go?
-Short answer: Not easily, and it wouldn't help much.
-
-Here's why:
-
-Approach    Feasibility    Why It Doesn't Help
-Python    ✅ Possible    Python is slower than QML's JavaScript. The binding recalculation happens in Qt's C++ engine; moving it to Python would add IPC overhead and be slower.
-Rust/Go    ⚠️ Complex    Requires FFI bindings to Qt. Even if you compute heights in Rust, you still need to pass them back to QML and trigger a model update — same layout churn.
-C++ (QML Plugin)    ✅ Best Option    You can write a C++ helper that computes all heights once and exposes them as a role in the model. But this is significant effort.
-The Real Fix: Avoid Per-Delegate Bindings
-The issue isn't where the calculation happens — it's how often it runs. The current approach recalculates imgHeight for every delegate on every resize.
-
-Cython vs PyO3 for QML Integration
-
-Aspect    Cython    PyO3 (Rust)
-Language    Python-like (.pyx)    Rust
-Learning Curve    Low (if you know Python)    Higher (new language)
-Speedup    10-100x for numeric code    100-1000x (true native)
-Qt Integration    ❌ No native Qt bindings    ⚠️ Possible via cxx-qt (experimental)
-PySide6 Compatibility    ✅ Seamless (same runtime)    ⚠️ Tricky (need to pass data across FFI)
-Build Complexity    Low (cythonize in setup.py)    Medium (need Rust toolchain + maturin)
-Memory Safety    Python's GC    Rust's ownership (no GC)
-
-Better Strategies:
-
-Pre-compute aspect ratios in Python:
-In FileScanner, calculate height / width once and store it as aspectRatio in the model.
-QML just does: height: model.aspectRatio * width (one multiplication, no conditionals).
-Debounce column width changes:
-Instead of instantly updating columnWidth, use a Timer to delay the update until resize stops.
-Use cacheBuffer on ListView:
-Qt's ListView can pre-render items outside the viewport (cacheBuffer: 100). This reduces pop-in but doesn't fix resize jitter.
-Recommendation: Pre-compute aspectRatio in Python (option 1). It's the cleanest fix with minimal code changes.
-
-Silent Partial Failure Fix
-Changes Implemented
-ui/elements/progress_overlay.py
-Component    Change
-onOperationCompleted
-Added logic to parse `dest
-Visuals    Added Warning State: Red text, "dialog-warning" icon.
-Behavior    Auto-hide disabled when errors occur. Requires manual dismissal.
-Controls    Cancel button repurposes as "Dismiss" (Close) button in error state.
-Verification Steps (Manually)
-Preparation: Create a folder with one locked file (000 permissions) and one normal file.
-Action: Copy this folder to another location using Imbric.
-Observation:
- Progress bar finishes.
- Overlay remains visible (does not vanish).
- Icon is a ⚠️ (Warning Triangle).
- Text says: "Done (1 files skipped)" in red.
- "Stop" button changes to a "Close" (X) button.
-Dismiss: Click the "X" button. The overlay should close.

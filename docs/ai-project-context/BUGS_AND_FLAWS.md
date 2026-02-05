@@ -91,37 +91,11 @@ Path: Ignore for Linux. Use QTimer/Thread for Windows.
 
 ## 🟢 Polish & Edge Cases
 
-### BUG-006: F2 Inline Rename Focus Loss
 
-[MasonryView.qml](file:///home/ray/Desktop/files/wrk/Imbric/ui/qml/views/MasonryView.qml) | LOW (Qt Quirk) | OPEN
-
-**Was:** F2 rename field loses focus immediately (~1/15 times).
-
-**Why (Investigation 2026-02-01):** Focus race condition. When `pathBeingRenamed` changes, `RenameField` becomes visible and calls `forceActiveFocus()` in `onActiveChanged`. However, if the ListView delegate is being recycled/reparented during layout updates, focus acquisition fails silently.
-
-**Root Cause:** `RenameField.qml` line 46 (`forceActiveFocus()`) executes synchronously, but QML's focus scope updates happen asynchronously relative to `visible`/`active` property changes.
-
-**Potential Fix (Not Implemented):**
-Add a retry timer in `RenameField.qml`:
-```qml
-Timer {
-    id: focusEnforcer
-    interval: 50
-    running: root.active && !root.activeFocus
-    repeat: false
-    onTriggered: root.forceActiveFocus()
-}
-```
-
-**Path:** Low priority. Monitor Qt 6.x updates for improved focus stability. Potential fix documented but not enforced (user decision pending).
 
 ---
 
-### ✅ BUG-007: Rubberband Selection Ignores Sort Order
-[ui/models/column_splitter.py](file:///home/ray/Desktop/files/wrk/Imbric/ui/models/column_splitter.py) | MEDIUM | FIXED (2026-01-25)
-Was: Marquee selection highlighted wrong items when sorting enabled.
-Why: Hit-testing used unsorted `_all_items` list while display was sorted.
-Path: Create `_sorted_items` cache in `ColumnSplitter` and use it for `getAllItems()`.
+
 
 ## ✅ Resolved
 
@@ -238,11 +212,7 @@ Path: Implemented `QThreadPool` + `FileJob` + `TransactionManager`. Logic fully 
 **Symptom:** No progress feedback during search. Long searches look like the app has hung.
 **Path:** Emit periodic "progress" signals (e.g., "Scanned 1000 files...") or indefinite spinner state.
 
-### BUG-017: Focus Trap on Rename
-**Files:** `ui/qml/views/MasonryView.qml`
-**Severity:** MEDIUM
-**Symptom:** F2 rename relies on brittle `activeFocus` changes, leading to dead keys.
-**Path:** Centralize focus logic. Use `State` machine for "View Mode" vs "Edit Mode".
+
 
 ### BUG-018: Missing "Open Terminal"
 **Files:** `ui/models/app_bridge.py`
