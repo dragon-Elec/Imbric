@@ -23,9 +23,6 @@
 
 ### Pending Tests
 
-- [ ] **Drag & Drop**: Verify DnD works with refactored input handlers
-- [ ] **Rubberband Selection**: Verify marquee selection on empty space
-- [ ] **Right-Click Menus**: Context menu on items and background
 - [ ] **Parallel Ops Manual**: Copy large file + trash small file simultaneously
 
 ---
@@ -79,7 +76,7 @@
 | Icon theming | Non-image items need proper icons |
 | Error fallbacks | Scanner/Provider graceful degradation |
 | Unit tests | None yet |
-| Aspect cache | CRITICAL: Required for `JustifiedView` row packing |
+| Aspect cache | ✅ FIXED via `QImageReader` in `scanner.py` |
 
 ---
 
@@ -204,6 +201,8 @@
 ### Refactoring
 - [x] **Managers:** Migrated to `ui/managers/` (Action, File, View, Navigation).
 - [x] **Stubs:** Completed implementation of `undo_manager.py`, `file_properties_model.py`.
+- [x] **QML Components:** Extracted `FileDelegate.qml` and `SelectionModel.qml` for reuse.
+- [x] **Interaction Logic:** Fixed "God MouseArea" Z-order issues in `MasonryView.qml`.
 
 ---
 
