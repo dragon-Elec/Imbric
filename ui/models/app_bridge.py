@@ -138,6 +138,38 @@ class AppBridge(QObject):
     
     # _create_new_folder moved to FileManager
     
+    @Slot(str, result=str)
+    def getThumbnailPath(self, path: str) -> str:
+        """
+        Check if a native GNOME thumbnail exists for the file.
+        Returns direct file:// URL if cached, else fallback to image:// provider.
+        """
+        import hashlib
+        import urllib.parse
+        
+        try:
+            # 1. Construct canonical URI (file:///path/to/file)
+            # Must be quote-encoded (e.g. " " -> "%20")
+            uri = "file://" + urllib.parse.quote(path)
+            
+            # 2. GNOME Thumbnail Spec: MD5 of URI
+            md5_hash = hashlib.md5(uri.encode('utf-8')).hexdigest()
+            
+            # 3. Check Large Cache (256px)
+            # The standard location is ~/.cache/thumbnails/large/
+            cache_dir = os.path.expanduser("~/.cache/thumbnails/large")
+            thumb_path = os.path.join(cache_dir, f"{md5_hash}.png")
+            
+            if os.path.exists(thumb_path):
+                # SUCCESS: Return direct path to bypass Python loader
+                return f"file://{thumb_path}"
+                
+        except Exception as e:
+            print(f"[AppBridge] Thumbnail lookup failed: {e}")
+            
+        # FALLBACK: Ask the generator to make one
+        return f"image://thumbnail/{path}"
+
     @Slot(str, str)
     def renameFile(self, old_path, new_name):
         """

@@ -233,12 +233,36 @@ class FileManager(QObject):
                 real_paths.append(u)
 
         if real_paths:
-            # For this refactor, we default to Copy/Move logic via run_transfer.
-            # Ideally we check device to decide Move vs Copy default.
-            # Existing AppBridge logic did complex checks. 
-            # We will default to 'move' if on same device, else 'copy', inside run_transfer?
-            # Unified transfer logic. Mode="auto" lets the core decide Move vs Copy.
-            self.mw.file_ops.transfer(real_paths[0], dest_dir, mode="auto")
-            # If multiple paths, handle them as well (TODO: Batch transfer support in Core?)
-            for p in real_paths[1:]:
-                self.mw.file_ops.transfer(p, dest_dir, mode="auto")
+            # Current Tab context for transaction purposes
+            tab = self._current_tab()
+            current_path = tab.current_path if tab else ""
+            
+            # Use 'move' if source and dest are on same device/filesystem (heuristic)
+            # Or just let 'auto' handle it?
+            # 'auto' in FileOperations assumes 'move' and lets it fail over to copy+del
+            
+            # Determine if this is a 'move' or 'copy' intent
+            # Nautilus default behavior:
+            # - Drag within same filesystem -> Move
+            # - Drag across filesystems -> Copy
+            # - Configurable via modifier keys (not yet supported here)
+            
+            mode = "auto"
+            
+            # Start a transaction for the batch
+            # Note: We don't have a transaction ID at start time since handle_drop is synchronous-ish but ops are async
+            # We can start one.
+            tid = self.mw.transaction_manager.startTransaction(f"Drag Drop {len(real_paths)} items")
+            
+            for src in real_paths:
+                # Construct full destination path: dest_dir/filename
+                filename = os.path.basename(src)
+                if not filename: continue
+                
+                final_dest = os.path.join(dest_dir, filename)
+                
+                # Prevent self-move
+                if os.path.abspath(src) == os.path.abspath(final_dest):
+                    continue
+                    
+                self.mw.file_ops.transfer(src, final_dest, mode=mode, transaction_id=tid)

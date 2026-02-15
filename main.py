@@ -54,11 +54,23 @@ def main():
     # This must be done before QQuickStyle is effectively used, though confusingly
     # QQuickStyle.setStyle() also does this. We do both to be safe as per demo.
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
+    
+    # [FIX] Load Custom Configuration (Dense Variant)
+    # Locate the config file relative to this script
+    conf_path = Path(__file__).parent / "ui" / "qtquickcontrols2.conf"
+    if conf_path.exists():
+        os.environ["QT_QUICK_CONTROLS_CONF"] = str(conf_path)
+        print(f"Loaded QML Config: {conf_path}")
+    else:
+        print(f"Warning: QML Config not found at {conf_path}")
+
     QQuickStyle.setStyle("Material")
 
     # 2. Force Fusion Style for Widgets (The Shell)
     # This serves as the base for our QSS patches.
-    app.setStyle("Fusion")
+    # [DISABLED] We disable this to allow QML SystemPalette to inherit the native (GTK) colors,
+    # matching the experiment's look.
+    # app.setStyle("Fusion")
 
     # 3. Apply Modern QSS Patches
     qss_path = Path(__file__).parent / "ui" / "styles" / "modern.qss"

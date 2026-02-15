@@ -164,6 +164,8 @@ class MainWindow(QMainWindow):
             if hasattr(self, '_active_scanner') and self._active_scanner:
                 try:
                     self._active_scanner.filesFound.disconnect(self.status_bar.updateItemCount)
+                    # Also disconnect attribute updates
+                    self._active_scanner.fileAttributeUpdated.disconnect(self.status_bar.updateAttribute)
                 except Exception:
                     pass
             
@@ -230,7 +232,8 @@ class MainWindow(QMainWindow):
     
     @property
     def qml_view(self):
-        return self.tab_manager.current_tab.qml_view if self.tab_manager.current_tab else None
+        # New Architecture: TabManager owns the single QML view
+        return self.tab_manager.qml_view
 
     def closeEvent(self, event):
         self.file_ops.shutdown()
