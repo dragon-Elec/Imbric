@@ -252,8 +252,10 @@ class TransactionManager(QObject):
                 # For Trash: result_path is the source (item trashed) - handled by default logic
                 op.dest = result_path 
                 op.result_path = result_path
+                print(f"[TM] ✓ {op_type.upper()}: {op.src} -> {result_path}")
             else:
                  op.error = message
+                 print(f"[TM] ✗ {op_type.upper()} Failed: {op.src} (Error: {message})")
         
         # Always increment completed_ops count regardless of success
         # This prevents "hanging" transactions if one item fails
@@ -268,6 +270,7 @@ class TransactionManager(QObject):
         if tx.completed_ops >= tx.total_ops:
             tx.status = TransactionStatus.COMPLETED
             self.transactionFinished.emit(tid, "Success")
+            print(f"[TM] Transaction Completed: {tx.description} ({tx.completed_ops} ops)")
             self.historyCommitted.emit(tx)
             del self._active_transactions[tid]
 

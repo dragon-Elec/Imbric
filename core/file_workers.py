@@ -191,7 +191,7 @@ class TransferRunnable(FileOperationRunnable):
                 if self.job.op_type == "move":
                     # Try atomic move first
                     try:
-                        flags = Gio.FileCopyFlags.OVERWRITE if self.job.overwrite else Gio.FileCopyFlags.NONE
+                        flags = (Gio.FileCopyFlags.OVERWRITE if self.job.overwrite else Gio.FileCopyFlags.NONE) | Gio.FileCopyFlags.ALL_METADATA | Gio.FileCopyFlags.NOFOLLOW_SYMLINKS
                         # No fallback yet, we want to detect cross-device
                         src_file.move(dst_file, flags | Gio.FileCopyFlags.NO_FALLBACK_FOR_MOVE, 
                                       self.job.cancellable, self._progress_callback, None)
@@ -199,7 +199,7 @@ class TransferRunnable(FileOperationRunnable):
                         return
                     except GLib.Error as e:
                         # If it's a cross-device move, or directory merge, handle manually
-                        if e.code in [Gio.IOErrorEnum.NOT_SAME_MOUNTPOINT, Gio.IOErrorEnum.WOULD_MERGE, 29]:
+                        if e.code in [Gio.IOErrorEnum.NOT_SUPPORTED, Gio.IOErrorEnum.WOULD_MERGE, 29]:
                             # Cross-device move or merge -> Recursive copy + delete
                             # Note: Recursive transfer logic handles its own errors, we need to catch EXISTS there too?
                             # _recursive_transfer generally doesn't raise EXISTS for children unless it's the root I guess?
@@ -255,7 +255,7 @@ class TransferRunnable(FileOperationRunnable):
 
     def _recursive_transfer(self, source, dest, is_move=False):
         """Unified recursive transfer logic."""
-        info = source.query_info("standard::type,standard::name", Gio.FileQueryInfoFlags.NONE, self.job.cancellable)
+        info = source.query_info("standard::type,standard::name", Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, self.job.cancellable)
         file_type = info.get_file_type()
         
         if file_type == Gio.FileType.DIRECTORY:
@@ -290,7 +290,7 @@ class TransferRunnable(FileOperationRunnable):
                     pass
         else:
             # File Transfer
-            flags = Gio.FileCopyFlags.OVERWRITE if self.job.overwrite else Gio.FileCopyFlags.NONE
+            flags = (Gio.FileCopyFlags.OVERWRITE if self.job.overwrite else Gio.FileCopyFlags.NONE) | Gio.FileCopyFlags.ALL_METADATA | Gio.FileCopyFlags.NOFOLLOW_SYMLINKS
             if is_move:
                 source.move(dest, flags, self.job.cancellable, self._progress_callback, None)
             else:

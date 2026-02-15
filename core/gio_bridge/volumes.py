@@ -59,6 +59,24 @@ class VolumesBridge(QObject):
         # Fallback to string representation
         return gicon.to_string()
 
+    def _get_usage(self, path):
+        """Get filesystem usage stats if mounted."""
+        if not path:
+             return None
+        try:
+            f = Gio.File.new_for_path(path)
+            info = f.query_filesystem_info(
+                f"{Gio.FILE_ATTRIBUTE_FILESYSTEM_SIZE},{Gio.FILE_ATTRIBUTE_FILESYSTEM_FREE}",
+                None
+            )
+            size = info.get_attribute_uint64(Gio.FILE_ATTRIBUTE_FILESYSTEM_SIZE)
+            free = info.get_attribute_uint64(Gio.FILE_ATTRIBUTE_FILESYSTEM_FREE)
+            if size > 0:
+                 return {"total": size, "free": free, "used": size - free}
+        except Exception:
+            pass
+        return None
+
     @Slot(result=list)
     def get_volumes(self):
         """
@@ -66,8 +84,17 @@ class VolumesBridge(QObject):
         """
         items = []
         seen_uuids = set()
+        seen_paths = set()
         
-        # 1. Process Volumes (partitions, physical media)
+        # 1. Pre-process Mounts into a lookup
+        mounts = self.monitor.get_mounts()
+        mount_lookup = {}
+        for m in mounts:
+            muuid = m.get_uuid()
+            if muuid:
+                mount_lookup[muuid] = m
+        
+        # 2. Process Volumes (partitions, physical media)
         volumes = self.monitor.get_volumes()
         for volume in volumes:
             # Prefer UUID, fallback to device identifier
@@ -79,47 +106,68 @@ class VolumesBridge(QObject):
             
             seen_uuids.add(uuid)
             
+            # Check intrinsic mount OR lookup fallback
             mount = volume.get_mount()
+            if not mount and uuid in mount_lookup:
+                mount = mount_lookup[uuid]
+                
             is_mounted = (mount is not None)
             path = mount.get_root().get_path() if is_mounted else ""
-            name = volume.get_name()
-            icon = self._get_icon_name(volume.get_icon())
             
+            if is_mounted and path:
+                seen_paths.add(path)
+                
+            name = volume.get_name()
+            
+            # Custom Icon Logic for Root
+            if is_mounted and path == "/":
+                icon = "root"
+            else:
+                icon = self._get_icon_name(volume.get_icon())
+            
+            usage = self._get_usage(path) if is_mounted else None
+
             items.append({
                 "identifier": uuid,
                 "name": name,
                 "path": path,
                 "icon": icon,
                 "isMounted": is_mounted,
+                "usage": usage,
                 "canMount": volume.can_mount(),
                 "canUnmount": mount.can_unmount() if is_mounted else False,
                 "type": "volume"
             })
             
-        # 2. Process Mounts (network shares, ISOs, etc that might not match a volume)
-        mounts = self.monitor.get_mounts()
+        # 3. Process Remaining Mounts (network shares, ISOs, etc)
         for mount in mounts:
             uuid = mount.get_uuid()
+            root = mount.get_root()
+            path = root.get_path()
             
             # If we already processed this UUID via a Volume, skip
             if uuid and uuid in seen_uuids:
                 continue
+                
+            # If we already processed this Path via a Volume, skip
+            if path and path in seen_paths:
+                continue
             
             # If no UUID, use URI as unique fallback ID
             if not uuid:
-                uuid = mount.get_root().get_uri()
+                uuid = root.get_uri()
 
-            root = mount.get_root()
-            path = root.get_path()
             name = mount.get_name()
             icon = self._get_icon_name(mount.get_icon())
-            
+            usage = self._get_usage(path)
+
             items.append({
                 "identifier": uuid,
                 "name": name,
                 "path": path,
                 "icon": icon,
                 "isMounted": True,
+                "usage": usage,
                 "canMount": False,
                 "canUnmount": mount.can_unmount(),
                 "type": "mount"

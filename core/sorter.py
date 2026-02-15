@@ -2,7 +2,7 @@
 [DONE] Sorter — File Sorting Logic
 
 Provides sorting capabilities for file lists (by name, date, size, type).
-Used by ColumnSplitter before distributing files to columns.
+Used by RowBuilder before distributing files to rows.
 
 Features:
 - Multiple sort keys: Name, Date Modified, Size, Type (extension)
@@ -22,7 +22,7 @@ Usage:
 
 from PySide6.QtCore import QObject, Signal, Slot, Property
 from enum import IntEnum
-from typing import List
+from typing import List, Optional
 import re
 
 
@@ -59,7 +59,7 @@ class Sorter(QObject):
     # -------------------------------------------------------------------------
     
     @Slot(list, result=list)
-    def sort(self, files: List[dict], key: SortKey = None, ascending: bool = None) -> List[dict]:
+    def sort(self, files: List[dict], key: Optional[SortKey] = None, ascending: Optional[bool] = None) -> List[dict]:
         """
         Sort a list of file dicts.
         
