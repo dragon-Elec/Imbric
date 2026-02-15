@@ -13,20 +13,18 @@ Most file managers treat photos like spreadsheet rows.
 Imbric treats them like **what they are**: visual objects with shape, color, and time.
 
 ```
+```
 ┌───────────────────────────────────────────────────────────────┐
 │                             vs.                               │
-│   Traditional Grid                    Imbric Masonry          │
-│                              │                                │
-│   ┌────┐ ┌────┐ ┌────┐       │    ┌────────┐ ┌────┐┌──┐       │
-│   │    │ │    │ │    │       │    │        │ │    ││  │       │
-│   │    │ │    │ │    │       │    │        │ ├────┤│  │       │
-│   └────┘ └────┘ └────┘       │    │        │ │    ││  │       │
-│   ┌────┐ ┌────┐ ┌────┐       │    └────────┘ │    ││  │       │
-│   │    │ │    │ │    │       │    ┌────────┐ └────┘└──┘       │
-│   └────┘ └────┘ └────┘       │    │        │ ┌────────┐       │
-│                              │    └────────┘ │        │       │
-│   Wasted space. ❌           │                                │
-│                              │    Every pixel used. ✓         │
+│   Traditional Grid                    Justified Grid          │
+│                                                               │
+│   [ Grid of boxes ]                   [  Google Photos   ]    │
+│   [  with wasted  ]                   [      Style       ]    │
+│   [     space     ]                   [  Dynamic  Rows   ]    │
+│                                                               │
+│   Wasted space. ❌                                            │
+│                                                               │
+│   Every pixel used. ✓                                         │
 │                                                               │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -34,7 +32,7 @@ Imbric treats them like **what they are**: visual objects with shape, color, and
 <table>
   <tr>
     <td align="center"><strong>Traditional Grid (Nemo)</strong></td>
-    <td align="center"><strong>Imbric Masonry</strong></td>
+    <td align="center"><strong>Imbric Justified Grid</strong></td>
   </tr>
   <tr>
     <td><img src="assets/nemo.png" alt="Nemo" width="100%"/></td>
@@ -50,7 +48,7 @@ Imbric is a **lens**, not an engine. It doesn't reinvent Linux. It *uses* it.
 | -------------- | ------------------------------- | ------------------------------------ |
 | **Thumbnails** | `GnomeDesktop.ThumbnailFactory` | Same cache as Nautilus. Pre-baked.   |
 | **File Ops**   | `Gio` (GLib I/O)                | Kernel-level. Zero Python overhead.  |
-| **Layout**     | Split-Column "Card Dealing"     | Qt's C++ engine. Not JS. Not Python. |
+| **Layout**     | Justified Grid                  | Respects aspect ratios. Zero crop.   |
 | **Sorting**    | `QSortFilterProxyModel`         | C++ side. Instant.                   |
 
 ```
@@ -103,7 +101,7 @@ python3 main.py ~/Pictures
 
 ```
 Phase 1 ███████████████████████████████████████  [DONE]  Native Shell
-Phase 2 ███████████████████████████████████████  [DONE]  Masonry Engine
+Phase 2 ███████████████████████████████████████  [DONE]  Justified Grid Engine
 Phase 3 ███████████████████████████████████████  [DONE]  Thumbnails (GNOME)
 Phase 4 ███████████████████████████████████████  [DONE]  Async I/O & Tabs
 Phase 5 ████████████████████░░░░░░░░░░░░░░░░░░░  [BUSY]  Interactions
