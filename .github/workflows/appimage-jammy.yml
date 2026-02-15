@@ -1,0 +1,100 @@
+name: AppImage (Jammy)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 0.9.0-alpha). Only used for manual test builds.'
+        required: true
+        default: '0.0.0-dev'
+
+env:
+  APP_NAME: imbric
+
+permissions:
+  contents: write
+
+jobs:
+  build-appimage-jammy:
+    runs-on: ubuntu-22.04
+    env:
+      APP_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set Release Version
+        run: |
+          RAW_VERSION="${{ env.APP_VERSION }}"
+          CLEAN_VERSION=$(echo "${RAW_VERSION}" | sed 's/^v//')
+          echo "APP_VERSION=${CLEAN_VERSION}" >> $GITHUB_ENV
+          
+          sed -i "s/version = .*/version = \"${CLEAN_VERSION}\"/" pyproject.toml
+          echo "Patched pyproject.toml with version ${CLEAN_VERSION}"
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-gi \
+            python3-gi-cairo \
+            gir1.2-gnomedesktop-3.0 \
+            gir1.2-glib-2.0 \
+            libcairo2-dev \
+            libgirepository1.0-dev \
+            fd-find \
+            fuse \
+            libfuse2 \
+            librsvg2-bin
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Pin PyGObject because 3.54+ requires libgirepository-2.0 (Jammy only has 1.0)
+          pip install "PyGObject<3.49.0" pycairo
+          pip install -r requirements.txt
+      
+      - name: Install Nuitka and dependencies
+        run: |
+          python -m pip install -U nuitka zstandard
+
+      - name: Build AppImage with Nuitka
+        run: |
+          python3 -m nuitka \
+            --onefile \
+            --enable-plugin=pyside6 \
+            --enable-plugin=gi \
+            --include-qt-plugins=qml \
+            --include-data-dir=ui=ui \
+            --linux-icon=ui/icon.svg \
+            --output-filename=imbric \
+            main.py
+            
+          mv imbric "${{ env.APP_NAME }}-${{ env.APP_VERSION }}-x86_64-jammy.AppImage"
+          ls -lh *.AppImage
+      
+      - name: Upload AppImage to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: "*.AppImage"
+          prerelease: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Upload AppImage as Artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: imbric-appimage-jammy
+          path: "*.AppImage"
