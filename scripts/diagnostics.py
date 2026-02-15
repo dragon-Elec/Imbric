@@ -63,8 +63,18 @@ class MemoryProfiler:
         print("\n--- Active Object Counts (Imbric) ---")
         
         target_classes = [
+            # Core & Infrastructure
             'BrowserTab', 'FileScanner', 'ThumbnailProvider', 
-            'ThumbnailResponse', 'JustifiedView',
+            'ThumbnailResponse', 'JustifiedView', 'RowBuilder',
+            'TransactionManager', 'Transaction', 'UndoManager',
+            'FileMonitor', 'FileWorker', 'ThumbnailCache',
+            
+            # Managers & Models
+            'TabManager', 'TabModel', 'ActionManager', 
+            'FileManager', 'NavigationManager', 'ViewManager',
+            'AppBridge', 'FileSystemModel', 'SidebarModel',
+            
+            # Qt Base
             'QQuickView', 'QImage', 'QNetworkReply'
         ]
         
@@ -79,7 +89,9 @@ class MemoryProfiler:
             except:
                 pass
                 
-        for name, count in counts.most_common():
+        # Sort by count descending
+        sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+        for name, count in sorted_counts:
             print(f"{name:<30}: {count}")
 
         # 3. Tracemalloc Statistics

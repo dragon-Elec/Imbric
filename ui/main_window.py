@@ -132,7 +132,7 @@ class MainWindow(QMainWindow):
 
     def _run_diagnostics(self):
         """Trigger internal memory profiling."""
-        from core.diagnostics import MemoryProfiler
+        from scripts.diagnostics import MemoryProfiler
         MemoryProfiler.print_report()
 
     # --- NAVIGATION ---
