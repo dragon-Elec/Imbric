@@ -14,11 +14,15 @@ Features:
 
 import gi
 gi.require_version('Gio', '2.0')
-from gi.repository import Gio, GLib
+gi.require_version('GnomeDesktop', '3.0')
+from gi.repository import Gio, GLib, GnomeDesktop
+import urllib.parse
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal, Slot, QTimer
+# from PySide6.QtGui import QImageReader # REMOVED: No longer used in main thread
 from core.gio_bridge.count_worker import ItemCountWorker
+from core.gio_bridge.dimension_worker import DimensionWorker
 
 
 class FileScanner(QObject):
@@ -38,7 +42,7 @@ class FileScanner(QObject):
     fileAttributeUpdated = Signal(str, str, object)  # path, attribute_name, value
 
     # Valid visual extensions (thumbnails needed)
-    VISUAL_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.tiff', '.tif', '.ico', '.mp4', '.mkv', '.webm', '.mov', '.avi'}
+    # VISUAL_EXTENSIONS removed in favor of MIME type detection
 
     # Gio attributes to request
     # Active: Used in UI immediately
@@ -65,9 +69,12 @@ class FileScanner(QObject):
         "unix::mode",
         "unix::uid",
         "unix::gid",
+        
+        # Thumbnail info (Active: Native detection)
+        "standard::thumbnail-path"
     ])
 
-    # Batch size increased to 200 to reduce Masonry layout thrashing (O(N^2) sorts)
+    # Batch size for efficient layout updates
     BATCH_SIZE = 200
 
     # [FIX] Timer interval for coalesced emission (reduces layout thrashing)
@@ -92,6 +99,13 @@ class FileScanner(QObject):
         # Background item counter
         self._count_worker = ItemCountWorker(self)
         self._count_worker.countReady.connect(self._on_count_ready)
+
+        # [NEW] Background dimension reader (Async)
+        self._dimension_worker = DimensionWorker(self)
+        self._dimension_worker.dimensionsReady.connect(self._on_dimensions_ready)
+        
+        # [NEW] Shared Thumbnail Factory (Lazy load to avoid overhead if not needed immediately)
+        self._factory = None
 
     @property
     def current_path(self) -> str | None:
@@ -252,23 +266,56 @@ class FileScanner(QObject):
             if name is None:
                 continue
             
-            # Extension & Visual Check
-            lower_name = name.lower()
-            is_visual = False
-            for ext in self.VISUAL_EXTENSIONS:
-                if lower_name.endswith(ext):
-                    is_visual = True
-                    break
-            
-            # Full path
+            # Extension & Visual Check -> NATIVE THUMBNAIL LOGIC
+            # Full path (MOVED UP: Required for Native Thumbnail Logic)
             if parent_path == '/':
                 full_path = '/' + name
             else:
                 full_path = parent_path + '/' + name
-            
-            # Type detection
+
+            # Type detection (MOVED UP: Required for can_thumbnail logic)
             file_type = info.get_file_type()
             is_dir = file_type == Gio.FileType.DIRECTORY
+            
+            # 1. Initialize factory if needed
+            if self._factory is None:
+                self._factory = GnomeDesktop.DesktopThumbnailFactory.new(GnomeDesktop.DesktopThumbnailSize.LARGE)
+
+            mime_type = info.get_content_type() or ""
+            
+            # 2. Check for existing thumbnail (Fastest path)
+            thumb_path = info.get_attribute_byte_string("standard::thumbnail-path")
+            
+            is_visual = False
+            if thumb_path:
+                is_visual = True
+            else:
+                # 3. Ask the Oracle (Can we thumbnail this?)
+                # We need a URI for this check
+                uri = "file://" + urllib.parse.quote(full_path)
+                mtime = info.get_modification_date_time().to_unix() if info.get_modification_date_time() else 0
+                
+                # Only check if it's a file (directories don't get thumbnails via this factory usually)
+                if not is_dir:
+                    try:
+                        is_visual = self._factory.can_thumbnail(uri, mime_type, mtime)
+                    except Exception:
+                        pass
+            
+            # is_visual tells the UI to request a thumbnail.
+            # should_read_dimensions tells the backend to read the header for Aspect Ratio.
+            # We ONLY read dims for actual images. Videos/PDFs get thumbnails but stay square.
+            should_read_dimensions = mime_type.startswith("image/")
+            
+            # Full path (ALREADY CALCULATED ABOVE)
+            # if parent_path == '/':
+            #     full_path = '/' + name
+            # else:
+            #     full_path = parent_path + '/' + name
+            
+            # Type detection (ALREADY CALCULATED ABOVE)
+            # file_type = info.get_file_type()
+            # is_dir = file_type == Gio.FileType.DIRECTORY
             is_symlink = info.get_is_symlink()
             
             # Symlink target (empty string if not a symlink)
@@ -281,7 +328,7 @@ class FileScanner(QObject):
             size = info.get_size()
             
             # MIME type (e.g., "image/jpeg", "inode/directory")
-            mime_type = info.get_content_type() or ""
+            # Already fetched above for is_visual check
             
             # Timestamps
             date_modified = self._get_timestamp(info.get_modification_date_time())
@@ -336,10 +383,17 @@ class FileScanner(QObject):
                 # Directory info (Active)
                 "childCount": child_count,
                 
-                # Thumbnail dimensions (populated by UI after load)
+                # Thumbnail dimensions (populated by header read)
                 "width": 0,
                 "height": 0,
             })
+            
+            # [NEW] Queue dimension reading (Async)
+            # Only for supported image types (videos/PDFs stay square)
+            if should_read_dimensions:
+                self._dimension_worker.enqueue(full_path)
+            
+            # width/height default to 0 initially (see lines 341-342)
         
         return batch
 
@@ -366,6 +420,12 @@ class FileScanner(QObject):
     def _on_count_ready(self, path: str, count: int) -> None:
         """Called when ItemCountWorker finishes counting a directory."""
         self.fileAttributeUpdated.emit(path, "childCount", count)
+
+    def _on_dimensions_ready(self, path: str, width: int, height: int) -> None:
+        """Called when DimensionWorker finishes reading header."""
+        # Update width and height
+        # [FIX] optimized: emit single signal to prevent double layout invalidation
+        self.fileAttributeUpdated.emit(path, "dimensions", {"width": width, "height": height})
 
     def _close_enumerator(self, enumerator: Gio.FileEnumerator) -> None:
         """Safely close the enumerator to release resources."""

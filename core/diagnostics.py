@@ -64,7 +64,7 @@ class MemoryProfiler:
         
         target_classes = [
             'BrowserTab', 'FileScanner', 'ThumbnailProvider', 
-            'ThumbnailResponse', 'ColumnSplitter', 'MasonryView',
+            'ThumbnailResponse', 'JustifiedView',
             'QQuickView', 'QImage', 'QNetworkReply'
         ]
         

@@ -19,7 +19,7 @@ import os
 import urllib.parse
 
 # Supported image extensions that Qt can load directly
-IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.tiff', '.tif', '.ico'}
+# IMAGE_EXTENSIONS removed in favor of MIME fallback
 
 
 class ThumbnailResponse(QQuickImageResponse):
@@ -74,7 +74,7 @@ class ThumbnailRunnable(QRunnable):
         requested_size = self._response._requested_size
         factory = self._response._factory
         
-        target_size = requested_size if requested_size.isValid() else QSize(128, 128)
+        target_size = requested_size if requested_size.isValid() else QSize(256, 256)
 
         # [NEW] Check if this is a generic MIME request
         if file_path.startswith("mime/"):
@@ -127,11 +127,22 @@ class ThumbnailRunnable(QRunnable):
         is_locked = not os.access(resolved_path, os.W_OK)
         
         # Non-image files: Get MIME-based icon [+ Lock if needed]
-        if ext not in IMAGE_EXTENSIONS:
-            # Non-visual files are handled by QML via image://theme/
-            # We return generic icon only as a fallback if caller insists on using this provider
-            self._response.set_image(self._get_themed_icon("application-x-generic", target_size))
-            return
+        # Non-image files: Get MIME-based icon [+ Lock if needed]
+        # [FIX] Trust the MIME type. If it's a known image type or video, we try to thumb it.
+        # Use Gio to detect if we should fallback.
+        
+        # If we have no extension, we rely purely on MIME type (which factory handles).
+        # We only fallback if it's NOT an image/video MIME type.
+        
+        try:
+             # Re-query MIME if not passed (though ideally we should pass it)
+             # For now, let's treat "application/octet-stream" as a potential fallback
+             pass
+        except:
+             pass
+
+        # We allow the factory to attempt ANY file. 
+        # Only if it fails will we show the generic icon later.
         
         # --- 4. HANDLE IMAGES ---
         # Try GNOME thumbnail cache
@@ -148,39 +159,56 @@ class ThumbnailRunnable(QRunnable):
         if not thumb_path:
             # Generate thumbnail
             try:
-                mime_map = {
-                    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-                    '.png': 'image/png', '.gif': 'image/gif',
-                    '.bmp': 'image/bmp', '.webp': 'image/webp',
-                    '.svg': 'image/svg+xml', '.tiff': 'image/tiff',
-                    '.tif': 'image/tiff', '.ico': 'image/x-icon',
-                }
-                mime_type = mime_map.get(ext, 'image/png')
+                # Use Gio to detect the actual content type content_type
+                try:
+                    # We create a new file object for the path to query its content type
+                    # This is fast and local
+                    gfile = Gio.File.new_for_path(resolved_path) 
+                    info = gfile.query_info("standard::content-type", Gio.FileQueryInfoFlags.NONE, None)
+                    mime_type = info.get_content_type()
+                except Exception:
+                    # Fallback if Gio fails
+                    mime_map = {
+                        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                        '.png': 'image/png', '.gif': 'image/gif',
+                        '.bmp': 'image/bmp', '.webp': 'image/webp',
+                        '.svg': 'image/svg+xml', '.tiff': 'image/tiff',
+                        '.tif': 'image/tiff', '.ico': 'image/x-icon',
+                    }
+                    mime_type = mime_map.get(ext, 'image/png')
                 
-                pixbuf = factory.generate_thumbnail(uri, mime_type)
-                if pixbuf:
-                    factory.save_thumbnail(pixbuf, uri, mtime)
-                    thumb_path = factory.lookup(uri, mtime)
+                if mime_type:
+                    pixbuf = factory.generate_thumbnail(uri, mime_type)
+                    if pixbuf:
+                        factory.save_thumbnail(pixbuf, uri, mtime)
+                        thumb_path = factory.lookup(uri, mtime) 
             except Exception:
                 pass 
         
         # Load from thumbnail or original
+        is_from_cache = False
         if thumb_path and os.path.exists(thumb_path):
             img = QImage(thumb_path)
+            is_from_cache = True
         else:
             # FIX: Memory-efficient loading via QImageReader
             from PySide6.QtGui import QImageReader
             reader = QImageReader(resolved_path)
-            if requested_size.isValid():
-                # Decode at target size to avoid full-bitmap allocation
-                reader.setScaledSize(requested_size)
+            
+            # [SAFETY] Always limit decode size for raw files to prevent RAM explosion
+            # If requested_size is invalid (removed from QML for quality), use target_size (256)
+            decode_size = requested_size if requested_size.isValid() else target_size
+            reader.setScaledSize(decode_size)
+            
             img = reader.read()
-            if img.isNull():
-                img = self._get_themed_icon("image-x-generic", target_size)
         
         if img.isNull():
-            img = self._get_themed_icon("image-x-generic", target_size)
-        elif requested_size.isValid():
+             # [FIX] If thumbnailing failed completely, fallback to MIME icon
+            img = self._get_mime_icon(resolved_path, target_size)
+            
+        elif requested_size.isValid() and not is_from_cache:
+            # Only scale if we loaded a raw original image.
+            # If it's a cached thumbnail (256px), return as-is for HiDPI sharpness.
             from PySide6.QtCore import Qt
             img = img.scaled(requested_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             
