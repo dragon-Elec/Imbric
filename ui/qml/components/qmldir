@@ -3,3 +3,9 @@ RubberBand 1.0 RubberBand.qml
 SelectionModel 1.0 SelectionModel.qml
 RenameField 1.0 RenameField.qml
 FileDelegate 1.0 FileDelegate.qml
+RowDelegate 1.0 RowDelegate.qml
+GtkScrollBar 1.0 GtkScrollBar.qml
+GtkTabBar 1.0 GtkTabBar.qml
+GtkTabButton 1.0 GtkTabButton.qml
+Sidebar 1.0 Sidebar.qml
+SidebarItem 1.0 SidebarItem.qml
