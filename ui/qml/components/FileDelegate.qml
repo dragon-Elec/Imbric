@@ -3,17 +3,16 @@ import QtQuick.Controls
 import components as Components
 
 /**
- * FileDelegate — Reusable file/folder item for MasonryView
+ * FileDelegate — Reusable file/folder item for JustifiedView
  * 
- * Phase 1: ✅ Visuals (Image, Icon, Label)
- * Phase 2: ✅ Interaction handlers (DragHandler, DropArea)
- * Phase 3: ✅ RenameField integrated
+ * Accepts explicit dimensions from parent (JustifiedView/RowDelegate).
+ * Does NOT calculate its own height — that's the parent's job.
  */
 Item {
     id: delegateRoot
 
     Component.onCompleted: {
-        console.log("[FileDelegate] Created for:", path, "Width:", width, "ImgHeight:", imgHeight)
+        // console.log("[FileDelegate] Created for:", path, "Width:", width, "Height:", imageHeight)
     }
 
 
@@ -32,7 +31,10 @@ Item {
     // =========================================================================
     // 2. VIEW LAYOUT CONTRACT (Must be passed explicitly from parent)
     // =========================================================================
-    property real columnWidth: 200
+    required property int imageHeight  // Fixed height from JustifiedView/RowDelegate
+    property real columnWidth: 200     // Width calculated from aspect ratio
+    property int thumbnailMaxWidth: 0   // 0 = no cap (icons/vectors can scale)
+    property int thumbnailMaxHeight: 0  // Actual thumbnail cache dimensions
 
     // =========================================================================
     // 3. STATE PROPS (Passed from parent for styling)
@@ -46,6 +48,7 @@ Item {
     // =========================================================================
     property var bridge: null
     property var selModel: null
+    property var rowBuilder: null
 
     // =========================================================================
     // 5. SIGNALS (For parent to handle)
@@ -63,23 +66,9 @@ Item {
     
     readonly property bool isBeingRenamed: renamingPath === path
 
-    readonly property real imgHeight: {
-        if (isDir) return width * 0.8
-        
-        // 1. Fast Path: Use model dimensions if known (stable layout)
-        if (modelWidth > 0 && modelHeight > 0) 
-            return (modelHeight / modelWidth) * width
-        
-        // 2. Deferred Path: Use loaded thumbnail dimensions
-        if (img.status === Image.Ready && img.implicitWidth > 0)
-            return (img.implicitHeight / img.implicitWidth) * width
-            
-        // 3. Loading State: Square placeholder
-        return width
-    }
-
+    // Fixed height from parent (no dynamic calculation)
     readonly property int footerHeight: 36
-    height: imgHeight + footerHeight
+    height: imageHeight + footerHeight
     
     // Expose containsDrag for parent to use in selection logic if needed
     readonly property bool containsDrag: itemDropArea.containsDrag
@@ -103,9 +92,9 @@ Item {
         // 2. Drag Over Folder -> Highlight (Visual Feedback)
         // 3. Hover -> Light tint
         color: {
-            if (delegateRoot.selected) return activePalette.highlight
-            if (delegateRoot.isDir && itemDropArea.containsDrag) return activePalette.highlight
-            if (delegateMouseArea.containsMouse) return Qt.rgba(activePalette.text.r, activePalette.text.g, activePalette.text.b, 0.1)
+            if (delegateRoot.selected) return Qt.alpha(activePalette.highlight, 0.4)
+            if (delegateRoot.isDir && itemDropArea.containsDrag) return Qt.alpha(activePalette.highlight, 0.6)
+            if (delegateHoverHandler.hovered) return Qt.rgba(activePalette.text.r, activePalette.text.g, activePalette.text.b, 0.1)
             return "transparent"
         }
         
@@ -113,65 +102,72 @@ Item {
         opacity: (cutPaths && cutPaths.indexOf(path) >= 0) ? 0.5 : 1.0
         
         // Photo Thumbnail (Async, Cached Bitmap)
-        Image {
-            id: img
+        // Photo Thumbnail (Async, Cached Bitmap)
+        // [FIX] Letterboxing Container
+        // This Item defines the "Active Area" of the cell.
+        Item {
+            id: imgContainer
             visible: isVisual
+            
+            // Container fills the cell space minus padding
             width: parent.width - 8
-            height: delegateRoot.imgHeight - 8
+            height: delegateRoot.imageHeight - 8
+            
             anchors.top: parent.top
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.topMargin: 4
             
-            source: isVisual ? "image://thumbnail/" + path : ""
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            cache: true
-            
-            // MEMORY FIX: Downsample large photos to display size
-            // MEMORY FIX: Downsample large photos to display size
-            
-            // LOGIC:
-            // 1. If we know aspect ratio (Fast Path), request exact size -> Efficient
-            // 2. If unknown (Slow Path), request FULL size (undefined) -> Ensures implicit properties are populated
-            //    (Passing 0 height causes some Providers to return empty result)
-            
-            sourceSize: (modelWidth > 0 && modelHeight > 0) 
-                        ? Qt.size(width, (modelHeight / modelWidth) * width) 
-                        : undefined
-
-            onStatusChanged: console.log("[Image]", path, "Status:", status, "Implicit:", implicitWidth, "x", implicitHeight)
-            onSourceSizeChanged: console.log("[Image]", path, "SourceSize:", sourceSize)
-
-            // SHIMMER EFFECT: Visual feedback during loading
-            // sourceSize.height removal avoids "Binding loop" circle (Size -> Layout -> Size)
-
-            // SHIMMER EFFECT: Visual feedback during loading
-            Rectangle {
-                anchors.fill: parent
-                color: activePalette.midlight
-                visible: img.status === Image.Loading
+            Image {
+                id: img
                 
-                Gradient {
-                    id: shimmerGradient
-                    orientation: Gradient.Horizontal
-                    GradientStop { position: 0.0; color: "transparent" }
-                    GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.3) }
-                    GradientStop { position: 1.0; color: "transparent" }
-                }
+                // [FIX] Dynamic Resolution Cap
+                readonly property int maxCap: Math.max(delegateRoot.thumbnailMaxWidth, delegateRoot.thumbnailMaxHeight)
                 
+                width: maxCap > 0 ? Math.min(parent.width, maxCap) : parent.width
+                height: maxCap > 0 ? Math.min(parent.height, maxCap) : parent.height
+                
+                anchors.centerIn: parent
+                
+                source: isVisual ? (bridge ? bridge.getThumbnailPath(path) : "") : ""
+                
+                // Use Fit to ensure we see the whole image within our box
+                fillMode: Image.PreserveAspectFit
+                
+                asynchronous: true
+                cache: true
+                mipmap: false // [FIX] Disabled for sharper downscaling (matches Nemo)
+                
+                // Request at fixed display size for efficiency
+                // sourceSize: Qt.size(width, height)
+
+                // SHIMMER EFFECT: Visual feedback during loading
                 Rectangle {
-                    id: shimmerBar
-                    width: parent.width
-                    height: parent.height
-                    gradient: shimmerGradient
-                    opacity: 0.5
+                    anchors.fill: parent
+                    color: activePalette.midlight
+                    visible: img.status === Image.Loading
                     
-                    NumberAnimation on x {
-                        from: -shimmerBar.width
-                        to: shimmerBar.width
-                        duration: 1000
-                        loops: Animation.Infinite
-                        running: img.status === Image.Loading
+                    Gradient {
+                        id: shimmerGradient
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0.0; color: "transparent" }
+                        GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.3) }
+                        GradientStop { position: 1.0; color: "transparent" }
+                    }
+                    
+                    Rectangle {
+                        id: shimmerBar
+                        width: parent.width
+                        height: parent.height
+                        gradient: shimmerGradient
+                        opacity: 0.5
+                        
+                        NumberAnimation on x {
+                            from: -shimmerBar.width
+                            to: shimmerBar.width
+                            duration: 1000
+                            loops: Animation.Infinite
+                            running: img.status === Image.Loading
+                        }
                     }
                 }
             }
@@ -182,7 +178,7 @@ Item {
             id: themeIcon
             visible: !isVisual
             width: parent.width - 8
-            height: delegateRoot.imgHeight - 8
+            height: delegateRoot.imageHeight - 8
             anchors.top: parent.top
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.topMargin: 4
@@ -214,9 +210,7 @@ Item {
                 anchors.fill: parent
                 text: name
                 visible: !delegateRoot.isBeingRenamed
-                color: (delegateRoot.selected || (delegateRoot.isDir && itemDropArea.containsDrag)) 
-                       ? activePalette.highlightedText 
-                       : activePalette.text
+                color: activePalette.text
                 font.pixelSize: 12
                 elide: Text.ElideMiddle
                 horizontalAlignment: Text.AlignHCenter
@@ -251,20 +245,58 @@ Item {
     // =========================================================================
     
     // 1. MOUSE AREA (Handles Clicks & Context Menu locally)
-    MouseArea {
-        id: delegateMouseArea
-        anchors.fill: parent
-        acceptedButtons: Qt.LeftButton | Qt.RightButton
-        hoverEnabled: true // For hover styling
+    // 1. INPUT HANDLERS (Replaces MouseArea for non-blocking interaction)
+    
+    // 1a. Hover Handler (Visual Feedback)
+    HoverHandler {
+        id: delegateHoverHandler
+        // No blocking, purely for hover state detection
+    }
 
-        onClicked: (mouse) => {
-            console.log("[Delegate] Clicked:", path, "Button:", mouse.button)
-            delegateRoot.clicked(mouse.button, mouse.modifiers)
+    // 1b. Left Click Handler (Single & Double Click)
+    TapHandler {
+        id: leftClickHandler
+        acceptedButtons: Qt.LeftButton
+        gesturePolicy: TapHandler.ReleaseWithinBounds // EXCLUSIVE GRAB: Helper stops propagation to parent handlers upon release
+        acceptedModifiers: Qt.KeyboardModifierMask // Allow Ctrl, Shift, etc. to be captured by this handler
+
+        onTapped: (eventPoint, button) => {
+            console.log("[FileDelegate] TapHandler Tapped:", path)
+            console.log("  - Button:", button)
+            console.log("  - Modifiers:", eventPoint.modifiers)
+            console.log("  - Qt.LeftButton:", Qt.LeftButton)
+            
+            // Modifiers access logic
+            // Try handler's own point property (often more reliable than signal argument in some Qt versions)
+            let mod = eventPoint.modifiers
+            if (mod === undefined) {
+                 mod = leftClickHandler.point.modifiers
+                 console.log("  - Fallback to leftClickHandler.point.modifiers:", mod)
+            }
+            if (mod === undefined) {
+                 mod = Qt.application.keyboardModifiers
+                 console.log("  - Fallback to Qt.application.keyboardModifiers:", mod)
+            }
+             
+            delegateRoot.clicked(Qt.LeftButton, mod !== undefined ? mod : 0)
         }
 
-        onDoubleClicked: (mouse) => {
-             console.log("[Delegate] DoubleClicked:", path)
+        onDoubleTapped: (eventPoint, button) => {
+             console.log("[Delegate] Double Click:", path)
              delegateRoot.doubleClicked()
+        }
+    }
+
+    // 1c. Right Click Handler (Context Menu)
+    TapHandler {
+        id: rightClickHandler
+        acceptedButtons: Qt.RightButton
+        gesturePolicy: TapHandler.WithinBounds // More forgiving than DragThreshold
+        acceptedModifiers: Qt.KeyboardModifierMask
+
+        onTapped: (eventPoint, button) => {
+            console.log("[Delegate] Right Click:", path)
+            delegateRoot.clicked(Qt.RightButton, eventPoint.modifiers)
         }
     }
 

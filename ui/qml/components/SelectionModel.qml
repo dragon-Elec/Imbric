@@ -23,6 +23,10 @@ QtObject {
     // --- Selection State ---
     property var selection: []
     
+    onSelectionChanged: {
+        // console.log("[SelectionModel] Selection Changed:", JSON.stringify(selection))
+    }
+    
     // Anchor for Shift+Click range selection
     property string anchorPath: ""
     
@@ -37,11 +41,14 @@ QtObject {
      * @param path - The clicked item
      * @param ctrl - Ctrl key is held (bitmask, truthy if held)
      * @param shift - Shift key is held (bitmask, truthy if held)
-     * @param allItems - Array of all items in order (from ColumnSplitter.getAllItems())
+     * @param allItems - Array of all items in order (from RowBuilder.getAllItems())
      */
     function handleClick(path, ctrl, shift, allItems) {
         var ctrlHeld = !!ctrl
         var shiftHeld = !!shift
+        
+        // console.log("[SelectionModel] handleClick:", path, "Ctrl:", ctrlHeld, "Shift:", shiftHeld)
+        
         
         if (shiftHeld && anchorPath) {
             // Shift+Click or Ctrl+Shift+Click: Range selection
