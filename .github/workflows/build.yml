@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version number (e.g., 0.5.0-alpha)'
+        description: 'Version number (e.g., 0.9.0-alpha). Only used for manual test builds.'
         required: true
         default: '0.0.0-dev'
 
@@ -26,6 +26,17 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
+      - name: Set Release Version
+        run: |
+          # Extract version from tag (v0.6.0 -> 0.6.0) or input
+          RAW_VERSION="${{ env.APP_VERSION }}"
+          CLEAN_VERSION=$(echo "${RAW_VERSION}" | sed 's/^v//')
+          echo "APP_VERSION=${CLEAN_VERSION}" >> $GITHUB_ENV
+          
+          # Patch pyproject.toml to match release version
+          sed -i "s/version = .*/version = \"${CLEAN_VERSION}\"/" pyproject.toml
+          echo "Patched pyproject.toml with version ${CLEAN_VERSION}"
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -50,6 +61,9 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
+          # Explicitly install PyGObject in the venv so Nuitka can find it
+          # (depends on libcairo2-dev and libgirepository1.0-dev installed above)
+          pip install PyGObject pycairo
           pip install -r requirements.txt
       
       - name: Install Nuitka and dependencies
@@ -104,6 +118,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set Release Version
+        run: |
+          # Extract version from tag (v0.6.0 -> 0.6.0) or input
+          RAW_VERSION="${{ env.VERSION }}"
+          CLEAN_VERSION=$(echo "${RAW_VERSION}" | sed 's/^v//')
+          echo "VERSION=${CLEAN_VERSION}" >> $GITHUB_ENV
+          
+          # Patch pyproject.toml to match release version (for consistency)
+          sed -i "s/version = .*/version = \"${CLEAN_VERSION}\"/" pyproject.toml
       
       - name: Install build tools
         run: |
@@ -117,10 +141,6 @@ jobs:
       
       - name: Prepare files
         run: |
-          # Strip 'v' prefix from version if present
-          export VERSION=$(echo "${{ env.VERSION }}" | sed 's/^v//')
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          
           # Create launcher script
           mkdir -p dist
           cat > dist/imbric-launcher << 'EOF'
@@ -133,8 +153,69 @@ jobs:
           # Convert SVG to PNG for icon
           rsvg-convert -w 256 -h 256 ui/icon.svg -o dist/imbric-256.png || true
       
+
+      - name: Generate NFPM Config
+        run: |
+          cat > nfpm.yaml << EOF
+          name: "imbric"
+          arch: "amd64"
+          platform: "linux"
+          version: "${VERSION}"
+          release: "1"
+          section: "utils"
+          priority: "optional"
+          maintainer: "Ray <ray@imbric.app>"
+          description: "Experimental file manager for the Linux desktop."
+          vendor: "Imbric"
+          homepage: "https://github.com/dragon-Elec/Imbric"
+          license: "MIT"
+          
+          depends:
+            - python3 (>= 3.10)
+            - python3-pyside6
+            - python3-gi
+            - gir1.2-gnomedesktop-3.0
+            - python3-psutil
+          
+          recommends:
+            - fd-find
+          
+          contents:
+            - src: "core"
+              dst: "/usr/lib/imbric/core"
+              type: tree
+            
+            - src: "ui"
+              dst: "/usr/lib/imbric/ui"
+              type: tree
+            
+            - src: "main.py"
+              dst: "/usr/lib/imbric/main.py"
+            
+            # Desktop integration
+            - src: "ui/imbric.desktop"
+              dst: "/usr/share/applications/imbric.desktop"
+            
+            # Icons
+            - src: "dist/imbric-256.png"
+              dst: "/usr/share/icons/hicolor/256x256/apps/imbric.png"
+            
+            - src: "ui/icon.svg"
+              dst: "/usr/share/icons/hicolor/scalable/apps/imbric.svg"
+            
+            # Launcher script
+            - src: "dist/imbric-launcher"
+              dst: "/usr/bin/imbric"
+              file_info:
+                mode: 0755
+          EOF
+
       - name: Build .deb with NFPM
         run: |
+          # Verify config existence and content (debug)
+          ls -l nfpm.yaml
+          
+          # Run build using the generated config and environment variables
           nfpm pkg --packager deb --target dist/
       
       - name: Upload .deb to Release
