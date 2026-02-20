@@ -31,7 +31,13 @@ class TabController(QObject):
         self.scanner.filesFound.connect(self._on_files_found)
         self.scanner.scanFinished.connect(self._on_scan_finished)
         self.scanner.fileAttributeUpdated.connect(self.row_builder.updateItem)
+        self.scanner.singleFileScanned.connect(self._on_single_file_scanned)
         self.selectAllRequested.connect(self.row_builder.selectAllRequested)
+        
+        # 1.5. FileMonitor -> Surgical Updates
+        self.mw.file_monitor.fileCreated.connect(self._on_file_created)
+        self.mw.file_monitor.fileDeleted.connect(self._on_file_deleted)
+        self.mw.file_monitor.fileRenamed.connect(self._on_file_renamed)
         
         # 2. Bridge reference
         # Duck-type the bridge's tab reference
@@ -42,6 +48,18 @@ class TabController(QObject):
         self.future_stack = []
         self._is_history_nav = False
         self._current_session_id = ""
+        self._selection = []
+
+    @property
+    def selection(self):
+        """Returns the current list of selected file paths."""
+        return self._selection
+
+    @Slot(list)
+    def updateSelection(self, paths):
+        """Receive selection updates from QML."""
+        self._selection = paths
+
 
     @Property(str, notify=pathChanged)
     def currentPath(self):
@@ -114,6 +132,31 @@ class TabController(QObject):
             return
         self.row_builder.appendFiles(batch)
     
+    def _on_single_file_scanned(self, session_id: str, item: dict):
+        if session_id != self._current_session_id:
+            return
+        print(f"[DEBUG-SURGICAL] TabController: Received single file scan for {item.get('path')}")
+        self.row_builder.addSingleItem(item)
+
+    @Slot(str)
+    def _on_file_created(self, path: str):
+        print(f"[DEBUG-SURGICAL] TabController: _on_file_created: {path} | Current path: {self._current_path}")
+        if os.path.dirname(path) == os.path.abspath(self._current_path):
+            self.scanner.scan_single_file(path)
+
+    @Slot(str)
+    def _on_file_deleted(self, path: str):
+        print(f"[DEBUG-SURGICAL] TabController: _on_file_deleted: {path} | Current path: {self._current_path}")
+        if os.path.dirname(path) == os.path.abspath(self._current_path):
+            self.row_builder.removeSingleItem(path)
+
+    @Slot(str, str)
+    def _on_file_renamed(self, old_path: str, new_path: str):
+        print(f"[DEBUG-SURGICAL] TabController: _on_file_renamed: {old_path} -> {new_path}")
+        if os.path.dirname(old_path) == os.path.abspath(self._current_path):
+            self.row_builder.removeSingleItem(old_path)
+            self.scanner.scan_single_file(new_path)
+
     def _on_scan_finished(self, session_id: str):
         if session_id != self._current_session_id:
             return
@@ -127,6 +170,15 @@ class TabController(QObject):
     def cleanup(self):
         """Cleanup resources when tab is closed."""
         self.scanner.cancel()
+        
+        # Disconnect surgical updates
+        try: self.mw.file_monitor.fileCreated.disconnect(self._on_file_created)
+        except: pass
+        try: self.mw.file_monitor.fileDeleted.disconnect(self._on_file_deleted)
+        except: pass
+        try: self.mw.file_monitor.fileRenamed.disconnect(self._on_file_renamed)
+        except: pass
+            
         try:
             self.scanner.filesFound.disconnect()
         except: pass

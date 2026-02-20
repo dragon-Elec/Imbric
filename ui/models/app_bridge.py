@@ -141,8 +141,13 @@ class AppBridge(QObject):
     @Slot(str, result=str)
     def getThumbnailPath(self, path: str) -> str:
         """
-        Check if a native GNOME thumbnail exists for the file.
+        [DEPRECATED] Check if a native GNOME thumbnail exists for the file.
         Returns direct file:// URL if cached, else fallback to image:// provider.
+        
+        NOTE: This method is no longer called from QML during scroll.
+        Thumbnail URL resolution has been moved to RowBuilder._resolve_thumbnail_url()
+        which pre-computes the URL at load time, eliminating blocking I/O from
+        the render path. Kept for backward compatibility.
         """
         import hashlib
         import urllib.parse

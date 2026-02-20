@@ -18,6 +18,7 @@ gi.require_version('GnomeDesktop', '3.0')
 from gi.repository import Gio, GLib, GnomeDesktop
 import urllib.parse
 from uuid import uuid4
+import os
 
 from PySide6.QtCore import QObject, Signal, Slot, QTimer
 # from PySide6.QtGui import QImageReader # REMOVED: No longer used in main thread
@@ -40,6 +41,7 @@ class FileScanner(QObject):
     scanFinished = Signal(str)       # (session_id)
     scanError = Signal(str)
     fileAttributeUpdated = Signal(str, str, object)  # path, attribute_name, value
+    singleFileScanned = Signal(str, dict) # session_id, item dict
 
     # Valid visual extensions (thumbnails needed)
     # VISUAL_EXTENSIONS removed in favor of MIME type detection
@@ -153,6 +155,27 @@ class FileScanner(QObject):
             self._on_enumerate_ready,
             cancellable # Pass token as user_data
         )
+
+    @Slot(str)
+    def scan_single_file(self, path: str) -> None:
+        """
+        Scans a single file synchronously and emits singleFileScanned.
+        Used for surgical UI updates when a file is created/copied.
+        """
+        gfile = Gio.File.new_for_path(path)
+        try:
+            info = gfile.query_info(
+                self.QUERY_ATTRIBUTES,
+                Gio.FileQueryInfoFlags.NONE,
+                None
+            )
+            # Use the existing _process_batch logic (it expects a list of infos and parent dir)
+            parent_path = os.path.dirname(path)
+            batch = self._process_batch([info], parent_path)
+            if batch:
+                self.singleFileScanned.emit(self._session_id, batch[0])
+        except GLib.Error as e:
+            print(f"[FileScanner] Could not scan single file {path}: {e}")
 
     @Slot()
     def cancel(self) -> None:

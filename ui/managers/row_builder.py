@@ -14,6 +14,9 @@ Algorithm:
 
 from PySide6.QtCore import QObject, Slot, Signal, Property, QTimer
 from core.sorter import Sorter
+import hashlib
+import urllib.parse
+import os
 
 class RowBuilder(QObject):
     rowsChanged = Signal()
@@ -156,6 +159,32 @@ class RowBuilder(QObject):
     # GNOME Thumbnail Cache Size (LARGE = 256px longest edge)
     THUMBNAIL_CACHE_SIZE = 256
     
+    # GNOME thumbnail cache directory (resolved once)
+    _THUMB_CACHE_DIR = os.path.expanduser("~/.cache/thumbnails/large")
+
+    @staticmethod
+    def _resolve_thumbnail_url(path: str) -> str:
+        """
+        Pre-compute the thumbnail URL for a visual item.
+        
+        Checks the GNOME thumbnail cache (MD5 of URI -> ~/.cache/thumbnails/large/).
+        Returns a direct file:// URL if cached, else falls back to the async
+        image://thumbnail/ provider.
+        
+        This runs once per item at load time, removing all blocking I/O
+        from the QML render path.
+        """
+        try:
+            uri = "file://" + urllib.parse.quote(path)
+            md5_hash = hashlib.md5(uri.encode('utf-8')).hexdigest()
+            thumb_path = os.path.join(RowBuilder._THUMB_CACHE_DIR, f"{md5_hash}.png")
+            # [DEBUG] Force disable direct file access to test if it causes lag
+            # if os.path.exists(thumb_path):
+            #    return f"file://{thumb_path}"
+        except Exception:
+            pass
+        return f"image://thumbnail/{path}"
+
     @Slot(list)
     def appendFiles(self, new_files: list) -> None:
         """Append files (streaming mode)."""
@@ -174,6 +203,12 @@ class RowBuilder(QObject):
             
             # Calculate thumbnail cap dimensions
             self._calculate_thumbnail_cap(item)
+            
+            # [PERF] Pre-compute thumbnail URL (removes blocking I/O from QML render path)
+            if item.get("isVisual") and path:
+                item["thumbnailUrl"] = self._resolve_thumbnail_url(path)
+            else:
+                item["thumbnailUrl"] = ""
         
         self._items.extend(new_files)
         self._sorted_items.extend(new_files)
@@ -223,6 +258,47 @@ class RowBuilder(QObject):
         self._rows = []
         self._is_loading = False
         self.rowsChanged.emit()
+
+    @Slot(dict)
+    def addSingleItem(self, item: dict) -> None:
+        """Surgically insert a single file without forcing a full scan reload."""
+        path = item.get("path")
+        print(f"[DEBUG-SURGICAL] RowBuilder: addSingleItem called for {path}")
+        if not path: return
+        
+        # Check if already exists (debounce protection)
+        for existing in self._items:
+            if existing.get("path") == path:
+                print(f"[DEBUG-SURGICAL] RowBuilder: Item already exists, ignoring {path}")
+                return
+                
+        # Apply pending dimensions
+        if path in self._pending_dimensions:
+            w, h = self._pending_dimensions.pop(path)
+            item["width"] = w
+            item["height"] = h
+            
+        self._calculate_thumbnail_cap(item)
+        if item.get("isVisual"):
+            item["thumbnailUrl"] = self._resolve_thumbnail_url(path)
+        else:
+            item["thumbnailUrl"] = ""
+            
+        self._items.append(item)
+        self._reapply_sort_and_layout()
+        print(f"[DEBUG-SURGICAL] RowBuilder: Item added. Total items: {len(self._items)}")
+        
+    @Slot(str)
+    def removeSingleItem(self, path: str) -> None:
+        """Surgically remove a single file."""
+        print(f"[DEBUG-SURGICAL] RowBuilder: removeSingleItem called for {path}")
+        if not path: return
+        for i, item in enumerate(self._items):
+            if item.get("path") == path:
+                self._items.pop(i)
+                self._reapply_sort_and_layout()
+                print(f"[DEBUG-SURGICAL] RowBuilder: Item {path} removed. Total items: {len(self._items)}")
+                break
 
     @Slot(result="QVariant") # type: ignore # Returns list of lists
     def getRows(self):

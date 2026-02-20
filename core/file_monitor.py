@@ -109,11 +109,13 @@ class FileMonitor(QObject):
         # Map GIO events to our signals
         if event_type == Gio.FileMonitorEvent.CREATED:
             if path:
+                print(f"[DEBUG-SURGICAL] FileMonitor: CREATED {path}")
                 self.fileCreated.emit(path)
                 self._debounce_timer.start()
                 
         elif event_type == Gio.FileMonitorEvent.DELETED:
             if path:
+                print(f"[DEBUG-SURGICAL] FileMonitor: DELETED {path}")
                 self.fileDeleted.emit(path)
                 self._debounce_timer.start()
                 
@@ -124,6 +126,7 @@ class FileMonitor(QObject):
                 
         elif event_type == Gio.FileMonitorEvent.RENAMED:
             if path and other_path:
+                print(f"[DEBUG-SURGICAL] FileMonitor: RENAMED {path} -> {other_path}")
                 self.fileRenamed.emit(path, other_path)
                 self._debounce_timer.start()
                 
