@@ -166,17 +166,10 @@ class ProgressOverlay(QFrame):
     
     @Slot(str, str, str)
     def onOperationError(self, op_type: str, path: str, error: str):
-        """Called when operation fails."""
+        """Called when operation fails. Handled by generic error dialog now."""
         self._pending_show = False
         self._show_timer.stop()
-        
-        # Show error briefly
-        self.title_label.setText(f"Error: {error}")
-        self.detail_label.setText("")
-        self.progress_bar.setVisible(False)
-        
-        # Hide after 3 seconds
-        QTimer.singleShot(3000, self._do_hide)
+        self._do_hide()
     
     # -------------------------------------------------------------------------
     # BATCH/TRANSACTION SLOTS (For multi-file operations)

@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QToolBar, QToolButton, 
+    QWidget, QHBoxLayout, QToolButton, 
     QLineEdit, QSizePolicy
 )
 from PySide6.QtGui import QIcon, QKeySequence, QAction
@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QToolTip
 
 import os
 
-class NavigationBar(QToolBar):
+class NavigationBar(QWidget):
     """
     Unified Navigation Bar containing:
     - Up Button
@@ -21,28 +21,31 @@ class NavigationBar(QToolBar):
     zoomChanged = Signal(int)        # Delta (+1/-1)
     
     def __init__(self, parent=None):
-        super().__init__("Navigation", parent)
-        self.setMovable(False)
+        super().__init__(parent)
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(5, 5, 5, 5)  # Slight padding
+        self.layout.setSpacing(5)
         self._setup_ui()
         
     def _setup_ui(self):
         # 1. Up Button
-        self.btn_up = QAction(QIcon.fromTheme("go-up"), "Up", self)
-        # We don't bind shortcut here (handled globally), just the click
-        self.btn_up.triggered.connect(self._on_up_clicked)
-        self.addAction(self.btn_up)
+        self.btn_up = QToolButton(self)
+        self.btn_up.setIcon(QIcon.fromTheme("go-up"))
+        self.btn_up.setToolTip("Go Up")
+        self.btn_up.clicked.connect(self._on_up_clicked)
+        self.layout.addWidget(self.btn_up)
         
         # 2. Path Bar
         self.path_edit = QLineEdit()
         self.path_edit.setObjectName("PathBar")
         self.path_edit.setPlaceholderText("Enter path...")
         self.path_edit.returnPressed.connect(self._on_path_submitted)
-        self.addWidget(self.path_edit)
+        self.layout.addWidget(self.path_edit)
         
         # Spacer
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.addWidget(spacer)
+        # In a QHBoxLayout, we can just let things expand, but let's be explicit
+        # if we want the path bar to take available space.
+        # Actually QLineEdit usually expands.
         
         # 3. Zoom Controls
         self._setup_zoom_controls()
@@ -70,7 +73,7 @@ class NavigationBar(QToolBar):
         zoom_layout.addWidget(self.btn_zoom_out)
         zoom_layout.addWidget(self.btn_zoom_in)
         
-        self.addWidget(zoom_widget)
+        self.layout.addWidget(zoom_widget)
         
     def set_path(self, path: str):
         """Update the path bar text silently."""
