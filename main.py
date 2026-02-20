@@ -26,25 +26,39 @@ def main():
     
     args = parse_args()
     
-    # [NEW] Monitor Wrapper Logic
+    # [MONITOR] Launch app + dedicated gnome-terminal with `watch`
     if args.monitor:
-        monitor_script = Path(__file__).parent / "scripts" / "monitor_resources.py"
-        if monitor_script.exists():
-            import subprocess
-            # Re-run ourselves without the -m flag, wrapped by monitor
-            cmd_args = [sys.executable, str(monitor_script), "-l", "-c"]
-            
-            # Construct the inner command (removing -m/--monitor)
-            inner_cmd = [sys.executable, str(Path(__file__).absolute())]
-            if args.path: inner_cmd.append(args.path)
-            if args.profile: inner_cmd.append("--profile")
-            
-            cmd_args.append(" ".join(inner_cmd))
-            
-            # Replace current process
-            os.execv(sys.executable, cmd_args)
-        else:
-            print("Warning: Monitor script not found. Proceeding normally.")
+        import subprocess as _sp
+
+        # 1. Build the inner command (the app itself, without -m)
+        inner_cmd = [sys.executable, str(Path(__file__).absolute())]
+        if args.path:
+            inner_cmd.append(args.path)
+        if args.profile:
+            inner_cmd.append("--profile")
+
+        # 2. Launch the app as a subprocess
+        app_proc = _sp.Popen(inner_cmd)
+        print(f"[Monitor] App launched (PID: {app_proc.pid})")
+
+        # 3. Spawn gnome-terminal running `PersistentMonitor` loop
+        diag_script = str(Path(__file__).parent / "scripts" / "diagnostics.py")
+        # Direct Python execution (no `watch`)
+        live_cmd = f"python3 {diag_script} --monitor-live {app_proc.pid}"
+
+        try:
+            _sp.Popen(["gnome-terminal", "--title=Imbric Monitor", "--", "bash", "-c", live_cmd])
+            print("[Monitor] Dashboard launched in new terminal window.")
+        except FileNotFoundError:
+            print("[Monitor] gnome-terminal not found. Run manually:")
+            print(f"  {live_cmd}")
+
+        # 4. Wait for app to finish, then exit
+        try:
+            app_proc.wait()
+        except KeyboardInterrupt:
+            app_proc.terminate()
+        sys.exit(0)
 
     app = QApplication(sys.argv)
     app.setOrganizationName("Antigravity")
