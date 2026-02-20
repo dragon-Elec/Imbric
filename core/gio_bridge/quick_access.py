@@ -1,7 +1,7 @@
 import gi
 gi.require_version('Gio', '2.0')
 from gi.repository import GLib, Gio
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Signal, Slot, Property
 from pathlib import Path
 
 # Import the reactive bookmarks bridge
@@ -13,6 +13,9 @@ class QuickAccessBridge(QObject):
     """
     itemsChanged = Signal()
     
+    displayTitle = "Quick Access"
+    displayIcon = "star"
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._bookmarks_bridge = BookmarksBridge(self)
@@ -22,6 +25,14 @@ class QuickAccessBridge(QObject):
         self._trash_icon = "delete"
         self._trash_monitor = None
         self._setup_trash_monitor()
+
+    @Property(str, constant=True)
+    def title(self):
+        return self.displayTitle
+
+    @Property(str, constant=True)
+    def icon(self):
+        return self.displayIcon
 
     def _setup_trash_monitor(self):
         try:

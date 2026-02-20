@@ -66,8 +66,10 @@ ItemDelegate {
                 Layout.fillWidth: true
                 elide: Text.ElideRight
                 color: Material.foreground
+
+                font.family: Qt.application.font.family
+                font.pointSize: Qt.application.font.pointSize
                 font.bold: control.isActive
-                font.pixelSize: 14
             }
 
             // Usage Bar (Only if usageData is present)

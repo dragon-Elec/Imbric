@@ -9,3 +9,4 @@ GtkTabBar 1.0 GtkTabBar.qml
 GtkTabButton 1.0 GtkTabButton.qml
 Sidebar 1.0 Sidebar.qml
 SidebarItem 1.0 SidebarItem.qml
+SidebarHeader 1.0 SidebarHeader.qml

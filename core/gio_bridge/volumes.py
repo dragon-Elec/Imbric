@@ -15,7 +15,7 @@ import gi
 gi.require_version('Gio', '2.0')
 from gi.repository import Gio, GLib
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Signal, Slot, Property
 
 class VolumesBridge(QObject):
     """
@@ -26,6 +26,9 @@ class VolumesBridge(QObject):
     volumesChanged = Signal()
     mountSuccess = Signal(str) # identifier
     mountError = Signal(str)   # error message
+    
+    displayTitle = "Devices"
+    displayIcon = "hard_drive"
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,6 +46,14 @@ class VolumesBridge(QObject):
     def _on_monitor_changed(self, monitor, item):
         """Pass-through signal when anything changes in Gioland."""
         self.volumesChanged.emit()
+
+    @Property(str, constant=True)
+    def title(self):
+        return self.displayTitle
+
+    @Property(str, constant=True)
+    def icon(self):
+        return self.displayIcon
 
     def _get_icon_name(self, gicon):
         """Extract the best icon name from a GIcon."""

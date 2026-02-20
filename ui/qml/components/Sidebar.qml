@@ -12,14 +12,20 @@ Pane {
     signal navigationRequested(string path)
     signal mountRequested(string identifier)
     signal unmountRequested(string identifier)
+    signal sectionActionTriggered(string sectionTitle, string action)
+    signal sectionToggled(string sectionTitle, bool collapsed)
 
     // Bridge Properties (set from Python)
-    property var quickAccessModel: [] 
-    property var volumesModel: []
+    // Model Structure: [ { title: "Name", icon: "icon", type: "GRID"|"LIST", collapsed: bool, actions: [], items: [] }, ... ]
+    // Model Structure: [ { title: "Name", icon: "icon", type: "GRID"|"LIST", collapsed: bool, actions: [], items: [] }, ... ]
+    property var sectionsModel: [
+        { title: "QUICK ACCESS", icon: "star", type: "GRID", collapsed: false, actions: ["Settings"], items: [] },
+        { title: "DEVICES", icon: "hard_drive", type: "LIST", collapsed: false, actions: ["Refresh"], items: [] },
+    ] 
     
     // Internal State
-    property string currentSelection: "Home"
-
+    property string currentSelectionPath: ""
+    
     // --- SYSTEM PALETTE ---
     SystemPalette { id: sysPalette; colorGroup: SystemPalette.Active }
     readonly property bool isSystemDark: Qt.styleHints.colorScheme === Qt.ColorScheme.Dark
@@ -72,31 +78,126 @@ Pane {
 
     function syncToPath(path) {
         // Logic to highlight item based on path
-        // 1. Check Quick Access
-        for (var i = 0; i < quickAccessModel.length; i++) {
-            if (quickAccessModel[i].path === path) {
-                currentSelection = quickAccessModel[i].name
-                return
-            }
-        }
-        // 2. Check Volumes
-        for (var j = 0; j < volumesModel.length; j++) {
-             if (volumesModel[j].path === path) {
-                currentSelection = volumesModel[j].name
-                return
+        for (var i = 0; i < sectionsModel.length; i++) {
+            var section = sectionsModel[i];
+            if (section.items) {
+                for (var j = 0; j < section.items.length; j++) {
+                    if (section.items[j].path === path) {
+                        currentSelectionPath = section.items[j].path
+                        return
+                    }
+                }
             }
         }
     }
 
-    ColumnLayout {
+    ScrollView {
+        id: sidebarScroll
         anchors.fill: parent
-        spacing: 0
+        // Prevent horizontal scrolling by binding contentWidth
+        contentWidth: availableWidth
+        
+        // Use custom GTK ScrollBar (overlay, auto-hiding, self-contained)
+        ScrollBar.vertical: GtkScrollBar {
+            id: sidebarScrollBar
+            // Explicitly anchor to fill vertical space and stick to right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: parent.right
+            
+            // Optional: Enable pillar/track if desired (TRUE for testing)
+            showTrack: true 
+            
+            // Disable Physics Engine (using native ScrollView behavior)
+            physicsEnabled: false
+            turboMode: false
+        }
+        
+        property real pushOffset: sidebarScrollBar.active ? (sidebarScrollBar.width + 2) : 0
+        Behavior on pushOffset { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+        
+        Column {
+            // Layout Stability Fix:
+            // The Main Column stays FULL WIDTH. We selectively shrink children (Header/Lists) 
+            // but let Grids overlap the scrollbar area to prevent reflow loops.
+            width: parent.width
+            spacing: 0
 
-        // 1. QUICK ACCESS GRID
+            Repeater {
+                model: root.sectionsModel
+                delegate: Column {
+                    id: sectionDelegate
+                    width: parent.width
+                    spacing: 0
+                    
+                    // PERFORMANCE: Layer disabled to prevent text blur
+                    // layer.enabled: true
+                    // layer.smooth: true
+                    
+                    property var sectionData: modelData
+
+                    SidebarHeader {
+                        id: header
+                        // Headers have buttons on the right, so they MUST shrink/push
+                        width: parent.width - sidebarScroll.pushOffset
+                        
+                        text: sectionData.title
+                        icon: root.getIconChar(sectionData.icon)
+                        collapsed: sectionData.collapsed !== undefined ? sectionData.collapsed : false
+                        hasControls: sectionData.actions && sectionData.actions.length > 0
+                        
+                        onToggleCollapsed: {
+                            // Notify parent to update state persistence
+                            root.sectionToggled(sectionData.title, header.collapsed)
+                        }
+                        
+                        // Dynamic Header Actions
+                        Repeater {
+                            model: sectionData.actions || []
+                            delegate: ToolButton {
+                                text: modelData === "Add" ? "+" : (modelData === "Refresh" ? "⟳" : (modelData === "Settings" ? "⚙" : "?"))
+                                font.pointSize: 10 // roughly 14px
+                                flat: true
+                                opacity: hovered ? 1.0 : 0.6
+                                onClicked: root.sectionActionTriggered(sectionData.title, modelData)
+                                background: Rectangle { color: parent.down ? Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.1) : "transparent"; radius: 4 }
+                            }
+                        }
+                    }
+
+                    Loader {
+                        visible: !header.collapsed
+                        
+                        // Lists need to push (avoid deadzone). Grids handle overlap (stable layout).
+                        width: sectionData.type === "GRID" ? parent.width : (parent.width - sidebarScroll.pushOffset)
+                        
+                        // Shrink-wrap: Use implicit height of the loaded item (Grid or List)
+                        height: item ? item.implicitHeight : 0
+
+                        sourceComponent: sectionData.type === "GRID" ? gridComponent : (sectionData.type === "LIST" ? listComponent : null)
+                        
+                        property var dataModel: sectionData.items
+                    }
+                }
+            }
+            
+            // Filler to push content up if needed? 
+            // In a ScrollView, we generally don't need a filler to push things up, 
+            // but if we want the background to be solid, it's fine. 
+            // Actually, remove the filler to let it properly shrink-wrap.
+        }
+    }
+
+    // --- COMPONENT DEFINITIONS ---
+
+    Component {
+        id: gridComponent
+        
         Item {
-            Layout.fillWidth: true
-            Layout.preferredHeight: flowLayout.height + 24
-            Layout.topMargin: 12
+            // Grid always takes the full allocated width from the Loader
+            width: parent ? parent.width : 0
+            // Loader needs implicitHeight for Layout to work in ColumnLayout
+            implicitHeight: flowLayout.height + 12
             
             Flickable {
                 anchors.fill: parent
@@ -104,65 +205,52 @@ Pane {
                 anchors.rightMargin: 12
                 contentHeight: flowLayout.height
                 clip: true
-                interactive: false
-
+                interactive: false // Assuming grid is small enough or handled by outer scroll? Actually sidebar usually doesn't scroll whole thing.
+                // If the grid grows huge, we might need a ScrollView. For now, strict 'Fit'
+                
                 Flow {
                     id: flowLayout
                     width: parent.width
                     spacing: 4
-                    
-                    // SMOOTH REFLOW ANIMATION (Restored)
+
                     move: Transition {
                         NumberAnimation { properties: "x,y"; duration: 300; easing.type: Easing.OutCubic }
                     }
                     
-                    add: Transition {
-                        NumberAnimation { properties: "scale"; from: 0.9; to: 1.0; duration: 200; easing.type: Easing.OutQuad }
-                        NumberAnimation { properties: "opacity"; from: 0.0; to: 1.0; duration: 200 }
-                    }
-                    
                     Repeater {
-                        model: root.quickAccessModel
+                        model: dataModel // injected by Loader
                         delegate: ItemDelegate {
                             id: gridDelegate
                             width: 60; height: 60; padding: 0
                             
                             property var itemData: modelData
-                            property bool isSelected: root.currentSelection === (itemData ? itemData.name : "")
+                            property bool isSelected: root.currentSelectionPath === (itemData ? itemData.path : "")
                             
-                            // "Qeesy" Press Effect
                             scale: gridDelegate.down ? 0.96 : 1.0
                             Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
                             
-                                background: Rectangle {
-                                    radius: 12
-                                    color: isSelected ? Qt.rgba(sysPalette.highlight.r, sysPalette.highlight.g, sysPalette.highlight.b, 0.15) : 
-                                           parent.hovered ? Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.05) : "transparent"
-                                    
-                                    // Persistent subtle outline for non-active items
-                                    border.color: (isSelected || parent.hovered) ? sysPalette.highlight : Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.15)
-                                    border.width: isSelected ? 2 : 1
-                                    
-                                    Behavior on color { ColorAnimation { duration: 150 } }
-                                    Behavior on border.color { ColorAnimation { duration: 150 } }
-                                }
+                            background: Rectangle {
+                                radius: 12
+                                color: isSelected ? Qt.rgba(sysPalette.highlight.r, sysPalette.highlight.g, sysPalette.highlight.b, 0.15) : 
+                                       parent.hovered ? Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.05) : "transparent"
+                                border.color: (isSelected || parent.hovered) ? sysPalette.highlight : Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.15)
+                                border.width: isSelected ? 2 : 1
+                                Behavior on color { ColorAnimation { duration: 150 } }
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
+                            }
 
                             contentItem: Column {
                                 anchors.centerIn: parent
                                 spacing: 2
                                 Label {
                                     text: (itemData && itemData.icon) ? root.getIconChar(itemData.icon) : "?"
-                                    // Custom Size Overrides
-                                    property int baseSize: (itemData && (itemData.icon === "description" || itemData.icon === "history")) ? 26 : 22
-                                    font.pixelSize: baseSize 
-                                    
+                                    font.pixelSize: (itemData && (itemData.icon === "description" || itemData.icon === "history")) ? 26 : 22 // Keep icons pixel-based
                                     color: isSelected ? sysPalette.highlight : sysPalette.text
                                     anchors.horizontalCenter: parent.horizontalCenter
-                                    Behavior on color { ColorAnimation { duration: 150 } }
                                 }
                                 Label {
                                     text: (itemData && itemData.name) ? itemData.name : ""
-                                    font.pixelSize: 9
+                                    font.pointSize: 7 // roughly 9px
                                     color: sysPalette.text
                                     opacity: isSelected ? 1.0 : 0.7
                                     font.bold: isSelected
@@ -173,23 +261,8 @@ Pane {
                             }
                             onClicked: {
                                 if (itemData) {
-                                    root.currentSelection = itemData.name
+                                    root.currentSelectionPath = itemData.path
                                     root.navigationRequested(itemData.path)
-                                }
-                            }
-                            ToolTip {
-                                id: gridToolTip
-                                visible: parent.hovered
-                                text: (itemData && itemData.name) ? itemData.name : ""
-                                delay: 500
-                                background: Rectangle {
-                                    color: sysPalette.window
-                                    border.color: sysPalette.mid
-                                    radius: 4
-                                }
-                                contentItem: Text {
-                                    text: gridToolTip.text
-                                    color: sysPalette.text
                                 }
                             }
                         }
@@ -197,65 +270,53 @@ Pane {
                 }
             }
         }
+    }
 
-        // Separator
-        Rectangle {
-            Layout.fillWidth: true; Layout.preferredHeight: 1
-            color: sysPalette.midlight; opacity: 0.3
-            Layout.margins: 12
-        }
-
-        // 2. VOLUMES LIST
+    Component {
+        id: listComponent
+        
         ListView {
-            id: volumesList
-            Layout.fillWidth: true; Layout.fillHeight: true
+            // Ensure width fills the loader
+            width: parent ? parent.width : 0
+            // Shrink-wrap: Set height to contentHeight PLUS topMargin to prevent clipping
+            implicitHeight: contentHeight + topMargin
+            interactive: false // ScrollView handles scrolling
+            
             clip: true
             topMargin: 8
             spacing: 2
-            model: root.volumesModel
+            model: dataModel // injected by Loader
             
             delegate: SidebarItem {
-                id: listItem
                 width: ListView.view.width - 16
-                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
                 
                 property var itemData: modelData
                 
                 textLabel: (itemData && itemData.name) ? itemData.name : ""
                 iconSymbol: (itemData && itemData.icon) ? root.getIconChar(itemData.icon) : "?"
                 usageData: (itemData && itemData.usage) ? itemData.usage : null
-                isActive: root.currentSelection === (itemData ? itemData.name : "")
+                isActive: root.currentSelectionPath === (itemData ? itemData.path : "")
                 showMountIndicator: itemData ? (itemData.isMounted === true) : false
                 
-                // Add Unmount Button for mounted drives
                 ToolButton {
-                    visible: (itemData && itemData.isMounted && itemData.canUnmount)
-                    text: "⏏" // Eject Symbol
-                    font.pixelSize: 14
+                    visible: (itemData && itemData.isMounted === true && itemData.canUnmount === true)
+                    text: "⏏"
+                    font.pointSize: 10 // roughly 14px
                     flat: true
                     opacity: hovered ? 1.0 : 0.6
-                    
-                    background: Rectangle {
-                        color: parent.down ? Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.1) : "transparent"
-                        radius: 4
-                    }
-                    
+                    background: Rectangle { color: parent.down ? Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.1) : "transparent"; radius: 4 }
                     onClicked: {
-                        if (itemData) {
-                            root.unmountRequested(itemData.identifier)
-                        }
+                        if (itemData) root.unmountRequested(itemData.identifier)
                     }
                 }
 
                 onClicked: {
                     if (itemData) {
-                        root.currentSelection = itemData.name
+                        root.currentSelectionPath = itemData.path
                         if (itemData.isMounted) {
-                            if (itemData.path) {
-                                root.navigationRequested(itemData.path)
-                            }
+                            if (itemData.path) root.navigationRequested(itemData.path)
                         } else {
-                            // Request Mount
                             root.mountRequested(itemData.identifier)
                         }
                     }
