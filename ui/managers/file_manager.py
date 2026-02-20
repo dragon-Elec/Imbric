@@ -71,6 +71,8 @@ class FileManager(QObject):
         tid = self.mw.transaction_manager.startTransaction(f"Trash {len(paths)} items")
         for p in paths:
             self.mw.file_ops.trash(p, transaction_id=tid)
+            
+        self.mw.transaction_manager.commitTransaction(tid)
 
     @Slot()
     def rename_selection(self):
@@ -116,6 +118,8 @@ class FileManager(QObject):
             
             # [FIX] Use atomic auto_rename in backend. No UI loop!
             self.mw.file_ops.copy(p, dest_path, transaction_id=tid, auto_rename=True)
+            
+        self.mw.transaction_manager.commitTransaction(tid)
 
     # --- Clipboard Logic (Ex-ClipboardManager) ---
 
@@ -202,7 +206,13 @@ class FileManager(QObject):
             if not os.path.exists(src): continue
             
             dest = os.path.join(dest_dir, os.path.basename(src))
-            if os.path.abspath(src) == os.path.abspath(dest): continue
+            if os.path.abspath(src) == os.path.abspath(dest):
+                if is_move:
+                    continue # Can't move a file to itself
+                else:
+                    # Same-folder copy = Duplicate with auto-rename
+                    self.mw.file_ops.copy(src, dest, transaction_id=tid, auto_rename=True)
+                    continue
 
             action, final_dest = resolver.resolve(src, dest)
             
@@ -212,6 +222,8 @@ class FileManager(QObject):
             # Smart Transfer handles move/copy logic internally
             mode = "move" if is_move else "copy"
             self.mw.file_ops.transfer(src, final_dest, mode=mode, transaction_id=tid)
+            
+        self.mw.transaction_manager.commitTransaction(tid)
 
     # --- Drag & Drop ---
     
@@ -261,8 +273,14 @@ class FileManager(QObject):
                 
                 final_dest = os.path.join(dest_dir, filename)
                 
-                # Prevent self-move
+                # Prevent self-move, but allow self-copy (duplicate)
                 if os.path.abspath(src) == os.path.abspath(final_dest):
+                    # Dragging to same folder inherently implies intent to copy/duplicate if the system allows it
+                    # But if mode is 'auto' (which defaults to 'move' on same FS), it will just do nothing.
+                    # Let's force it to be a duplicate if dragged to its own folder.
+                    self.mw.file_ops.copy(src, final_dest, transaction_id=tid, auto_rename=True)
                     continue
                     
                 self.mw.file_ops.transfer(src, final_dest, mode=mode, transaction_id=tid)
+                
+            self.mw.transaction_manager.commitTransaction(tid)

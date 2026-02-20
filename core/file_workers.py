@@ -261,8 +261,9 @@ class TransferRunnable(FileOperationRunnable):
         if file_type == Gio.FileType.DIRECTORY:
             try:
                 dest.make_directory_with_parents(self.job.cancellable)
-            except GLib.Error:
-                pass # Exists ok
+            except GLib.Error as e:
+                if e.code != Gio.IOErrorEnum.EXISTS:
+                    raise e
             
             local_error = False
             enumerator = None
@@ -322,6 +323,8 @@ class RenameRunnable(FileOperationRunnable):
                  self.emit_finished(False, "Conflict detected")
             else:
                  msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
+                 if e.code != Gio.IOErrorEnum.CANCELLED:
+                     self.signals.operationError.emit(self.job.transaction_id, self.job.id, "rename", self.job.source, msg, None)
                  self.emit_finished(False, msg)
 
 class CreateFolderRunnable(FileOperationRunnable):

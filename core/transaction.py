@@ -39,6 +39,7 @@ class Transaction:
     # Status
     status: TransactionStatus = TransactionStatus.PENDING
     error_message: str = ""
+    is_committed: bool = False
     
     def add_operation(self, op: TransactionOperation):
         self.ops.append(op)

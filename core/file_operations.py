@@ -179,6 +179,9 @@ class FileOperations(QObject):
         for path in paths:
             self.trash(path, transaction_id=tid)
             
+        if tid and self._transaction_manager:
+            self._transaction_manager.commitTransaction(tid)
+            
     # Updated signature to match what TransactionManager needs
     @Slot(str, str, bool, str, result=str)
     def restore(self, original_path: str, transaction_id: str = "", overwrite: bool = False, rename_to: str = "") -> str:

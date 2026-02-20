@@ -94,10 +94,15 @@ class RestoreFromTrashRunnable(FileOperationRunnable):
                 self.signals.operationError.emit(self.job.transaction_id, self.job.id, "restore", original_path, "Conflict detected", conflict_data)
                 self.emit_finished(False, "Conflict detected")
             else:
-                self.emit_finished(False, e.message)
+                msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
+                if e.code != Gio.IOErrorEnum.CANCELLED:
+                    self.signals.operationError.emit(self.job.transaction_id, self.job.id, "restore", original_path, msg, None)
+                self.emit_finished(False, msg)
                 
         except Exception as e:
-            self.emit_finished(False, str(e))
+            msg = str(e)
+            self.signals.operationError.emit(self.job.transaction_id, self.job.id, "restore", original_path, msg, None)
+            self.emit_finished(False, msg)
     
     def _get_trash_specific_data(self, original_path: str) -> dict:
         """Fetch trash deletion date to enrich conflict payload."""
@@ -186,8 +191,9 @@ class RestoreFromTrashRunnable(FileOperationRunnable):
             if parent:
                 try:
                     parent.make_directory_with_parents(self.job.cancellable)
-                except GLib.Error:
-                    pass
+                except GLib.Error as e:
+                    if e.code != Gio.IOErrorEnum.EXISTS:
+                        raise e
             
             flags = Gio.FileCopyFlags.NONE
             if self.job.overwrite:
@@ -260,8 +266,15 @@ class EmptyTrashRunnable(FileOperationRunnable):
         try:
             deleted_count = self._empty_trash()
             self.emit_finished(True, str(deleted_count))
+        except GLib.Error as e:
+            msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
+            if e.code != Gio.IOErrorEnum.CANCELLED:
+                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "empty", "Trash", msg, None)
+            self.emit_finished(False, msg)
         except Exception as e:
-            self.emit_finished(False, str(e))
+            msg = str(e)
+            self.signals.operationError.emit(self.job.transaction_id, self.job.id, "empty", "Trash", msg, None)
+            self.emit_finished(False, msg)
     
     def _empty_trash(self) -> int:
         trash_root = Gio.File.new_for_uri("trash:///")

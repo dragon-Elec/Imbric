@@ -43,6 +43,9 @@ class TransactionManager(QObject):
     # This replaces the legacy operationCompleted signal from FileOperations
     jobCompleted = Signal(str, str, str)  # (op_type, result_path, message)
 
+    # General operation failure for UI dialogs
+    operationFailed = Signal(str, str, str) # (op_type, path, message)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._active_transactions: Dict[str, Transaction] = {}
@@ -266,12 +269,33 @@ class TransactionManager(QObject):
         self.transactionProgress.emit(tid, percent)
         self.transactionUpdate.emit(tid, tx.description, tx.completed_ops, tx.total_ops)
 
-        # Check if entire batch is done
-        if tx.completed_ops >= tx.total_ops:
+        # Check if entire batch is done AND committed
+        if tx.is_committed and tx.completed_ops >= tx.total_ops:
             tx.status = TransactionStatus.COMPLETED
             self.transactionFinished.emit(tid, "Success")
             print(f"[TM] Transaction Completed: {tx.description} ({tx.completed_ops} ops)")
             self.historyCommitted.emit(tx)
+            del self._active_transactions[tid]
+
+    @Slot(str)
+    def commitTransaction(self, tid: str):
+        """
+        Marks a transaction as fully populated.
+        If all ops are already finished (or 0 ops were added), it closes the transaction.
+        """
+        if tid not in self._active_transactions:
+            return
+            
+        tx = self._active_transactions[tid]
+        tx.is_committed = True
+        
+        # Immediate close if empty or already finished
+        if tx.completed_ops >= tx.total_ops:
+            tx.status = TransactionStatus.COMPLETED
+            self.transactionFinished.emit(tid, "Success" if tx.total_ops > 0 else "Skipped")
+            print(f"[TM] Transaction Committed & Completed: {tx.description} ({tx.completed_ops} ops)")
+            if tx.total_ops > 0:
+                self.historyCommitted.emit(tx)
             del self._active_transactions[tid]
 
     @Slot(str, str, str, str, str, object)
@@ -310,5 +334,5 @@ class TransactionManager(QObject):
             self._pending_conflicts[job_id] = conflict_data
             self.conflictDetected.emit(job_id, conflict_data)
         else:
-             # Regular error
-             pass
+            # Regular error
+            self.operationFailed.emit(op_type, path, message)
