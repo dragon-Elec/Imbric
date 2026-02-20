@@ -30,14 +30,14 @@ Item {
             z: 1 // Ensure TabBar is above content for mask effects
             
             model: tabModel
-            currentIndex: tabManager.currentIndex
+            currentIndex: tabManager ? tabManager.currentIndex : 0
             
-            onAddClicked: tabManager.add_tab("")
-            onTabClosed: (index) => tabManager.close_tab(index)
+            onAddClicked: if (tabManager) tabManager.add_tab("")
+            onTabClosed: (index) => { if (tabManager) tabManager.close_tab(index) }
             
             // Two-way binding for current index
             onCurrentIndexChanged: {
-                if (tabManager.currentIndex !== currentIndex) {
+                if (tabManager && tabManager.currentIndex !== currentIndex) {
                     tabManager.currentIndex = currentIndex
                 }
             }
@@ -69,6 +69,7 @@ Item {
                         
                         // Dependency Injection:
                         // Pass the per-tab objects to the view
+                        tabController: tabWrapper.tabController
                         rowBuilder: tabWrapper.tabController.rowBuilder
                         fileScanner: tabWrapper.tabController.fileScanner
                         bridge: tabWrapper.tabController.appBridge

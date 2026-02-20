@@ -19,6 +19,7 @@ Item {
     // 1. DATA BINDING FROM PYTHON
     // =========================================================================
     required property var rowBuilder
+    required property var tabController
     property var rows: []
     
     Connections {
@@ -82,6 +83,13 @@ Item {
     // =========================================================================
     Components.SelectionModel {
         id: selectionModel
+        
+        onSelectionChanged: {
+            // Push selection update to backend
+            if (tabController) {
+                tabController.updateSelection(selection)
+            }
+        }
     }
 
     SystemPalette { id: activePalette; colorGroup: SystemPalette.Active }
@@ -95,6 +103,7 @@ Item {
         readonly property bool isSystemDark: Qt.styleHints.colorScheme === Qt.ColorScheme.Dark
         color: isSystemDark ? Qt.darker(activePalette.base, 1.3) : activePalette.base
         focus: true
+        clip: true
 
         // 2. DropArea — External file drops
         DropArea {
@@ -111,16 +120,13 @@ Item {
             }
         }
 
-        // 3. Background Actions (Deselect / Context Menu)
-        // Placed as siblings to ListView. Since ListView is interactive: false, 
-        // clicks on empty areas should pass through or be handled here.
+        // 3. Background Actions
         TapHandler {
             acceptedButtons: Qt.LeftButton
-            acceptedModifiers: Qt.KeyboardModifierMask // Don't clear selection if user is Ctrl-clicking empty space
+            acceptedModifiers: Qt.KeyboardModifierMask
             onTapped: {
                 selectionModel.clear()
                 root.forceActiveFocus()
-                root.pathBeingRenamed = ""
             }
         }
         TapHandler {
@@ -132,10 +138,44 @@ Item {
             }
         }
 
+        // =========================================================================
+        // 7. BACKGROUND MESSAGE (Empty State / Error / Info)
+        // =========================================================================
+        property string messageText: ""
+        property string messageIcon: ""
+
+        Column {
+            anchors.centerIn: parent
+            spacing: 16
+            opacity: 0.4
+            visible: root.messageText !== ""
+            z: 0
+
+            Text {
+                text: root.messageIcon || ""
+                font.pixelSize: 64
+                color: activePalette.text
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+            Text {
+                text: root.messageText || ""
+                font.pixelSize: 22
+                font.bold: true
+                color: activePalette.text
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+        }
+
         // 4. Main List View (Direct, no ScrollView wrapper)
         ListView {
             id: rowListView
             anchors.fill: parent
+            // PADDING: Use internal margins instead of anchors to avoid clipping scrollbars/dead zones
+            leftMargin: 12
+            rightMargin: 18
+            topMargin: 18
+            bottomMargin: 12
+            
             clip: true
             
             // Interaction:
@@ -146,100 +186,25 @@ Item {
             // ScrollBar: Attached directly. 
             // "active: true" keeps it visible/fading correctly.
             // "interactive: true" ensures we can drag it even if ListView is interactive: false.
-            // ScrollBar: Specialized GTK component
+            // ScrollBar: Specialized GTK component with Turbo Boost
             ScrollBar.vertical: Components.GtkScrollBar {
+                id: verticalScrollBar
                 flickable: rowListView
+                showTrack: true
+                physicsEnabled: true // Enable internal physics engine
+                turboMode: rowListView.turboMode
             }
 
             // Physics State
-            property real lastWheelTime: 0
-            property real acceleration: 1.0
-            property int lastDeltaSign: 0
             property bool turboMode: true // Defaulted to true for testing
 
-            // SnapBack Timer: Returns to bounds after overshooting
-            Timer {
-                id: snapBackTimer
-                interval: 150 
-                onTriggered: {
-                    let maxY = Math.max(0, rowListView.contentHeight - rowListView.height)
-                    if (rowListView.contentY < 0) {
-                        rowListView.contentY = 0
-                    } else if (rowListView.contentY > maxY) {
-                        rowListView.contentY = maxY
-                    }
-                }
-            }
-
-            // Wheel Handling: Custom logic to inject smooth scrolls
-            // We do this manually because interactive: false kills native wheeling too.
+            // Proxy WheelHandler: Captures events on the View and forwards to ScrollBar logic
             WheelHandler {
                 target: rowListView
-                onWheel: (event) => {
-                    let maxY = Math.max(0, rowListView.contentHeight - rowListView.height)
-
-                    // Optimization: Micro-overflow check (STRICT MODE)
-                    // RISK: If contentY gets stuck out of bounds (e.g. negative) due to resize/scrollbar drag,
-                    // this strict check WILL prevent the wheel from recovering it.
-                    // The view will be frozen until a resize or scrollbar interaction resets it.
-                    if (maxY < 20) {
-                        return
-                    }
-                    
-                    // 1. Acceleration Logic
-                    let now = new Date().getTime()
-                    let dt = now - rowListView.lastWheelTime
-                    rowListView.lastWheelTime = now
-                    
-                    // If same direction and fast (<100ms), ramp up acceleration
-                    // (Only relevant for Mouse Wheel steps, but we calculate it generally)
-                    let currentSign = (event.angleDelta.y > 0) ? 1 : -1
-                    if (dt < 100 && currentSign === rowListView.lastDeltaSign && event.angleDelta.y !== 0) {
-                         let ramp = rowListView.turboMode ? 1.0 : 0.5   
-                         let limit = rowListView.turboMode ? 10.0 : 6.0 
-                         
-                         rowListView.acceleration = Math.min(rowListView.acceleration + ramp, limit)
-                    } else {
-                         rowListView.acceleration = 1.0
-                    }
-                    rowListView.lastDeltaSign = currentSign
-
-                    // 2. Base Delta & Acceleration Handling
-                    let delta = 0
-                    let isTrackpad = false
-                    
-                    if (event.angleDelta.y !== 0) {
-                         // Mouse Wheel: Apply Acceleration
-                         delta = -(event.angleDelta.y / 1.2)
-                         delta *= rowListView.acceleration
-                    } else if (event.pixelDelta.y !== 0) {
-                        // Trackpad: Direct 1:1 Mapping (No Turbo/Acceleration)
-                        delta = -event.pixelDelta.y
-                        isTrackpad = true
-                    } 
-                    
-                    if (delta === 0) return
-
-                    // 3. Resistance (Bounce)
-                    // If we are ALREADY out of bounds, apply heavy friction
-                    if (rowListView.contentY < 0 || rowListView.contentY > maxY) {
-                        delta *= 0.3
-                    }
-
-                    // 4. Propose New Position
-                    let newY = rowListView.contentY + delta
-
-                    // 5. Relaxed Clamping (Allow Overshoot up to 300px)
-                    if (newY < -300) newY = -300
-                    if (newY > maxY + 300) newY = maxY + 300
-                    
-                    // 6. Apply
-                    rowListView.contentY = newY
-                    
-                    // Restart SnapBack
-                    snapBackTimer.restart()
-                }
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onWheel: (event) => verticalScrollBar.handleWheel(event)
             }
+
 
             // Native-like Smoothing
             // DISABLED when ScrollBar is pressed to allow instant 1:1 dragging.
@@ -263,11 +228,12 @@ Item {
                 rowBuilder: root.rowBuilder // Pass down
                 view: root
                 imageHeight: root.rowHeight
-                x: 10
+                // x: 0 // Default (relative to contentItem which respects leftMargin)
             }
 
             onWidthChanged: {
-                if (rowBuilder) rowBuilder.setAvailableWidth(width)
+                // Correctly inform Python of the ACTUAL available width for content
+                if (rowBuilder) rowBuilder.setAvailableWidth(width - leftMargin - rightMargin)
             }
         }
 
@@ -285,8 +251,9 @@ Item {
                 var newY = rowListView.contentY + scrollSpeed
                 
                 // Clamp
-                var maxY = Math.max(0, rowListView.contentHeight - rowListView.height)
-                newY = Math.max(0, Math.min(newY, maxY))
+                var minY = -rowListView.topMargin
+                var maxY = Math.max(minY, rowListView.contentHeight - rowListView.height + rowListView.bottomMargin)
+                newY = Math.max(minY, Math.min(newY, maxY))
                 
                 if (rowListView.contentY !== newY) {
                     rowListView.contentY = newY
@@ -313,8 +280,14 @@ Item {
                     var start = centroid.pressPosition
                     
                     // Capture Start in CONTENT SPACE
-                    startContentX = start.x - 10        // Correct for padding
-                    startContentY = start.y + rowListView.contentY
+                    // Visual X (relative to Rectangle) -> Content X
+                    // ListView has leftMargin (previously hardcoded 10+10). Now just LeftMargin.
+                    startContentX = start.x - rowListView.leftMargin        
+                    
+                    // Visual Y (relative to Rectangle) -> Content Y
+                    // ListView has topMargin. ContentY starts at -topMargin.
+                    // Visual Y = topMargin + (Item Y - contentY) -> Item Y = Visual Y - topMargin + contentY
+                    startContentY = start.y - rowListView.topMargin + rowListView.contentY
                     
                     rubberBand.show()
                     updateSelection()
@@ -338,9 +311,9 @@ Item {
                 var currentVisualX = centroid.position.x
                 var currentVisualY = centroid.position.y
                 
-                // 1. Calculate Current Content Pos
-                var currentContentX = currentVisualX - 10
-                var currentContentY = currentVisualY + rowListView.contentY
+                // 1. Calculate Current Content Pos (Same logic as Start)
+                var currentContentX = currentVisualX - rowListView.leftMargin
+                var currentContentY = currentVisualY - rowListView.topMargin + rowListView.contentY
                 
                 // 2. Define Rect in CONTENT SPACE
                 // (Min/Max between Start and Current)
@@ -350,10 +323,10 @@ Item {
                 var h = Math.abs(currentContentY - startContentY)
                 
                 // 3. Update Visual RubberBand (Project back to Visual Space)
-                // VisualY = ContentY - rowListView.contentY
-                // VisualX = ContentX + 10
-                rubberBand.x = x + 10
-                rubberBand.y = y - rowListView.contentY
+                // Visual X = Content X + leftMargin
+                // Visual Y = Content Y - contentY + topMargin
+                rubberBand.x = x + rowListView.leftMargin
+                rubberBand.y = y - rowListView.contentY + rowListView.topMargin
                 rubberBand.width = w
                 rubberBand.height = h
                 

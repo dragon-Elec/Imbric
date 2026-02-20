@@ -63,6 +63,9 @@ Row {
                 thumbnailMaxWidth: itemWrapper.itemData.thumbnailWidth || 0
                 thumbnailMaxHeight: itemWrapper.itemData.thumbnailHeight || 0
                 
+                // Pre-computed thumbnail URL (no Python calls during scroll)
+                thumbnailUrl: itemWrapper.itemData.thumbnailUrl || ""
+                
                 // 3. STATE PROPS
                 selected: (rowDelegateRoot.view && rowDelegateRoot.view.currentSelection) 
                           ? rowDelegateRoot.view.currentSelection.indexOf(path) !== -1 

@@ -35,6 +35,7 @@ Item {
     property real columnWidth: 200     // Width calculated from aspect ratio
     property int thumbnailMaxWidth: 0   // 0 = no cap (icons/vectors can scale)
     property int thumbnailMaxHeight: 0  // Actual thumbnail cache dimensions
+    property string thumbnailUrl: ""    // Pre-computed by RowBuilder (no Python calls during scroll)
 
     // =========================================================================
     // 3. STATE PROPS (Passed from parent for styling)
@@ -128,7 +129,7 @@ Item {
                 
                 anchors.centerIn: parent
                 
-                source: isVisual ? (bridge ? bridge.getThumbnailPath(path) : "") : ""
+                source: thumbnailUrl
                 
                 // Use Fit to ensure we see the whole image within our box
                 fillMode: Image.PreserveAspectFit
@@ -137,7 +138,10 @@ Item {
                 cache: true
                 mipmap: false // [FIX] Disabled for sharper downscaling (matches Nemo)
                 
-                // Request at fixed display size for efficiency
+                // [PERF] Keep sourceSize DISABLED for thumbnails!
+                // 1. Thumbnails are already small (256px). Scaling 256->200 on CPU is wasteful; GPU does it better.
+                // 2. Binding sourceSize to width causes massive cache thrashing when resizing the window.
+                // 3. Allows "Instant Zoom" (using the 256px texture) without reloading.
                 // sourceSize: Qt.size(width, height)
 
                 // SHIMMER EFFECT: Visual feedback during loading

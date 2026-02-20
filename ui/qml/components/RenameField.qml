@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 
-TextArea {
+TextField {
     id: root
     
     // --- API ---
@@ -16,7 +16,6 @@ TextArea {
     font.pixelSize: 12
     
     // --- STYLING ---
-    // Style to match native look
     background: Rectangle {
         color: activePalette.base
         border.color: activePalette.highlight
@@ -24,11 +23,8 @@ TextArea {
         radius: 2
     }
     
-    // Note: SystemPalette must be available in parent context or we instantiate one
-    // Ideally components should be self-contained, so let's check activePalette access.
-    // Standard QtQuick SystemPalette usage:
     SystemPalette { id: activePalette; colorGroup: SystemPalette.Active }
-
+    
     color: activePalette.text
     selectedTextColor: activePalette.highlightedText
     selectionColor: activePalette.highlight
@@ -41,25 +37,38 @@ TextArea {
     
     // --- BEHAVIOR ---
     
-    onActiveChanged: {
-        if (active) {
-            forceActiveFocus()
-            // Select filename without extension
-            var name = text
-            var lastDot = name.lastIndexOf(".")
-            if (lastDot > 0) {
-                select(0, lastDot)
-            } else {
-                selectAll()
-            }
+    function initSession() {
+        forceActiveFocus()
+        // Select filename without extension
+        var name = text
+        var lastDot = name.lastIndexOf(".")
+        if (lastDot > 0) {
+            select(0, lastDot)
+        } else {
+            selectAll()
         }
     }
     
+    onActiveChanged: if (active) initSession()
+    Component.onCompleted: if (active) initSession()
+    
+    // 1. Commit on Enter
+    onAccepted: {
+        root.commit(text)
+        focus = false // Release focus
+    }
+    
+    // 2. Commit on Focus Loss (Clicking away)
+    onActiveFocusChanged: {
+        if (!activeFocus && active) {
+            // We lost focus while active -> Commit
+            root.commit(text)
+        }
+    }
+    
+    // 3. Cancel on Escape
     Keys.onPressed: (event) => {
-        if (event.key === Qt.Key_Enter || event.key === Qt.Key_Return) {
-            root.commit(root.text)
-            event.accepted = true
-        } else if (event.key === Qt.Key_Escape) {
+        if (event.key === Qt.Key_Escape) {
             root.cancel()
             event.accepted = true
         }
