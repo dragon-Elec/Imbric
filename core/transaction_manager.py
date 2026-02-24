@@ -12,9 +12,8 @@ Responsibilities:
 """
 
 from PySide6.QtCore import QObject, Signal, Slot
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Callable, Tuple
 from uuid import uuid4
-import time
 
 from core.transaction import Transaction, TransactionOperation, TransactionStatus
 
@@ -54,6 +53,7 @@ class TransactionManager(QObject):
         # References to subsystems (injected)
         self._file_ops = None
         self._trash_manager = None
+        self._validator = None
 
     # -------------------------------------------------------------------------
     # PUBLIC API (Called by AppBridge / UI)
@@ -111,14 +111,6 @@ class TransactionManager(QObject):
         
         self.conflictResolved.emit(job_id, resolution)
         
-        # Re-execute the operation based on resolution
-        # We need to know WHAT the operation was. 
-        # conflict_data usually has 'op_type', 'src', 'dest' (implied)
-        # But conflict_data from FileOps is structured: {error, src{}, dest{}}
-        # It doesn't have op_type/src/dest paths!
-        # Wait, the signal emitted (job_id, op_type, path, message, data).
-        # We need to store op_type and path when we catch the error!
-        
         stored_ctx = conflict_data.get("_context", {})
         op_type = stored_ctx.get("op_type")
         src = stored_ctx.get("src")
@@ -128,49 +120,96 @@ class TransactionManager(QObject):
             print(f"[TM] Error: Missing context for conflict {job_id}")
             return
 
-        tid = stored_ctx.get("tid") # Extract TID from context to use in resolution calls
+        tid = stored_ctx.get("tid")
         if not tid:
              print(f"[TM] Warning: No TID found in conflict context for {job_id}")
-             # try to find it via job_id?
-             pass
 
         # Execute Resolution
         if resolution == "overwrite":
-            # Re-submit with overwrite enabled
-            
             if op_type == "restore":
-                if self._file_ops:
-                    self._file_ops.restore(src, transaction_id=tid, overwrite=True)
+                self._file_ops.restore(src, transaction_id=tid, overwrite=True)
             elif op_type == "copy":
-                if self._file_ops:
-                    print(f"[TM] Resolving COPY conflict with overwrite=True")
-                    self._file_ops.copy(src, dest, transaction_id=tid, overwrite=True)
+                print(f"[TM] Resolving COPY conflict with overwrite=True")
+                self._file_ops.copy(src, dest, transaction_id=tid, overwrite=True)
             elif op_type == "move":
-                if self._file_ops:
-                    print(f"[TM] Resolving MOVE conflict with overwrite=True")
-                    self._file_ops.move(src, dest, transaction_id=tid, overwrite=True)
+                print(f"[TM] Resolving MOVE conflict with overwrite=True")
+                self._file_ops.move(src, dest, transaction_id=tid, overwrite=True)
                  
         elif resolution == "rename":
-            # Calculate new destination
-            import os
-            # [SECURITY] Sanitize input to prevent path traversal
-            safe_name = os.path.basename(new_name) if new_name else ""
-            if not safe_name and new_name:
-                print(f"[TM] Security Warning: Invalid rename target '{new_name}'")
-                return
-
-            base_dir = os.path.dirname(dest)
-            new_dest = os.path.join(base_dir, safe_name) if safe_name else dest
+            new_dest = self._file_ops.build_renamed_dest(dest, new_name) if dest else dest
             
             if op_type == "restore":
-                if self._file_ops:
-                    self._file_ops.restore(src, transaction_id=tid, rename_to=new_name)
+                self._file_ops.restore(src, transaction_id=tid, rename_to=new_name)
             elif op_type == "copy":
-                if self._file_ops:
-                    self._file_ops.copy(src, new_dest, transaction_id=tid)
+                self._file_ops.copy(src, new_dest, transaction_id=tid)
             elif op_type == "move":
-                if self._file_ops:
-                    self._file_ops.move(src, new_dest, transaction_id=tid)
+                self._file_ops.move(src, new_dest, transaction_id=tid)
+
+    # -------------------------------------------------------------------------
+    # BATCH OPERATIONS (Replaces UI-Layer Loops)
+    # -------------------------------------------------------------------------
+
+    def batchTransfer(
+        self,
+        sources: List[str],
+        dest_dir: str,
+        mode: str = "auto",
+        conflict_resolver: Optional[Callable] = None,
+    ):
+        """
+        Execute a batch file transfer (paste or drag-drop).
+
+        This replaces the synchronous loop that was previously in FileManager.
+        Core now owns the iteration logic, same-folder detection, and conflict
+        resolution orchestration.
+
+        Args:
+            sources: List of source paths/URIs.
+            dest_dir: Destination directory path/URI.
+            mode: "copy", "move", or "auto".
+            conflict_resolver: Optional callback(src, dest) -> (action, final_dest).
+                               Returns a tuple of (action_string, final_dest).
+                               action_string is one of: "cancel", "skip", "overwrite", "rename".
+                               If None, auto-rename is used for conflicts.
+        """
+        if not self._file_ops:
+            print("[TM] CRITICAL: FileOperations not injected.")
+            return
+
+        is_move = mode == "move"
+        op_name = "Move" if is_move else ("Copy" if mode == "copy" else "Transfer")
+        tid = self.startTransaction(f"{op_name} {len(sources)} items")
+
+        for src in sources:
+            if not self._file_ops.check_exists(src):
+                continue
+
+            # Let FileOperations build the actual dest path.
+            # We only need to know same-folder for the skip/duplicate decision.
+            dest = self._file_ops.build_dest_path(src, dest_dir)
+
+            # Same-folder detection
+            if self._file_ops.is_same_file(src, dest):
+                if is_move:
+                    continue  # Can't move a file to itself
+                else:
+                    # Same-folder copy = Duplicate with auto-rename
+                    self._file_ops.copy(src, dest, transaction_id=tid, auto_rename=True)
+                    continue
+
+            # Conflict resolution
+            if conflict_resolver:
+                action, final_dest = conflict_resolver(src, dest)
+
+                if action == "cancel":
+                    break
+                if action == "skip":
+                    continue
+                dest = final_dest
+
+            self._file_ops.transfer(src, dest, mode=mode, transaction_id=tid)
+
+        self.commitTransaction(tid)
 
     # -------------------------------------------------------------------------
     # DEPENDENCY INJECTION
@@ -188,6 +227,10 @@ class TransactionManager(QObject):
     def setTrashManager(self, trash_manager):
         # Legacy stub: TrashManager is now merged into FileOperations
         pass
+
+    def setValidator(self, validator):
+        """Inject OperationValidator for post-operation verification."""
+        self._validator = validator
 
     # -------------------------------------------------------------------------
     # SIGNAL HANDLERS
@@ -256,6 +299,10 @@ class TransactionManager(QObject):
                 op.dest = result_path 
                 op.result_path = result_path
                 print(f"[TM] ✓ {op_type.upper()}: {op.src} -> {result_path}")
+                
+                # [NEW] Fire async post-condition validation
+                if self._validator:
+                    self._validator.validate(job_id, op_type, op.src, result_path, True)
             else:
                  op.error = message
                  print(f"[TM] ✗ {op_type.upper()} Failed: {op.src} (Error: {message})")

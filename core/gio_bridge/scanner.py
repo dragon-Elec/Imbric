@@ -26,7 +26,7 @@ from core.gio_bridge.count_worker import ItemCountWorker
 from core.gio_bridge.dimension_worker import DimensionWorker
 
 
-class FileScanner(QObject):
+class DirectoryReader(QObject):
     """
     Async directory scanner using Gio.
     
@@ -304,7 +304,15 @@ class FileScanner(QObject):
             if self._factory is None:
                 self._factory = GnomeDesktop.DesktopThumbnailFactory.new(GnomeDesktop.DesktopThumbnailSize.LARGE)
 
-            mime_type = info.get_content_type() or ""
+            # Safely get MIME type to prevent GLib-GIO-CRITICAL errors on FTP servers
+            mime_type = ""
+            if info.has_attribute("standard::content-type"):
+                mime_type = info.get_content_type() or ""
+            
+            if not mime_type:
+                # Use Gio's shared-mime-info database (same as Nemo) instead of Python's limited mimetypes
+                guessed_type, _certain = Gio.content_type_guess(name, None)
+                mime_type = guessed_type or ""
             
             # 2. Check for existing thumbnail (Fastest path)
             thumb_path = info.get_attribute_byte_string("standard::thumbnail-path")
@@ -318,12 +326,10 @@ class FileScanner(QObject):
                 uri = "file://" + urllib.parse.quote(full_path)
                 mtime = info.get_modification_date_time().to_unix() if info.get_modification_date_time() else 0
                 
-                # Only check if it's a file (directories don't get thumbnails via this factory usually)
-                if not is_dir:
-                    try:
-                        is_visual = self._factory.can_thumbnail(uri, mime_type, mtime)
-                    except Exception:
-                        pass
+                try:
+                    is_visual = self._factory.can_thumbnail(uri, mime_type, mtime)
+                except Exception:
+                    pass
             
             # is_visual tells the UI to request a thumbnail.
             # should_read_dimensions tells the backend to read the header for Aspect Ratio.
@@ -375,8 +381,8 @@ class FileScanner(QObject):
             # Determine icon name for non-visual files (used by QML image://theme/)
             icon_name = ""
             if not is_visual:
-                # Convert MIME type to icon name (e.g., "inode/directory" -> "inode-directory")
-                icon_name = mime_type.replace("/", "-") if mime_type else "application-x-generic"
+                # We now pass the raw MIME type. ThemeImageProvider will dynamically resolve the correct GIcon fallbacks.
+                icon_name = mime_type if mime_type else "application/x-generic"
 
             batch.append({
                 # Core

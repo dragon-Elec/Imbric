@@ -3,7 +3,7 @@
 Contains shared definitions (Jobs, Signals) and Standard File Operations (Copy, Move, Rename).
 """
 
-import os
+
 import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List
@@ -13,6 +13,20 @@ gi.require_version('Gio', '2.0')
 from gi.repository import Gio, GLib
 
 from core.metadata_utils import get_file_info
+
+# =============================================================================
+# GIO PATH HELPERS
+# =============================================================================
+
+def _make_gfile(path_or_uri: str) -> Gio.File:
+    """Create Gio.File from local path or URI. Handles both transparently."""
+    if '://' in path_or_uri:
+        return Gio.File.new_for_uri(path_or_uri)
+    return Gio.File.new_for_path(path_or_uri)
+
+def _gfile_path(gfile: Gio.File) -> str:
+    """Get usable path string. Returns local path if available, URI otherwise."""
+    return gfile.get_path() or gfile.get_uri()
 
 # =============================================================================
 # SHARED UTILS (Global)
@@ -117,33 +131,84 @@ class FileOperationRunnable(QRunnable):
         """Gio progress callback adapter."""
         self.emit_progress(current_bytes, total_bytes)
 
+    def _run_create_operation(self, op_type: str, target_path: str):
+        """
+        Shared logic for all create operations (folder, file, symlink).
+        Subclasses must override _do_create(gfile) with the actual Gio call.
+        """
+        self.emit_started()
+
+        if self.job.auto_rename:
+            counter = 0
+            while counter < 10000:
+                candidate = generate_candidate_path(target_path, counter, style="number")
+                gfile = _make_gfile(candidate)
+                try:
+                    self._do_create(gfile)
+                    self.emit_finished(True, candidate, result_override=candidate)
+                    return
+                except GLib.Error as e:
+                    if e.code == Gio.IOErrorEnum.EXISTS:
+                        counter += 1
+                        continue
+                    if e.code != Gio.IOErrorEnum.CANCELLED:
+                        self.signals.operationError.emit(
+                            self.job.transaction_id, self.job.id,
+                            op_type, candidate, str(e), None
+                        )
+                    self.emit_finished(False, str(e))
+                    return
+            self.emit_finished(False, "Auto-rename limit reached")
+            return
+
+        # Standard Create (Fail if Exists)
+        gfile = _make_gfile(target_path)
+        try:
+            self._do_create(gfile)
+            self.emit_finished(True, target_path)
+        except GLib.Error as e:
+            if e.code == Gio.IOErrorEnum.EXISTS:
+                conflict_data = build_conflict_payload(target_path, target_path)
+                self.signals.operationError.emit(
+                    self.job.transaction_id, self.job.id,
+                    op_type, target_path, str(e), conflict_data
+                )
+                self.emit_finished(False, str(e))
+            else:
+                if e.code != Gio.IOErrorEnum.CANCELLED:
+                    self.signals.operationError.emit(
+                        self.job.transaction_id, self.job.id,
+                        op_type, target_path, str(e), None
+                    )
+                self.emit_finished(False, str(e))
+
+    def _do_create(self, gfile):
+        """Override in subclass. Execute the actual Gio create call."""
+        raise NotImplementedError
+
     # Removed local build_conflict_data helper, using global build_conflict_payload
 
+def _split_name_ext(filename: str) -> tuple[str, str]:
+    """Split filename into (base, ext). Handles .tar.gz and dotfiles."""
+    if filename.endswith(".tar.gz"):
+        return filename[:-7], ".tar.gz"
+    dot = filename.rfind(".")
+    if dot <= 0:
+        return filename, ""
+    return filename[:dot], filename[dot:]
+
 def generate_candidate_path(base_path: str, counter: int, style: str = "copy") -> str:
-    """
-    Generates a candidate path for auto-renaming.
-    style='copy' -> "File (Copy).txt", "File (Copy 2).txt"
-    style='number' -> "File (1).txt"
-    """
+    """Generate a candidate path for auto-renaming. Returns full path."""
     if counter == 0:
         return base_path
-        
-    parent = os.path.dirname(base_path)
-    base_name = os.path.basename(base_path)
-    
-    # Simple splitext matches Nautilus behavior generally
-    name_part, ext_part = os.path.splitext(base_name)
-    
-    if base_name.endswith(".tar.gz"):
-         name_part = base_name[:-7]
-         ext_part = ".tar.gz"
-    
+    gfile = _make_gfile(base_path)
+    parent = gfile.get_parent()
+    name, ext = _split_name_ext(gfile.get_basename())
     if style == "copy":
         suffix = " (Copy)" if counter == 1 else f" (Copy {counter})"
     else:
         suffix = f" ({counter})"
-        
-    return os.path.join(parent, f"{name_part}{suffix}{ext_part}")
+    return _gfile_path(parent.get_child(f"{name}{suffix}{ext}"))
 
 # =============================================================================
 # STANDARD OPERATIONS
@@ -165,14 +230,11 @@ class TransferRunnable(FileOperationRunnable):
         # [NEW] Atomic Auto-Rename Loop
         # We loop until we successfully transfer without an EXISTS error
         base_dest = self.job.dest
-        base_name = os.path.basename(base_dest)
-        parent = os.path.dirname(base_dest)
-        name_part, ext_part = os.path.splitext(base_name)
         
         counter = 0
         # If explicitly copying to same path (Duplication), start with 1 (Copy)
         # to avoid trying to overwrite self (which might succeed/fail unpredictably)
-        if os.path.abspath(self.job.source) == os.path.abspath(base_dest):
+        if _make_gfile(self.job.source).equal(_make_gfile(base_dest)):
             counter = 1
             
         max_retries = 10000 if self.job.auto_rename else 1
@@ -181,8 +243,8 @@ class TransferRunnable(FileOperationRunnable):
             # 1. Calculate Candidate Path
             final_dest = generate_candidate_path(base_dest, counter, style="copy")
 
-            src_file = Gio.File.new_for_path(self.job.source)
-            dst_file = Gio.File.new_for_path(final_dest)
+            src_file = _make_gfile(self.job.source)
+            dst_file = _make_gfile(final_dest)
             
             try:
                 self.job.skipped_files = []
@@ -240,18 +302,17 @@ class TransferRunnable(FileOperationRunnable):
                     else:
                         # Conflict!
                         conflict_data = build_conflict_payload(self.job.source, final_dest)
-                        self.signals.operationError.emit(self.job.transaction_id, self.job.id, self.job.op_type, final_dest, "Conflict", conflict_data)
-                        self.emit_finished(False, "Conflict detected")
+                        self.signals.operationError.emit(self.job.transaction_id, self.job.id, self.job.op_type, final_dest, str(e), conflict_data)
+                        self.emit_finished(False, str(e))
                         return
                 else:
-                    msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
                     if e.code != Gio.IOErrorEnum.CANCELLED:
-                        self.signals.operationError.emit(self.job.transaction_id, self.job.id, self.job.op_type, final_dest, msg, None)
-                    self.emit_finished(False, msg)
+                        self.signals.operationError.emit(self.job.transaction_id, self.job.id, self.job.op_type, final_dest, str(e), None)
+                    self.emit_finished(False, str(e))
                     return
         
         # If loop finishes without return (counter maxed)
-        self.emit_finished(False, "Could not find unique name for copy (limit reached)")
+        self.emit_finished(False, "Auto-rename limit reached")
 
     def _recursive_transfer(self, source, dest, is_move=False):
         """Unified recursive transfer logic."""
@@ -301,81 +362,52 @@ class TransferRunnable(FileOperationRunnable):
 class RenameRunnable(FileOperationRunnable):
     def run(self):
         self.emit_started()
-        gfile = Gio.File.new_for_path(self.job.source)
+        gfile = _make_gfile(self.job.source)
         try:
             # dest holds the new NAME, not full path
             result = gfile.set_display_name(self.job.dest, self.job.cancellable)
             if result:
-                # Ensure absolute path (Gio can return relative sometimes)
-                parent = os.path.dirname(self.job.source)
-                abs_path = os.path.join(parent, self.job.dest)
+                # Use the Gio.File returned by set_display_name for the correct path
+                abs_path = _gfile_path(result)
                 self.emit_finished(True, "Success", result_override=abs_path)
             else:
-                self.emit_finished(False, "Rename failed")
+                self.emit_finished(False, str(e))
         except GLib.Error as e:
-            # Check for conflict on rename
             if e.code == Gio.IOErrorEnum.EXISTS:
-                 # Construct full dest path for conflict logic
-                 parent = os.path.dirname(self.job.source)
-                 dest_path = os.path.join(parent, self.job.dest)
+                 src_gfile = _make_gfile(self.job.source)
+                 dest_path = _gfile_path(src_gfile.get_parent().get_child(self.job.dest))
                  conflict_data = build_conflict_payload(self.job.source, dest_path)
-                 self.signals.operationError.emit(self.job.transaction_id, self.job.id, "rename", dest_path, "Conflict detected", conflict_data)
-                 self.emit_finished(False, "Conflict detected")
+                 self.signals.operationError.emit(self.job.transaction_id, self.job.id, "rename", dest_path, str(e), conflict_data)
+                 self.emit_finished(False, str(e))
             else:
-                 msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
                  if e.code != Gio.IOErrorEnum.CANCELLED:
-                     self.signals.operationError.emit(self.job.transaction_id, self.job.id, "rename", self.job.source, msg, None)
-                 self.emit_finished(False, msg)
+                     self.signals.operationError.emit(self.job.transaction_id, self.job.id, "rename", self.job.source, str(e), None)
+                 self.emit_finished(False, str(e))
 
 class CreateFolderRunnable(FileOperationRunnable):
+    """Creates a new directory."""
     def run(self):
-        self.emit_started()
-        
-        target_path = self.job.source
-        
-        # [NEW] Atomic Auto-Rename Loop
-        if self.job.auto_rename:
-            base_name = os.path.basename(target_path)
-            parent = os.path.dirname(target_path)
-            name_part, ext_part = os.path.splitext(base_name)
-            
-            counter = 0
-            # Safety limit to prevent infinite loops
-            while counter < 10000:
-                candidate = generate_candidate_path(target_path, counter, style="number")
-                
-                gfile = Gio.File.new_for_path(candidate)
-                try:
-                    gfile.make_directory(self.job.cancellable)
-                    self.emit_finished(True, candidate, result_override=candidate)
-                    return
-                except GLib.Error as e:
-                    if e.code == Gio.IOErrorEnum.EXISTS:
-                         counter += 1
-                         continue
-                    
-                    # Handle Cancel/Other errors immediately
-                    msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
-                    if e.code != Gio.IOErrorEnum.CANCELLED:
-                        self.signals.operationError.emit(self.job.transaction_id, self.job.id, "createFolder", candidate, msg, None)
-                    self.emit_finished(False, msg)
-                    return
-            
-            self.emit_finished(False, "Could not find unique name (limit reached)")
-            return
+        self._run_create_operation("createFolder", self.job.source)
 
-        # Standard Create (Fail if Exists)
-        gfile = Gio.File.new_for_path(target_path)
-        try:
-            gfile.make_directory(self.job.cancellable)
-            self.emit_finished(True, target_path)
-        except GLib.Error as e:
-            if e.code == Gio.IOErrorEnum.EXISTS:
-                conflict_data = build_conflict_payload(target_path, target_path)
-                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "createFolder", target_path, "Folder exists", conflict_data)
-                self.emit_finished(False, "Folder exists")
-            else:
-                msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
-                if e.code != Gio.IOErrorEnum.CANCELLED:
-                    self.signals.operationError.emit(self.job.transaction_id, self.job.id, "createFolder", target_path, msg, None)
-                self.emit_finished(False, msg)
+    def _do_create(self, gfile):
+        gfile.make_directory(self.job.cancellable)
+
+
+class CreateFileRunnable(FileOperationRunnable):
+    """Creates an empty file."""
+    def run(self):
+        self._run_create_operation("createFile", self.job.source)
+
+    def _do_create(self, gfile):
+        stream = gfile.create(Gio.FileCreateFlags.NONE, self.job.cancellable)
+        stream.close(None)
+
+
+class CreateSymlinkRunnable(FileOperationRunnable):
+    """Creates a symbolic link. source = target file, dest = link location."""
+    def run(self):
+        self._run_create_operation("createSymlink", self.job.dest)
+
+    def _do_create(self, gfile):
+        gfile.make_symbolic_link(self.job.source, self.job.cancellable)
+

@@ -1,38 +1,34 @@
-"""
-[NEW] FileOperations (Controller)
-
-Unified controller for all file operations (Standard + Trash).
-Replaces the old split architecture (FileOperations vs TrashManager).
-Uses shared worker classes for logic.
-"""
+"""FileOperations — Unified controller for all file I/O (Standard + Trash)."""
 
 from uuid import uuid4
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QObject, Signal, Slot, QThreadPool, QMutex, QMutexLocker, Qt
 
-import gi
-gi.require_version('Gio', '2.0')
-from gi.repository import Gio, GLib
-
-# Import shared workers
 from core.file_workers import (
-    FileJob, FileOperationSignals,
-    TransferRunnable, RenameRunnable, CreateFolderRunnable
+    FileJob, FileOperationSignals, _make_gfile, _gfile_path,
+    TransferRunnable, RenameRunnable, CreateFolderRunnable,
+    CreateFileRunnable, CreateSymlinkRunnable,
+    generate_candidate_path,
 )
 from core.trash_workers import (
     TrashItem, SendToTrashRunnable, RestoreFromTrashRunnable,
     ListTrashRunnable, EmptyTrashRunnable
 )
 
+_MAX_RENAME_ATTEMPTS = 1000
+
+def _split_name_ext(filename: str) -> tuple[str, str]:
+    """Split filename into (base, ext). Handles .tar.gz and dotfiles."""
+    if filename.endswith(".tar.gz"):
+        return filename[:-7], ".tar.gz"
+    dot = filename.rfind(".")
+    if dot <= 0:
+        return filename, ""
+    return filename[:dot], filename[dot:]
+
 class FileOperations(QObject):
-    """
-    Central controller for Non-blocking file I/O.
-    
-    All operations run in QThreadPool.
-    Handles Copy, Move, Rename, CreateFolder, Trash, Restore.
-    SINGLE source of truth for TransactionManager.
-    """
+    """Central controller for non-blocking file I/O via QThreadPool."""
     
     # Unified Signals
     operationStarted = Signal(str, str, str)     # (job_id, op_type, path)
@@ -158,6 +154,20 @@ class FileOperations(QObject):
         job.auto_rename = auto_rename # Set manually as _create_job doesnt support it yet
         return self._submit(job, CreateFolderRunnable)
 
+    @Slot(str, str, bool, result=str)
+    def createFile(self, path: str, transaction_id: str = "", auto_rename: bool = False) -> str:
+        """Create an empty file at the given path."""
+        job = self._create_job("createFile", path, "", transaction_id)
+        job.auto_rename = auto_rename
+        return self._submit(job, CreateFileRunnable)
+
+    @Slot(str, str, str, bool, result=str)
+    def createSymlink(self, target: str, link_path: str, transaction_id: str = "", auto_rename: bool = False) -> str:
+        """Create a symbolic link at link_path pointing to target."""
+        job = self._create_job("createSymlink", target, link_path, transaction_id)
+        job.auto_rename = auto_rename
+        return self._submit(job, CreateSymlinkRunnable)
+
     # --- TRASH API ---
 
     @Slot(str, str, result=str)
@@ -205,6 +215,40 @@ class FileOperations(QObject):
         return self._submit(job, EmptyTrashRunnable)
 
     # -------------------------------------------------------------------------
+    # VFS HELPERS (delegates to Gio workers)
+    # -------------------------------------------------------------------------
+
+    def check_exists(self, path: str) -> bool:
+        return _make_gfile(path).query_exists(None)
+
+    def is_same_file(self, path_a: str, path_b: str) -> bool:
+        return _make_gfile(path_a).equal(_make_gfile(path_b))
+
+    def build_dest_path(self, src: str, dest_dir: str) -> str:
+        """Build full dest path: dest_dir/basename(src)."""
+        return _gfile_path(_make_gfile(dest_dir).get_child(_make_gfile(src).get_basename()))
+
+    def build_renamed_dest(self, dest: str, new_name: str) -> str:
+        """Replace filename in dest with new_name. Sanitizes to prevent path traversal."""
+        if not new_name:
+            return dest
+        safe_name = _make_gfile(new_name).get_basename()
+        if not safe_name:
+            return dest
+        parent = _make_gfile(dest).get_parent()
+        if not parent:
+            return dest
+        return _gfile_path(parent.get_child(safe_name))
+
+    def generate_unique_name(self, dest_path: str, style: str = "copy") -> str:
+        """Find a conflict-free path by appending suffixes. Raises RuntimeError on limit."""
+        for counter in range(1, _MAX_RENAME_ATTEMPTS + 1):
+            candidate = generate_candidate_path(dest_path, counter, style=style)
+            if not self.check_exists(candidate):
+                return candidate
+        raise RuntimeError(f"Auto-rename limit ({_MAX_RENAME_ATTEMPTS}) for: {dest_path}")
+
+    # -------------------------------------------------------------------------
     # UTILS
     # -------------------------------------------------------------------------
 
@@ -221,19 +265,9 @@ class FileOperations(QObject):
                 for job in self._jobs.values():
                     job.cancellable.cancel()
                     job.status = "cancelled"
-    
+
     def cancelAll(self):
         self.cancel(None)
-
-    @Slot(str, result=bool)
-    def openWithDefaultApp(self, path: str) -> bool:
-        try:
-            gfile = Gio.File.new_for_path(path)
-            Gio.AppInfo.launch_default_for_uri(gfile.get_uri(), None)
-            return True
-        except GLib.Error as e:
-            self.operationError.emit("", "open", "open", path, str(e), None)
-            return False
 
     @Slot(result=int)
     def activeJobCount(self) -> int:

@@ -9,7 +9,7 @@ Usage in QML: source: "image://thumbnail/" + "/path/to/file.jpg"
 
 import gi
 gi.require_version('GnomeDesktop', '3.0')
-from gi.repository import GnomeDesktop, GLib
+from gi.repository import GnomeDesktop, GLib, Gio
 
 from PySide6.QtQuick import QQuickAsyncImageProvider, QQuickImageResponse
 from PySide6.QtGui import QImage, QIcon
@@ -92,128 +92,92 @@ class ThumbnailRunnable(QRunnable):
             self._response.set_image(img)
             return
         
-        # --- Symlink Resolution ---
-        is_symlink = os.path.islink(file_path)
-        resolved_path = os.path.realpath(file_path) if is_symlink else file_path
+        # --- Gio.File Init ---
+        gfile = Gio.File.parse_name(file_path)
         
-        # --- 1. HANDLE BROKEN SYMLINKS ---
-        if not os.path.exists(resolved_path):
-            # Broken Symlink: Base=Link Arrow, Emblem=Unavailable/X
-            # User wants to see it looks like a LINK first, then broken.
-            img = self._get_emblemed_icon(
-                "emblem-symbolic-link",  # Base: Symlink Arrow
-                "emblem-unreadable",     # Overlay: X (Error)
-                target_size
-            )
+        # --- 1. HANDLE BROKEN SYMLINKS/MISSING ---
+        if not gfile.query_exists(None):
+            # Broken/Missing
+            img = self._get_emblemed_icon("emblem-unreadable", "emblem-unreadable", target_size)
             self._response.set_image(img)
             return
 
+        try:
+            info = gfile.query_info(
+                "standard::type,standard::content-type,time::modified,access::can-write", 
+                Gio.FileQueryInfoFlags.NONE, None
+            )
+        except GLib.Error:
+            self._response.set_image(self._get_themed_icon("application-x-generic", target_size))
+            return
+
         # --- 2. HANDLE DIRECTORIES ---
-        if os.path.isdir(resolved_path):
+        if info.get_file_type() == Gio.FileType.DIRECTORY:
             base_icon = "folder"
-            # Check permissions (Locked Folder)
-            if not os.access(resolved_path, os.W_OK):
+            can_write = info.get_attribute_boolean("access::can-write") if info.has_attribute("access::can-write") else True
+            if not can_write:
                 img = self._get_emblemed_icon(base_icon, "emblem-readonly", target_size)
             else:
                 img = self._get_themed_icon(base_icon, target_size)
             self._response.set_image(img)
             return
         
-        # --- 3. HANDLE FILES (Images & Others) ---
-        ext = os.path.splitext(resolved_path)[1].lower()
+        # --- 3. GATHER METADATA ---
+        uri = gfile.get_uri()
+        mtime = info.get_modification_date_time().to_unix() if info.get_modification_date_time() else 0
+        mime_type = info.get_content_type() if info.has_attribute("standard::content-type") else ""
         
-        # Special Case: Locked File (Non-Image)
-        # Verify read/write access. If read-only, we might want a lock emblem.
-        is_locked = not os.access(resolved_path, os.W_OK)
+        if not mime_type:
+            guessed_type, _certain = Gio.content_type_guess(gfile.get_basename(), None)
+            mime_type = guessed_type or 'application/octet-stream'
+            
+        locked = info.has_attribute("access::can-write") and not info.get_attribute_boolean("access::can-write")
         
-        # Non-image files: Get MIME-based icon [+ Lock if needed]
-        # Non-image files: Get MIME-based icon [+ Lock if needed]
-        # [FIX] Trust the MIME type. If it's a known image type or video, we try to thumb it.
-        # Use Gio to detect if we should fallback.
-        
-        # If we have no extension, we rely purely on MIME type (which factory handles).
-        # We only fallback if it's NOT an image/video MIME type.
-        
-        try:
-             # Re-query MIME if not passed (though ideally we should pass it)
-             # For now, let's treat "application/octet-stream" as a potential fallback
-             pass
-        except:
-             pass
-
-        # We allow the factory to attempt ANY file. 
-        # Only if it fails will we show the generic icon later.
-        
-        # --- 4. HANDLE IMAGES ---
-        # Try GNOME thumbnail cache
-        uri = "file://" + urllib.parse.quote(resolved_path)
-        try:
-            mtime = int(os.path.getmtime(resolved_path))
-        except OSError:
-            self._response.set_image(self._get_themed_icon("image-x-generic", target_size))
-            return
-        
-        # Check cache
+        # --- 4. HANDLE THUMBNAILS (Images, Audio, Video) ---
         thumb_path = factory.lookup(uri, mtime)
         
         if not thumb_path:
-            # Generate thumbnail
+            # Tell GNOME to generate it using its external thumbnailers (like for songs and videos)
             try:
-                # Use Gio to detect the actual content type content_type
-                try:
-                    # We create a new file object for the path to query its content type
-                    # This is fast and local
-                    gfile = Gio.File.new_for_path(resolved_path) 
-                    info = gfile.query_info("standard::content-type", Gio.FileQueryInfoFlags.NONE, None)
-                    mime_type = info.get_content_type()
-                except Exception:
-                    # Fallback if Gio fails
-                    mime_map = {
-                        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-                        '.png': 'image/png', '.gif': 'image/gif',
-                        '.bmp': 'image/bmp', '.webp': 'image/webp',
-                        '.svg': 'image/svg+xml', '.tiff': 'image/tiff',
-                        '.tif': 'image/tiff', '.ico': 'image/x-icon',
-                    }
-                    mime_type = mime_map.get(ext, 'image/png')
-                
-                if mime_type:
-                    pixbuf = factory.generate_thumbnail(uri, mime_type)
-                    if pixbuf:
-                        factory.save_thumbnail(pixbuf, uri, mtime)
-                        thumb_path = factory.lookup(uri, mtime) 
-            except Exception:
-                pass 
+                pixbuf = factory.generate_thumbnail(uri, mime_type)
+                if pixbuf:
+                    factory.save_thumbnail(pixbuf, uri, mtime)
+                    thumb_path = factory.lookup(uri, mtime) 
+            except Exception as e:
+                print(f"[ThumbnailProvider] GNOME Factory failed to generate thumbnail for {uri}: {e}")
         
         # Load from thumbnail or original
         is_from_cache = False
+        img = QImage()
+        
         if thumb_path and os.path.exists(thumb_path):
             img = QImage(thumb_path)
             is_from_cache = True
-        else:
+        elif gfile.is_native(): # Don't try to open remote streams as an image!
             # FIX: Memory-efficient loading via QImageReader
             from PySide6.QtGui import QImageReader
-            reader = QImageReader(resolved_path)
-            
-            # [SAFETY] Always limit decode size for raw files to prevent RAM explosion
-            # If requested_size is invalid (removed from QML for quality), use target_size (256)
-            decode_size = requested_size if requested_size.isValid() else target_size
-            reader.setScaledSize(decode_size)
-            
-            img = reader.read()
+            local_path = gfile.get_path()
+            if local_path:
+                reader = QImageReader(local_path)
+                
+                # [SAFETY] Always limit decode size for raw files to prevent RAM explosion
+                decode_size = requested_size if requested_size.isValid() else target_size
+                reader.setScaledSize(decode_size)
+                
+                read_img = reader.read()
+                if not read_img.isNull():
+                    img = read_img
         
         if img.isNull():
-             # [FIX] If thumbnailing failed completely, fallback to MIME icon
-            img = self._get_mime_icon(resolved_path, target_size)
+             # If thumbnailing failed completely, fallback to MIME icon
+            img = self._get_mime_icon_from_type(mime_type, target_size)
             
         elif requested_size.isValid() and not is_from_cache:
-            # Only scale if we loaded a raw original image.
-            # If it's a cached thumbnail (256px), return as-is for HiDPI sharpness.
             from PySide6.QtCore import Qt
             img = img.scaled(requested_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             
-        # Add Lock Emblem if needed (even on thumbnails!)
-        if is_locked:
+        # Add Lock Emblem if needed
+        if locked:
             img = self._overlay_emblem(img, "emblem-readonly", target_size)
             
         self._response.set_image(img)

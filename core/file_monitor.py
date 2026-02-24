@@ -74,7 +74,10 @@ class FileMonitor(QObject):
             print(f"FileMonitor: Watching {directory_path}")
             
         except GLib.Error as e:
-            print(f"FileMonitor: Failed to watch {directory_path}: {e}")
+            if e.matches(Gio.io_error_quark(), Gio.IOErrorEnum.NOT_SUPPORTED):
+                print(f"FileMonitor: Live watching not supported for {directory_path} (e.g. FTP/Network mount). Polling disabled.")
+            else:
+                print(f"FileMonitor: Failed to watch {directory_path}: {e}")
     
     # -------------------------------------------------------------------------
     # STOP MONITORING

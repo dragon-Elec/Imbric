@@ -3,7 +3,6 @@
 Contains Trash-specific operations (Send, Restore, List, Empty).
 """
 
-import os
 from dataclasses import dataclass
 from typing import List
 
@@ -11,7 +10,7 @@ import gi
 gi.require_version('Gio', '2.0')
 from gi.repository import Gio, GLib
 
-from core.file_workers import FileOperationRunnable, FileJob, FileOperationSignals, build_conflict_payload
+from core.file_workers import FileOperationRunnable, FileJob, FileOperationSignals, build_conflict_payload, _make_gfile, _gfile_path
 from core.metadata_utils import get_file_info
 
 @dataclass
@@ -31,7 +30,7 @@ class SendToTrashRunnable(FileOperationRunnable):
     def run(self):
         self.emit_started()
         path = self.job.source
-        gfile = Gio.File.new_for_path(path)
+        gfile = _make_gfile(path)
         
         try:
             gfile.trash(self.job.cancellable)
@@ -39,20 +38,14 @@ class SendToTrashRunnable(FileOperationRunnable):
             self.emit_finished(True, path)
             
         except GLib.Error as e:
-            if e.code == Gio.IOErrorEnum.CANCELLED:
-                self.emit_finished(False, "Cancelled")
-            elif e.code == Gio.IOErrorEnum.NOT_SUPPORTED:
-                # Signal the UI to offer permanent deletion
+            if e.code == Gio.IOErrorEnum.NOT_SUPPORTED:
                 self.signals.trashNotSupported.emit(path, str(e))
-                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "trash", path, "Trash not supported", None)
-                self.emit_finished(False, "Trash not supported on this drive")
             elif e.code == Gio.IOErrorEnum.PERMISSION_DENIED:
                 self.signals.trashNotSupported.emit(path, str(e))
-                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "trash", path, "Permission denied", None)
-                self.emit_finished(False, "Permission denied")
-            else:
+            
+            if e.code != Gio.IOErrorEnum.CANCELLED:
                 self.signals.operationError.emit(self.job.transaction_id, self.job.id, "trash", path, str(e), None)
-                self.emit_finished(False, str(e))
+            self.emit_finished(False, str(e))
 
 class RestoreFromTrashRunnable(FileOperationRunnable):
     """Restores a file from trash to its original location."""
@@ -67,8 +60,8 @@ class RestoreFromTrashRunnable(FileOperationRunnable):
             # Determine final path (might be renamed)
             final_path = original_path
             if self.job.rename_to:
-                parent = os.path.dirname(original_path)
-                final_path = os.path.join(parent, self.job.rename_to)
+                parent_gfile = _make_gfile(original_path).get_parent()
+                final_path = _gfile_path(parent_gfile.get_child(self.job.rename_to))
                 
             self.emit_finished(True, final_path)
             
@@ -82,8 +75,8 @@ class RestoreFromTrashRunnable(FileOperationRunnable):
                 # Use Shared Builder
                 final_dest_path = original_path
                 if self.job.rename_to:
-                    parent = os.path.dirname(original_path)
-                    final_dest_path = os.path.join(parent, self.job.rename_to)
+                    parent_gfile = _make_gfile(original_path).get_parent()
+                    final_dest_path = _gfile_path(parent_gfile.get_child(self.job.rename_to))
                     
                 conflict_data = build_conflict_payload(
                     src_path=self.job.source,
@@ -91,13 +84,12 @@ class RestoreFromTrashRunnable(FileOperationRunnable):
                     extra_src_data=extra_src_data
                 )
                 
-                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "restore", original_path, "Conflict detected", conflict_data)
-                self.emit_finished(False, "Conflict detected")
+                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "restore", original_path, str(e), conflict_data)
+                self.emit_finished(False, str(e))
             else:
-                msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
                 if e.code != Gio.IOErrorEnum.CANCELLED:
-                    self.signals.operationError.emit(self.job.transaction_id, self.job.id, "restore", original_path, msg, None)
-                self.emit_finished(False, msg)
+                    self.signals.operationError.emit(self.job.transaction_id, self.job.id, "restore", original_path, str(e), None)
+                self.emit_finished(False, str(e))
                 
         except Exception as e:
             msg = str(e)
@@ -267,10 +259,9 @@ class EmptyTrashRunnable(FileOperationRunnable):
             deleted_count = self._empty_trash()
             self.emit_finished(True, str(deleted_count))
         except GLib.Error as e:
-            msg = "Cancelled" if e.code == Gio.IOErrorEnum.CANCELLED else str(e)
             if e.code != Gio.IOErrorEnum.CANCELLED:
-                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "empty", "Trash", msg, None)
-            self.emit_finished(False, msg)
+                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "empty", "Trash", str(e), None)
+            self.emit_finished(False, str(e))
         except Exception as e:
             msg = str(e)
             self.signals.operationError.emit(self.job.transaction_id, self.job.id, "empty", "Trash", msg, None)

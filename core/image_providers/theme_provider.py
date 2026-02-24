@@ -37,13 +37,25 @@ class ThemeImageProvider(QQuickImageProvider):
         Returns:
             QPixmap (size is set via output parameter automatically by Qt)
         """
-        # Determine target size (default to 128x128 if not specified)
         target_size = requestedSize if requestedSize.isValid() else QSize(128, 128)
         
-        # Load the icon from system theme
-        icon = QIcon.fromTheme(id)
+        icon = QIcon()
         
-        # Fallback to generic icon if theme icon not found
+        # If the requested ID is a MIME type (contains '/'), use Gio to get proper fallback names
+        if "/" in id:
+            from gi.repository import Gio
+            gicon = Gio.content_type_get_icon(id)
+            if gicon and hasattr(gicon, 'get_names'):
+                for name in gicon.get_names():
+                    if QIcon.hasThemeIcon(name):
+                        icon = QIcon.fromTheme(name)
+                        break
+        else:
+            # Standard single icon name request
+            if QIcon.hasThemeIcon(id):
+                icon = QIcon.fromTheme(id)
+        
+        # Fallback to generic icon if theme icon not found or generation failed
         if icon.isNull():
             icon = QIcon.fromTheme("application-x-generic")
         
