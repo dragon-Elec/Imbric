@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 import sys
+import time
+
+# [DIAGNOSTICS] Capture absolute start time and base module count
+_START_TIME = time.perf_counter()
+_BASE_MODULE_COUNT = len(sys.modules)
 import signal
 import os
 import argparse
@@ -123,6 +128,14 @@ def main():
     # This allows F12 diagnostics to work immediately without losing early history
     from scripts.diagnostics import MemoryProfiler
     MemoryProfiler.start()
+
+    # [DIAGNOSTICS] Print final startup metrics just before handing off to the Qt Event Loop
+    startup_ms = (time.perf_counter() - _START_TIME) * 1000
+    total_modules = len(sys.modules)
+    app_modules = total_modules - _BASE_MODULE_COUNT
+    print(f"\n[Diagnostics] Imbric Engine Initialized:")
+    print(f"  └─ Boot Time:  {startup_ms:.1f} ms")
+    print(f"  └─ Footprint:  {total_modules} total modules loaded into RAM ({app_modules} application-specific)")
 
     ret_code = app.exec()
 
