@@ -3,11 +3,6 @@ ConflictDialog — File Conflict Resolution Dialog
 
 A reusable dialog for handling file name conflicts during copy/move operations.
 Provides Skip/Overwrite/Rename/Cancel options with "Apply to all" support.
-
-Design Notes:
-- Each paste/drop operation creates one ConflictResolver instance
-- The resolver tracks "apply to all" state for that batch
-- This design works with future multi-pane/tab/window: each operation is independent
 """
 
 from enum import Enum, auto
@@ -17,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
-import os
+from gi.repository import Gio
 
 
 class ConflictAction(Enum):
@@ -63,8 +58,10 @@ class ConflictDialog(QDialog):
         layout.addLayout(header)
         
         # File info
-        filename = os.path.basename(dest_path)
-        dest_dir = os.path.dirname(dest_path)
+        gfile = Gio.File.parse_name(dest_path)
+        filename = gfile.get_basename()
+        parent = gfile.get_parent()
+        dest_dir = parent.get_path() or parent.get_uri() if parent else ""
         
         info_text = f"""
         <p>A file named <b>"{filename}"</b> already exists in:</p>
@@ -118,108 +115,3 @@ class ConflictDialog(QDialog):
         self.action = action
         self.apply_to_all = self.apply_all_cb.isChecked()
         self.accept()
-
-
-class ConflictResolver:
-    """
-    Stateful helper for resolving file conflicts during a batch operation.
-    """
-    
-    def __init__(self, parent_widget):
-        self.parent = parent_widget
-        self._apply_all_action = None  # Cached action when "apply to all" is set
-    
-    def resolve(self, src_path: str, dest_path: str) -> tuple[ConflictAction, str]:
-        """
-        Resolve a potential file conflict (Standard Mode: Copy/Paste).
-        Naming Style: "file (Copy).txt"
-        """
-        return self._resolve_internal(src_path, dest_path, naming_template="{base} (Copy){ext}")
-
-    def resolve_rename(self, old_path: str, new_path: str) -> tuple[ConflictAction, str]:
-        """
-        Resolve a potential file conflict (Rename Mode).
-        Naming Style: "file (2).txt"
-        """
-        # Note: 'Skip' is synonymous with 'Cancel' for a single rename op,
-        # but we treat it as CANCEL for safety.
-        # We pass naming_template for counter-based naming
-        return self._resolve_internal(old_path, new_path, naming_template="{base} ({counter}){ext}", start_counter=2)
-
-    def _resolve_internal(self, src, dest, naming_template="{base} (Copy){ext}", start_counter=1) -> tuple[ConflictAction, str]:
-        if not os.path.exists(dest):
-            return (ConflictAction.OVERWRITE, dest)
-        
-        filename = os.path.basename(dest)
-        
-        # Check cache
-        if self._apply_all_action is not None:
-            return self._process_action(self._apply_all_action, dest, naming_template, start_counter)
-        
-        # Show Dialog
-        dialog = ConflictDialog(self.parent, src, dest)
-        dialog.exec()
-        action = dialog.action
-        
-        if dialog.apply_to_all:
-            self._apply_all_action = action
-            
-        return self._process_action(action, dest, naming_template, start_counter)
-    
-    def _process_action(self, action, dest_path, template, start_counter):
-        if action == ConflictAction.SKIP:
-            return (ConflictAction.SKIP, "")
-        elif action == ConflictAction.CANCEL:
-            return (ConflictAction.CANCEL, "")
-        elif action == ConflictAction.OVERWRITE:
-            return (ConflictAction.OVERWRITE, dest_path)
-        elif action == ConflictAction.RENAME:
-            unique = self._generate_unique_name(dest_path, template, start_counter)
-            return (ConflictAction.RENAME, unique)
-        
-        return (ConflictAction.CANCEL, "")
-    
-    def _generate_unique_name(self, dest_path: str, template: str, start_counter: int) -> str:
-        """Generate a unique filename using a template."""
-        folder = os.path.dirname(dest_path)
-        filename = os.path.basename(dest_path)
-        
-        # Handle double extensions (e.g. .tar.gz)
-        # os.path.splitext only splits the last one
-        if filename.endswith(".tar.gz"):
-            base = filename[:-7]
-            ext = ".tar.gz"
-        else:
-            base, ext = os.path.splitext(filename)
-        
-        # First try: might be "file (Copy).txt" or "file (2).txt" 
-        # For copy: default is just " (Copy)" first time, then " (Copy 2)"
-        # For rename: just "(2)"
-        
-        # Special logic for "(Copy)" vs counters
-        # If template has {counter}, we loops.
-        # If template is the default (Copy), we do (Copy) then (Copy 2)
-        
-        if "(Copy)" in template:
-             # Standard copy logic (Legacy behavior preserved)
-            current = f"{base} (Copy){ext}"
-            check_path = os.path.join(folder, current)
-            if not os.path.exists(check_path):
-                return check_path
-                
-            counter = 2
-            while True:
-                current = f"{base} (Copy {counter}){ext}"
-                check_path = os.path.join(folder, current)
-                if not os.path.exists(check_path):
-                    return check_path
-                counter += 1
-        else:
-            # Counter logic (Rename style: file (2), file (3))
-            counter = start_counter
-            while True:
-                current = template.format(base=base, counter=counter, ext=ext)
-                check_path = os.path.join(folder, current)
-                if not os.path.exists(check_path):
-                    return check_path
-                counter += 1

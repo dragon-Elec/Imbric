@@ -4,7 +4,7 @@ ViewManager — Global View Controller
 Handles high-level view actions like Zoom and View Options.
 Delegates active logic to the current Tab's RowBuilder.
 
-Note: Layout logic is now handled by ui.managers.row_builder.RowBuilder.
+Note: Layout logic is now handled by ui.services.row_builder.RowBuilder.
 """
 
 from PySide6.QtCore import QObject, Slot, Signal

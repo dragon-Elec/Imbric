@@ -2,9 +2,10 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import Qt, QUrl, Slot, Signal, Property, QTimer, QObject
 from PySide6.QtQuick import QQuickView
 from pathlib import Path
-import os
 
-from ui.models.tab_model import TabListModel, TabController
+
+from ui.models.tab_model import TabListModel
+from ui.models.tab_controller import TabController
 from core.gio_bridge.quick_access import QuickAccessBridge
 from core.gio_bridge.volumes import VolumesBridge
 

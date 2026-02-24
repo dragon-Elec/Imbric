@@ -9,6 +9,7 @@ from core.file_operations import FileOperations
 from core.file_monitor import FileMonitor
 from core.transaction_manager import TransactionManager
 from core.undo_manager import UndoManager
+from core.operation_validator import OperationValidator
 
 # UI Managers
 from ui.managers.action_manager import ActionManager
@@ -17,9 +18,9 @@ from ui.managers.view_manager import ViewManager
 from ui.models.shortcuts import Shortcuts
 
 # UI Components
-from ui.components.navigation_bar import NavigationBar
-from ui.components.status_bar import StatusBar
-from ui.components.progress_overlay import ProgressOverlay
+from ui.widgets.navigation_bar import NavigationBar
+from ui.widgets.status_bar import StatusBar
+from ui.widgets.progress_overlay import ProgressOverlay
 
 class MainWindow(QMainWindow):
     """
@@ -43,11 +44,16 @@ class MainWindow(QMainWindow):
         self.file_monitor = FileMonitor()
         self.transaction_manager = TransactionManager()
         self.undo_manager = UndoManager(self.transaction_manager)
+        self.operation_validator = OperationValidator()
         
         # Wire Core Logic
         self.transaction_manager.setFileOperations(self.file_ops)
+        self.transaction_manager.setValidator(self.operation_validator)
         self.file_ops.setTransactionManager(self.transaction_manager)
         self.file_ops.setUndoManager(self.undo_manager)
+        
+        # Validator warnings (TODO: wire to UI toast notification)
+        self.operation_validator.validationFailed.connect(self._on_validation_failed)
         # [FIX] Disconnected global reload on directory change to allow surgical updates
         
         # 2. Setup Unified Shell Manager
@@ -58,7 +64,7 @@ class MainWindow(QMainWindow):
         # 3. Setup UI Layout
         # Import CustomHeader only if needed (or generally)
         if self.use_csd:
-            from ui.components.custom_header import CustomHeader
+            from ui.widgets.custom_header import CustomHeader
             
         self._setup_ui()
         
@@ -104,7 +110,7 @@ class MainWindow(QMainWindow):
         
         if self.use_csd:
             # CSD Header (Top)
-            from ui.components.custom_header import CustomHeader
+            from ui.widgets.custom_header import CustomHeader
             self.header = CustomHeader(self.nav_bar, self)
             central_layout.addWidget(self.header)
         else:
@@ -158,10 +164,8 @@ class MainWindow(QMainWindow):
 
     def navigate_to(self, path):
         path = str(path)
-        if not os.path.exists(path): return
         
         self.shell_manager.navigate_to(path)
-        self.file_monitor.watch(path)
         
         # Syncing sidebar to path is now handled internally by Shell or via signals if needed
         # self.sidebar.sync_to_path(path) 
@@ -169,9 +173,12 @@ class MainWindow(QMainWindow):
     def go_up(self):
         tab = self.shell_manager.current_tab
         if tab:
-            parent = os.path.dirname(tab.current_path)
-            if parent and os.path.exists(parent):
-                self.navigate_to(parent)
+            from gi.repository import Gio
+            gfile = Gio.File.parse_name(tab.current_path)
+            parent = gfile.get_parent()
+            if parent:
+                parent_path = parent.get_path() or parent.get_uri()
+                self.navigate_to(parent_path)
 
     def _on_tab_path_changed(self, path):
         """Sync UI components when tab path changes."""
@@ -191,6 +198,7 @@ class MainWindow(QMainWindow):
                     self._active_scanner.filesFound.disconnect(self.status_bar.updateItemCount)
                     # Also disconnect attribute updates
                     self._active_scanner.fileAttributeUpdated.disconnect(self.status_bar.updateAttribute)
+                    self._active_scanner.scanError.disconnect(self.nav_bar.showError)
                 except Exception:
                     pass
             
@@ -198,6 +206,7 @@ class MainWindow(QMainWindow):
             self._active_scanner = tab.scanner
             self._active_scanner.filesFound.connect(self.status_bar.updateItemCount)
             self._active_scanner.fileAttributeUpdated.connect(self.status_bar.updateAttribute)
+            self._active_scanner.scanError.connect(self.nav_bar.showError)
 
     def _on_directory_changed(self):
         # [FIX] Intentional no-op. Full reloads disabled in favor of surgical row_builder updates.
@@ -239,6 +248,12 @@ class MainWindow(QMainWindow):
         dialog.setInformativeText(f"{message}\n\nPath: {path}")
         dialog.setStandardButtons(QMessageBox.Ok)
         dialog.exec()
+
+    @Slot(str, str, str, str, str)
+    def _on_validation_failed(self, job_id: str, op_type: str, source: str, expected: str, actual: str):
+        """Handle post-operation validation failure. Safety net warning."""
+        print(f"[MAIN] ⚠ VALIDATION FAILED: {op_type} on {source} — expected: {expected}, got: {actual}")
+        # TODO: Show a non-modal warning toast in ProgressOverlay or StatusBar
 
     @Slot(str)
     def _on_cancel_requested(self, identifier: str):

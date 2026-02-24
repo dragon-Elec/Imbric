@@ -9,9 +9,10 @@ Consolidates:
 
 from PySide6.QtCore import QObject, Signal, Slot, QMimeData, QUrl
 from PySide6.QtGui import QClipboard, QGuiApplication
-from ui.dialogs.conflicts import ConflictResolver, ConflictAction
+from ui.services.conflict_resolver import ConflictResolver
+from ui.dialogs.conflicts import ConflictAction
+
 from typing import List, Optional
-import os
 
 class FileManager(QObject):
     clipboardChanged = Signal()
@@ -102,22 +103,14 @@ class FileManager(QObject):
         tab = self._current_tab()
         if not tab: return
         
-        # Borrow resolver logic for name generation, or implement simple version
-        # We'll do a simple loop here to avoid instantiating UI dialog classes for logic
         tid = self.mw.transaction_manager.startTransaction(f"Duplicate {len(paths)} items")
         
         for p in paths:
-            if not os.path.exists(p): continue
-            
-            dirname = os.path.dirname(p)
-            filename = os.path.basename(p)
+            if not self.mw.file_ops.check_exists(p): continue
             
             # Target is same folder, so we just use the original path as dest key
             # and let auto_rename handle the (Copy) suffix generation
-            dest_path = p 
-            
-            # [FIX] Use atomic auto_rename in backend. No UI loop!
-            self.mw.file_ops.copy(p, dest_path, transaction_id=tid, auto_rename=True)
+            self.mw.file_ops.copy(p, p, transaction_id=tid, auto_rename=True)
             
         self.mw.transaction_manager.commitTransaction(tid)
 
@@ -173,57 +166,32 @@ class FileManager(QObject):
             self._clipboard.clear()
 
     def _create_folder_internal(self, current_path):
-        # [FIX] Atomic creation via Core. 
+        # Atomic creation via Core.
         # UI only guesses a name for better UX, but Core ensures uniqueness.
         base_name = "Untitled Folder"
-        folder_path = os.path.join(current_path, base_name)
-        
-        # We still queue it for selection, but we rely on backend for naming
-        if tab := self._current_tab():
-             # We queue the BASE path. If it gets renamed to "Untitled Folder (2)", 
-             # we rely on the returned path from op_completed signal to handle selection?
-             # Wait, FileManager.create_new_folder -> file_ops.createFolder -> returns jobID
-             # Then Main Window connects operationCompleted -> AppBridge.selectPath(result_path)
-             # So we don't need to manually queue selection here IF the result path is propagated correctly!
-             
-             # Actually, AppBridge.queueSelectionAfterRefresh is for *reloading* view.
-             # But operationCompleted happens async.
-             # Let's keep a loose generic queue or rely on on_op_completed in MainWindow.
-             pass
-
+        folder_path = self.mw.file_ops.build_dest_path(base_name, current_path)
         self.mw.file_ops.createFolder(folder_path, auto_rename=True)
 
     def _run_transfer(self, sources: List[str], dest_dir: str, is_move: bool):
-        """
-        Generic transfer logic (Paste / DragDrop) with Conflict Resolution.
-        """
+        """Delegate transfer to Core's TransactionManager."""
         resolver = ConflictResolver(self.mw)
-        op_name = "Move" if is_move else "Copy"
-        tid = self.mw.transaction_manager.startTransaction(f"{op_name} {len(sources)} items")
-        # Helper for paste / conflict resolution
+        mode = "move" if is_move else "copy"
 
-        for src in sources:
-            if not os.path.exists(src): continue
-            
-            dest = os.path.join(dest_dir, os.path.basename(src))
-            if os.path.abspath(src) == os.path.abspath(dest):
-                if is_move:
-                    continue # Can't move a file to itself
-                else:
-                    # Same-folder copy = Duplicate with auto-rename
-                    self.mw.file_ops.copy(src, dest, transaction_id=tid, auto_rename=True)
-                    continue
+        # Map ConflictAction enum → plain string for Core contract
+        _ACTION_MAP = {
+            ConflictAction.CANCEL: "cancel",
+            ConflictAction.SKIP: "skip",
+            ConflictAction.OVERWRITE: "overwrite",
+            ConflictAction.RENAME: "rename",
+        }
 
+        def _resolver_callback(src, dest):
             action, final_dest = resolver.resolve(src, dest)
-            
-            if action == ConflictAction.CANCEL: break
-            if action == ConflictAction.SKIP: continue
-            
-            # Smart Transfer handles move/copy logic internally
-            mode = "move" if is_move else "copy"
-            self.mw.file_ops.transfer(src, final_dest, mode=mode, transaction_id=tid)
-            
-        self.mw.transaction_manager.commitTransaction(tid)
+            return (_ACTION_MAP.get(action, "cancel"), final_dest)
+
+        self.mw.transaction_manager.batchTransfer(
+            sources, dest_dir, mode=mode, conflict_resolver=_resolver_callback
+        )
 
     # --- Drag & Drop ---
     
@@ -235,52 +203,17 @@ class FileManager(QObject):
             else:
                 return
 
-        # Convert URLs to local paths
+        # Convert URLs to usable paths (Qt clipboard work — stays in UI)
         real_paths = []
         for u in urls:
             qurl = QUrl(u)
             if qurl.isLocalFile():
                 real_paths.append(qurl.toLocalFile())
-            elif os.path.exists(u):
+            elif self.mw.file_ops.check_exists(u):
                 real_paths.append(u)
 
         if real_paths:
-            # Current Tab context for transaction purposes
-            tab = self._current_tab()
-            current_path = tab.current_path if tab else ""
-            
-            # Use 'move' if source and dest are on same device/filesystem (heuristic)
-            # Or just let 'auto' handle it?
-            # 'auto' in FileOperations assumes 'move' and lets it fail over to copy+del
-            
-            # Determine if this is a 'move' or 'copy' intent
-            # Nautilus default behavior:
-            # - Drag within same filesystem -> Move
-            # - Drag across filesystems -> Copy
-            # - Configurable via modifier keys (not yet supported here)
-            
-            mode = "auto"
-            
-            # Start a transaction for the batch
-            # Note: We don't have a transaction ID at start time since handle_drop is synchronous-ish but ops are async
-            # We can start one.
-            tid = self.mw.transaction_manager.startTransaction(f"Drag Drop {len(real_paths)} items")
-            
-            for src in real_paths:
-                # Construct full destination path: dest_dir/filename
-                filename = os.path.basename(src)
-                if not filename: continue
-                
-                final_dest = os.path.join(dest_dir, filename)
-                
-                # Prevent self-move, but allow self-copy (duplicate)
-                if os.path.abspath(src) == os.path.abspath(final_dest):
-                    # Dragging to same folder inherently implies intent to copy/duplicate if the system allows it
-                    # But if mode is 'auto' (which defaults to 'move' on same FS), it will just do nothing.
-                    # Let's force it to be a duplicate if dragged to its own folder.
-                    self.mw.file_ops.copy(src, final_dest, transaction_id=tid, auto_rename=True)
-                    continue
-                    
-                self.mw.file_ops.transfer(src, final_dest, mode=mode, transaction_id=tid)
-                
-            self.mw.transaction_manager.commitTransaction(tid)
+            # Delegate to Core — "auto" mode lets FileOperations decide move vs copy
+            self.mw.transaction_manager.batchTransfer(
+                real_paths, dest_dir, mode="auto"
+            )
