@@ -20,10 +20,9 @@ import urllib.parse
 from uuid import uuid4
 import os
 
-from PySide6.QtCore import QObject, Signal, Slot, QTimer
+from PySide6.QtCore import QObject, Signal, Slot, QTimer, Property
 # from PySide6.QtGui import QImageReader # REMOVED: No longer used in main thread
-from core.gio_bridge.count_worker import ItemCountWorker
-from core.gio_bridge.dimension_worker import DimensionWorker
+from core.gio_bridge.metadata import ItemCountWorker, DimensionWorker
 
 
 class DirectoryReader(QObject):
@@ -73,7 +72,11 @@ class DirectoryReader(QObject):
         "unix::gid",
         
         # Thumbnail info (Active: Native detection)
-        "standard::thumbnail-path"
+        "standard::thumbnail-path",
+        
+        # Trash info (Active: for Trash view)
+        "trash::orig-path",
+        "trash::deletion-date"
     ])
 
     # Batch size for efficient layout updates
@@ -87,6 +90,7 @@ class DirectoryReader(QObject):
         self._cancellable: Gio.Cancellable | None = None
         self._current_path: str | None = None
         self._show_hidden: bool = False
+        self._is_trash: bool = False
         
         # [FIX] Session ID for cross-talk prevention
         self._session_id: str = ""
@@ -114,6 +118,10 @@ class DirectoryReader(QObject):
         """The path currently being scanned (or last scanned)."""
         return self._current_path
 
+    @Property(bool, notify=scanFinished) # notify on scanFinished for simplicity
+    def isTrash(self) -> bool:
+        return self._is_trash
+
     @Slot(bool)
     def setShowHidden(self, show: bool) -> None:
         """Set whether to include hidden files in scan results."""
@@ -138,6 +146,7 @@ class DirectoryReader(QObject):
         self.cancel()
         
         self._current_path = path
+        self._is_trash = path.startswith("trash://")
         self._cancellable = Gio.Cancellable()
         # [FIX] Generate unique session ID for cross-talk prevention
         self._session_id = str(uuid4())
@@ -145,7 +154,7 @@ class DirectoryReader(QObject):
         # Capture the specific token for this scan
         cancellable = self._cancellable
         
-        gfile = Gio.File.new_for_path(path)
+        gfile = Gio.File.new_for_commandline_arg(path)
         
         gfile.enumerate_children_async(
             self.QUERY_ATTRIBUTES,
@@ -162,7 +171,7 @@ class DirectoryReader(QObject):
         Scans a single file synchronously and emits singleFileScanned.
         Used for surgical UI updates when a file is created/copied.
         """
-        gfile = Gio.File.new_for_path(path)
+        gfile = Gio.File.new_for_commandline_arg(path)
         try:
             info = gfile.query_info(
                 self.QUERY_ATTRIBUTES,
@@ -170,7 +179,8 @@ class DirectoryReader(QObject):
                 None
             )
             # Use the existing _process_batch logic (it expects a list of infos and parent dir)
-            parent_path = os.path.dirname(path)
+            parent = gfile.get_parent()
+            parent_path = (parent.get_path() or parent.get_uri()) if parent else ""
             batch = self._process_batch([info], parent_path)
             if batch:
                 self.singleFileScanned.emit(self._session_id, batch[0])
@@ -188,8 +198,9 @@ class DirectoryReader(QObject):
             self._cancellable.cancel()
             self._cancellable = None
         
-        # Clear pending count requests
+        # Clear pending count and dimension requests
         self._count_worker.clear()
+        self._dimension_worker.clear()
 
     # -------------------------------------------------------------------------
     # INTERNAL CALLBACKS
@@ -210,7 +221,7 @@ class DirectoryReader(QObject):
             self.scanError.emit(error_msg)
             return
         
-        parent_path = source.get_path()
+        parent_path = source.get_path() or source.get_uri()
         if parent_path is None:
             self.scanError.emit("Invalid directory path")
             return
@@ -322,8 +333,12 @@ class DirectoryReader(QObject):
                 is_visual = True
             else:
                 # 3. Ask the Oracle (Can we thumbnail this?)
-                # We need a URI for this check
-                uri = "file://" + urllib.parse.quote(full_path)
+                # We need a URI for this check. If full_path is already a URI, use it.
+                if "://" in full_path:
+                    uri = full_path
+                else:
+                    uri = "file://" + urllib.parse.quote(full_path)
+                
                 mtime = info.get_modification_date_time().to_unix() if info.get_modification_date_time() else 0
                 
                 try:
@@ -415,6 +430,10 @@ class DirectoryReader(QObject):
                 # Thumbnail dimensions (populated by header read)
                 "width": 0,
                 "height": 0,
+                
+                # Trash specific (Active)
+                "trashOrigPath": info.get_attribute_byte_string("trash::orig-path") or "",
+                "trashDeletionDate": info.get_attribute_string("trash::deletion-date") or ""
             })
             
             # [NEW] Queue dimension reading (Async)

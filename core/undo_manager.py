@@ -8,6 +8,7 @@ Listens to TransactionManager for committed history.
 from PySide6.QtCore import QObject, Signal, Slot
 from typing import List, Optional, Set
 from core.transaction import Transaction, TransactionStatus
+from core.file_workers import _make_gfile
 from collections import deque
 from enum import Enum
 
@@ -51,7 +52,8 @@ class UndoManager(QObject):
             try:
                 self._file_ops.operationFinished.disconnect(self._on_op_finished)
                 self._file_ops.operationError.disconnect(self._on_op_error)
-            except: pass
+            except Exception:
+                pass
             
         self._file_ops = file_ops
         
@@ -158,7 +160,7 @@ class UndoManager(QObject):
                     # We use result_path as the most accurate 'current' location of B
                     current_path = op.result_path if op.result_path else dest
                     if current_path and src:
-                        original_name = src.split('/')[-1]
+                        original_name = _make_gfile(src).get_basename()
                         jid = self._file_ops.rename(current_path, original_name)
                         
                 elif op.op_type == "copy":
@@ -190,9 +192,9 @@ class UndoManager(QObject):
                     jid = self._file_ops.restore_from_trash(src)
                 elif op.op_type == "rename":
                     # Rename src -> dest_name
-                     if dest:
-                         new_name = dest.split('/')[-1]
-                         jid = self._file_ops.rename(src, new_name)
+                    if dest:
+                        new_name = _make_gfile(dest).get_basename()
+                        jid = self._file_ops.rename(src, new_name)
                 elif op.op_type == "copy":
                     jid = self._file_ops.copy(src, dest)
                 elif op.op_type == "move":

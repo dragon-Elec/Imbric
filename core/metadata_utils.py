@@ -30,7 +30,8 @@ from gi.repository import Gio, GLib
 
 GIO_STANDARD_ATTRS = (
     "standard::name,standard::display-name,standard::type,standard::size,"
-    "standard::is-hidden,standard::is-symlink,standard::symlink-target"
+    "standard::is-hidden,standard::is-symlink,standard::symlink-target,"
+    "trash::orig-path,trash::deletion-date"
 )
 
 GIO_MIME_ATTRS = (
@@ -88,6 +89,10 @@ class FileInfo:
     permissions_str: str = ""  # "-rw-r--r--"
     owner: str = ""
     group: str = ""
+    
+    # Trash Specific
+    trash_orig_path: str = ""
+    trash_deletion_date: str = ""
 
 
 # =============================================================================
@@ -182,7 +187,7 @@ def get_file_info(path: str, attributes: str = ATTRS_FULL) -> Optional[FileInfo]
     Returns:
         FileInfo object or None if file doesn't exist/error.
     """
-    gfile = Gio.File.new_for_path(path)
+    gfile = Gio.File.new_for_commandline_arg(path)
     
     try:
         # Resolve symlinks for the main query? 
@@ -231,6 +236,10 @@ def get_file_info(path: str, attributes: str = ATTRS_FULL) -> Optional[FileInfo]
         owner = info.get_attribute_string("owner::user") or str(info.get_attribute_uint32("unix::uid"))
         group = info.get_attribute_string("owner::group") or str(info.get_attribute_uint32("unix::gid"))
         
+        # 5. Trash Metadata
+        trash_orig = info.get_attribute_byte_string("trash::orig-path") or ""
+        trash_date = info.get_attribute_string("trash::deletion-date") or ""
+
         return FileInfo(
             path=path,
             name=name,
@@ -249,7 +258,9 @@ def get_file_info(path: str, attributes: str = ATTRS_FULL) -> Optional[FileInfo]
             mode=mode,
             permissions_str=perm_str,
             owner=owner,
-            group=group
+            group=group,
+            trash_orig_path=trash_orig,
+            trash_deletion_date=trash_date
         )
         
     except GLib.Error as e:

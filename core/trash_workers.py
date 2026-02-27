@@ -34,18 +34,12 @@ class SendToTrashRunnable(FileOperationRunnable):
         
         try:
             gfile.trash(self.job.cancellable)
-            # Default success msg
             self.emit_finished(True, path)
             
         except GLib.Error as e:
-            if e.code == Gio.IOErrorEnum.NOT_SUPPORTED:
+            if e.code in (Gio.IOErrorEnum.NOT_SUPPORTED, Gio.IOErrorEnum.PERMISSION_DENIED):
                 self.signals.trashNotSupported.emit(path, str(e))
-            elif e.code == Gio.IOErrorEnum.PERMISSION_DENIED:
-                self.signals.trashNotSupported.emit(path, str(e))
-            
-            if e.code != Gio.IOErrorEnum.CANCELLED:
-                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "trash", path, str(e), None)
-            self.emit_finished(False, str(e))
+            self._handle_gio_error(e, "trash", path)
 
 class RestoreFromTrashRunnable(FileOperationRunnable):
     """Restores a file from trash to its original location."""
@@ -55,6 +49,8 @@ class RestoreFromTrashRunnable(FileOperationRunnable):
         original_path = self.job.source
         
         try:
+            # _do_restore returns cached metadata for conflict enrichment
+            self._cached_trash_meta = {}
             self._do_restore(original_path)
             
             # Determine final path (might be renamed)
@@ -67,12 +63,9 @@ class RestoreFromTrashRunnable(FileOperationRunnable):
             
         except GLib.Error as e:
             if e.code == Gio.IOErrorEnum.EXISTS:
-                # CONFLICT DETECTED
+                # Use cached metadata from the enumeration we already did
+                extra_src_data = self._cached_trash_meta
                 
-                # Fetch Trash-specific info (deletion date)
-                extra_src_data = self._get_trash_specific_data(original_path)
-                
-                # Use Shared Builder
                 final_dest_path = original_path
                 if self.job.rename_to:
                     parent_gfile = _make_gfile(original_path).get_parent()
@@ -83,58 +76,15 @@ class RestoreFromTrashRunnable(FileOperationRunnable):
                     dest_path=final_dest_path,
                     extra_src_data=extra_src_data
                 )
-                
-                self.signals.operationError.emit(self.job.transaction_id, self.job.id, "restore", original_path, str(e), conflict_data)
-                self.emit_finished(False, str(e))
+                self._handle_gio_error(e, "restore", original_path, conflict_data)
             else:
-                if e.code != Gio.IOErrorEnum.CANCELLED:
-                    self.signals.operationError.emit(self.job.transaction_id, self.job.id, "restore", original_path, str(e), None)
-                self.emit_finished(False, str(e))
+                self._handle_gio_error(e, "restore", original_path)
                 
         except Exception as e:
             msg = str(e)
             self.signals.operationError.emit(self.job.transaction_id, self.job.id, "restore", original_path, msg, None)
             self.emit_finished(False, msg)
     
-    def _get_trash_specific_data(self, original_path: str) -> dict:
-        """Fetch trash deletion date to enrich conflict payload."""
-        trash_root = Gio.File.new_for_uri("trash:///")
-        try:
-            enumerator = trash_root.enumerate_children(
-                "trash::orig-path,trash::deletion-date",
-                Gio.FileQueryInfoFlags.NONE,
-                self.job.cancellable
-            )
-        except GLib.Error as e:
-            print(f"[TrashWorker] Warning: Could not enumerate trash: {e}")
-            return {}
-        
-        candidate_date = ""
-        found = False
-        
-        try:
-            while True:
-                try:
-                    info = enumerator.next_file(self.job.cancellable)
-                except GLib.Error as e:
-                    print(f"[TrashWorker] Warning: Error reading trash entry, skipping: {e}")
-                    continue
-                if not info:
-                    break
-                orig_path = info.get_attribute_byte_string("trash::orig-path")
-                if orig_path:
-                    if isinstance(orig_path, bytes):
-                        orig_path = orig_path.decode('utf-8', errors='ignore')
-                    if orig_path == original_path:
-                        date = info.get_attribute_string("trash::deletion-date") or ""
-                        if not found or date > candidate_date:
-                            candidate_date = date
-                            found = True
-        finally:
-            enumerator.close(self.job.cancellable)
-        
-        return {"deletion_date": candidate_date} if found else {}
-
     def _do_restore(self, original_path: str):
         trash_root = Gio.File.new_for_uri("trash:///")
         enumerator = trash_root.enumerate_children(
@@ -168,6 +118,10 @@ class RestoreFromTrashRunnable(FileOperationRunnable):
                             candidate_date = date
         finally:
             enumerator.close(self.job.cancellable)
+        
+        # Cache metadata for conflict enrichment (avoids double enumeration)
+        if candidate_date:
+            self._cached_trash_meta = {"deletion_date": candidate_date}
         
         if candidate:
             trash_name = candidate.get_name()
@@ -221,7 +175,11 @@ class ListTrashRunnable(FileOperationRunnable):
         )
         
         while True:
-            info = enumerator.next_file(self.job.cancellable)
+            try:
+                info = enumerator.next_file(self.job.cancellable)
+            except GLib.Error as e:
+                print(f"[TrashWorker] Warning: Error reading trash entry, skipping: {e}")
+                continue
             if not info:
                 break
             
@@ -313,6 +271,9 @@ class EmptyTrashRunnable(FileOperationRunnable):
             if info.get_file_type() == Gio.FileType.DIRECTORY:
                 self._delete_recursive(child)
             else:
-                child.delete(self.job.cancellable)
+                try:
+                    child.delete(self.job.cancellable)
+                except GLib.Error as e:
+                    print(f"[TrashWorker] Warning: Could not delete {child.get_path()}: {e}")
         enumerator.close(self.job.cancellable)
         gfile.delete(self.job.cancellable)

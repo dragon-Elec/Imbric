@@ -1,0 +1,67 @@
+RowBuilder.py is the perfect example of why gio_async (or gio_parallel) is exactly what we need.
+
+The Problem in RowBuilder.py right now:
+Look at lines 48-51 and 509-512:
+
+python
+# [FIX] Pending dimensions cache (race condition fix)
+# Dimensions may arrive before filesFound due to debouncing
+self._pending_dimensions: dict[str, tuple[int, int]] = {}  # path -> (width, height)
+The UI currently has a "Race Condition."
+
+The Scanner finds a file.
+The Scanner (on the main thread) creates a 
+
+DimensionWorker
+ task.
+Because there is no "Control Tower" (no gio_async), the 
+
+DimensionWorker
+ sends the result back whenever it feels like it.
+If the images are small or local, the dimensions often arrive before the Scanner has even finished its batch and sent the file list to the 
+
+RowBuilder
+.
+This forces you to write complex "Cleanup/Cache" logic in your UI code to handle results that arrive out of order.
+
+How gio_async makes 
+
+RowBuilder
+ "Right":
+1. Reliable Sequence (The UX Win) With gio_async, we can use the allTasksDone signal.
+
+The Flow: The Scanner adds all files. Then it throws 500 dimension tasks into a batch_id.
+The Result: The UI doesn't have to keep "guessing" or "caching." It can wait for the batch to finish and then perform one single, clean layout update. This removes the "flickering" layout where images jump around as dimensions arrive one-by-one.
+2. Visual Quality (Thumbnail Prep) Look at lines 167-188 (
+
+_resolve_thumbnail_url
+). This is currently doing hashlib calculations and path string manipulation on the main UI thread for every single item.
+
+The Bridge: With gio_async, we can move this entire "Thumbnail Pre-Resolution" logic to a background task.
+The Benefit: When the Scanner finds 500 files, we send a batch task to pre-compute all these URLs. When it returns to 
+
+RowBuilder
+, the items are "Render-Ready." No string processing ever happens on the UI thread, making scrolling feel like butter.
+3. Aspect Ratio Stability 
+
+RowBuilder
+ relies heavily on the width/height (Aspect Ratio) to calculate the layout.
+
+The Bridge: By using gio_async with High Priority for "Items Currently in View," the app can ensure that the photos you are actually looking at get their dimensions first.
+The Verdict:
+
+RowBuilder
+ is currently "working hard" to manage async data that is unmanaged. gio_async (the Control Tower) takes that burden off the UI.
+
+If we move to the gio_async architecture:
+
+You can delete the _pending_dimensions cache in 
+
+RowBuilder
+.
+You can ensure the layout only "snaps" into place when a batch is ready.
+The UI becomes a "Consumer" of clean data, rather than a "Manager" of a chaotic stream.
+Does seeing the struggle in 
+
+RowBuilder
+ make it feel like gio_async is the right move? (I'm leaning towards a "Yes" for the sake of long-term stability).

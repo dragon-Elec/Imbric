@@ -190,12 +190,14 @@ class TransactionManager(QObject):
 
             # Same-folder detection
             if self._file_ops.is_same_file(src, dest):
-                if is_move:
-                    continue  # Can't move a file to itself
-                else:
+                if mode == "copy":
                     # Same-folder copy = Duplicate with auto-rename
                     self._file_ops.copy(src, dest, transaction_id=tid, auto_rename=True)
+                else:
+                    # mode == "move" or "auto"
+                    # Auto on same folder implies move (same device), so it's a no-op
                     continue
+                continue
 
             # Conflict resolution
             if conflict_resolver:
