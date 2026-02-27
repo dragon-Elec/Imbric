@@ -15,13 +15,9 @@ Pane {
     signal sectionActionTriggered(string sectionTitle, string action)
     signal sectionToggled(string sectionTitle, bool collapsed)
 
-    // Bridge Properties (set from Python)
-    // Model Structure: [ { title: "Name", icon: "icon", type: "GRID"|"LIST", collapsed: bool, actions: [], items: [] }, ... ]
-    // Model Structure: [ { title: "Name", icon: "icon", type: "GRID"|"LIST", collapsed: bool, actions: [], items: [] }, ... ]
-    property var sectionsModel: [
-        { title: "QUICK ACCESS", icon: "star", type: "GRID", collapsed: false, actions: ["Settings"], items: [] },
-        { title: "DEVICES", icon: "hard_drive", type: "LIST", collapsed: false, actions: ["Refresh"], items: [] },
-    ] 
+    // Bridge Properties (set from Python context)
+    // The core model is 'sidebarModel', injected as 'sectionsModel' property here.
+    property var sectionsModel
     
     // Internal State
     property string currentSelectionPath: ""
@@ -77,18 +73,10 @@ Pane {
     }
 
     function syncToPath(path) {
-        // Logic to highlight item based on path
-        for (var i = 0; i < sectionsModel.length; i++) {
-            var section = sectionsModel[i];
-            if (section.items) {
-                for (var j = 0; j < section.items.length; j++) {
-                    if (section.items[j].path === path) {
-                        currentSelectionPath = section.items[j].path
-                        return
-                    }
-                }
-            }
-        }
+        // Because we are using QAbstractListModel now, scanning through it manually
+        // from QML is slightly harder than JS Arrays. For now, we wait for a click.
+        // Full programmatic selection sync can be implemented via a proper SelectionModel later.
+        currentSelectionPath = path
     }
 
     ScrollView {
@@ -141,25 +129,29 @@ Pane {
                         // Headers have buttons on the right, so they MUST shrink/push
                         width: parent.width - sidebarScroll.pushOffset
                         
-                        text: sectionData.title
-                        icon: root.getIconChar(sectionData.icon)
-                        collapsed: sectionData.collapsed !== undefined ? sectionData.collapsed : false
-                        hasControls: sectionData.actions && sectionData.actions.length > 0
+                        // To avoid QML context confusion in the inner Repeater, explicitly define property
+                        property var actionsList: model.actions !== undefined ? model.actions : []
+                        
+                        text: model.title !== undefined ? model.title : ""
+                        icon: root.getIconChar(model.icon !== undefined ? model.icon : "")
+                        collapsed: model.collapsed !== undefined ? model.collapsed : false
+                        hasControls: model.actions !== undefined && model.actions.length > 0
                         
                         onToggleCollapsed: {
                             // Notify parent to update state persistence
-                            root.sectionToggled(sectionData.title, header.collapsed)
+                            root.sectionToggled(model.title, header.collapsed)
                         }
                         
                         // Dynamic Header Actions
                         Repeater {
-                            model: sectionData.actions || []
+                            model: header.actionsList
                             delegate: ToolButton {
                                 text: modelData === "Add" ? "+" : (modelData === "Refresh" ? "⟳" : (modelData === "Settings" ? "⚙" : "?"))
                                 font.pointSize: 10 // roughly 14px
                                 flat: true
                                 opacity: hovered ? 1.0 : 0.6
-                                onClicked: root.sectionActionTriggered(sectionData.title, modelData)
+                                // Use the explicitly named title from the outer context
+                                onClicked: root.sectionActionTriggered(header.text, modelData)
                                 background: Rectangle { color: parent.down ? Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.1) : "transparent"; radius: 4 }
                             }
                         }
@@ -169,14 +161,15 @@ Pane {
                         visible: !header.collapsed
                         
                         // Lists need to push (avoid deadzone). Grids handle overlap (stable layout).
-                        width: sectionData.type === "GRID" ? parent.width : (parent.width - sidebarScroll.pushOffset)
+                        width: model.type === "GRID" ? parent.width : (parent.width - sidebarScroll.pushOffset)
                         
                         // Shrink-wrap: Use implicit height of the loaded item (Grid or List)
                         height: item ? item.implicitHeight : 0
 
-                        sourceComponent: sectionData.type === "GRID" ? gridComponent : (sectionData.type === "LIST" ? listComponent : null)
+                        sourceComponent: model.type === "GRID" ? gridComponent : (model.type === "LIST" ? listComponent : null)
                         
-                        property var dataModel: sectionData.items
+                        // THIS IS THE MAGIC - Bind to the inner ItemsModel directly!
+                        property var dataModel: model.itemsModel
                     }
                 }
             }
@@ -223,8 +216,8 @@ Pane {
                             id: gridDelegate
                             width: 60; height: 60; padding: 0
                             
-                            property var itemData: modelData
-                            property bool isSelected: root.currentSelectionPath === (itemData ? itemData.path : "")
+                            property string itemPath: model.path !== undefined ? model.path : ""
+                            property bool isSelected: root.currentSelectionPath !== "" && root.currentSelectionPath === itemPath
                             
                             scale: gridDelegate.down ? 0.96 : 1.0
                             Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
@@ -243,13 +236,13 @@ Pane {
                                 anchors.centerIn: parent
                                 spacing: 2
                                 Label {
-                                    text: (itemData && itemData.icon) ? root.getIconChar(itemData.icon) : "?"
-                                    font.pixelSize: (itemData && (itemData.icon === "description" || itemData.icon === "history")) ? 26 : 22 // Keep icons pixel-based
+                                    text: model.icon !== undefined ? root.getIconChar(model.icon) : "?"
+                                    font.pixelSize: (model.icon === "description" || model.icon === "history") ? 26 : 22 // Keep icons pixel-based
                                     color: isSelected ? sysPalette.highlight : sysPalette.text
                                     anchors.horizontalCenter: parent.horizontalCenter
                                 }
                                 Label {
-                                    text: (itemData && itemData.name) ? itemData.name : ""
+                                    text: model.name !== undefined ? model.name : ""
                                     font.pointSize: 7 // roughly 9px
                                     color: sysPalette.text
                                     opacity: isSelected ? 1.0 : 0.7
@@ -260,9 +253,9 @@ Pane {
                                 }
                             }
                             onClicked: {
-                                if (itemData) {
-                                    root.currentSelectionPath = itemData.path
-                                    root.navigationRequested(itemData.path)
+                                if (model.path) {
+                                    root.currentSelectionPath = model.path
+                                    root.navigationRequested(model.path)
                                 }
                             }
                         }
@@ -291,33 +284,35 @@ Pane {
                 width: ListView.view.width - 16
                 anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
                 
-                property var itemData: modelData
-                
-                textLabel: (itemData && itemData.name) ? itemData.name : ""
-                iconSymbol: (itemData && itemData.icon) ? root.getIconChar(itemData.icon) : "?"
-                usageData: (itemData && itemData.usage) ? itemData.usage : null
-                isActive: root.currentSelectionPath === (itemData ? itemData.path : "")
-                showMountIndicator: itemData ? (itemData.isMounted === true) : false
+                textLabel: model.name !== undefined ? model.name : ""
+                iconSymbol: model.icon !== undefined ? root.getIconChar(model.icon) : "?"
+                usageData: model.usage !== undefined ? model.usage : null
+                isActive: root.currentSelectionPath !== "" && root.currentSelectionPath === model.path
+                showMountIndicator: model.isMounted !== undefined ? model.isMounted : false
                 
                 ToolButton {
-                    visible: (itemData && itemData.isMounted === true && itemData.canUnmount === true)
+                    visible: (model.isMounted !== undefined && model.isMounted === true && model.canUnmount !== undefined && model.canUnmount === true)
                     text: "⏏"
                     font.pointSize: 10 // roughly 14px
                     flat: true
                     opacity: hovered ? 1.0 : 0.6
                     background: Rectangle { color: parent.down ? Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.1) : "transparent"; radius: 4 }
                     onClicked: {
-                        if (itemData) root.unmountRequested(itemData.identifier)
+                        if (model.identifier !== undefined) root.unmountRequested(model.identifier)
                     }
                 }
 
                 onClicked: {
-                    if (itemData) {
-                        root.currentSelectionPath = itemData.path
-                        if (itemData.isMounted) {
-                            if (itemData.path) root.navigationRequested(itemData.path)
+                    if (model.path !== undefined) {
+                        root.currentSelectionPath = model.path
+                        if (model.isMounted !== undefined && model.isMounted) {
+                            if (model.path) root.navigationRequested(model.path)
                         } else {
-                            root.mountRequested(itemData.identifier)
+                            if (model.identifier !== undefined) {
+                                root.mountRequested(model.identifier)
+                                // Restored behavior: still fire navigation so UI jumps there after mount
+                                if (model.path) root.navigationRequested(model.path)
+                            }
                         }
                     }
                 }

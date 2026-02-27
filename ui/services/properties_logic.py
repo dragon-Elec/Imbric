@@ -8,7 +8,7 @@ Consolidates:
 """
 
 from PySide6.QtCore import QObject, Signal, Slot
-from core.gio_bridge.properties_worker import PropertiesWorker
+from core.gio_bridge.metadata import PropertiesWorker
 from core.metadata_utils import format_size
 
 

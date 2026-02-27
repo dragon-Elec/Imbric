@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtCore
 import components as Components
 
 Item {
@@ -12,8 +13,8 @@ Item {
     // property var tabModel (Implicit)
     
     // --- Data Models for Sidebar ---
-    // Unified model provided by ShellManager._rebuild_sidebar_model()
-    property var sectionsModel: []
+    // Unified model provided by ShellManager as a QAbstractListModel on Context
+    // property var sidebarModel (Implicit via engine.rootContext)
     
     // --- Signals for ShellManager ---
     signal navigationRequested(string path)
@@ -24,6 +25,13 @@ Item {
     // --- System Palette ---
     SystemPalette { id: sysPalette; colorGroup: SystemPalette.Active }
     readonly property bool isSystemDark: Qt.styleHints.colorScheme === Qt.ColorScheme.Dark
+    
+    // --- PERSISTENCE ---
+    Settings {
+        id: layoutSettings
+        category: "Interface"
+        property alias sidebarWidth: sidebar.width
+    }
 
     // --- MAIN SPLIT VIEW ---
     SplitView {
@@ -43,15 +51,18 @@ Item {
             }
         }
 
-        // 1. SIDEBAR PANE
         Components.Sidebar {
             id: sidebar
             SplitView.minimumWidth: 150
             SplitView.maximumWidth: 400
-            SplitView.preferredWidth: 250
+            width: 225 // Initial default, overridden by Settings if exists
             
-            // Pass Unified Data
-            sectionsModel: window.sectionsModel
+            // Note: SplitView prefers 'width' for persistence via alias.
+            // SplitView.preferredWidth is used for initial layout logic, 
+            // but for simple persistence, binding to 'width' is more reliable in Qt 6.
+            
+            // Pass Unified Data directly from context property
+            sectionsModel: sidebarModel
             
             // Pass Actions up to ShellManager
             onNavigationRequested: (path) => window.navigationRequested(path)

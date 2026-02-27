@@ -6,7 +6,8 @@ from pathlib import Path
 
 from ui.models.tab_model import TabListModel
 from ui.models.tab_controller import TabController
-from core.gio_bridge.quick_access import QuickAccessBridge
+from ui.models.sidebar_model import SidebarModel
+from core.gio_bridge.desktop import QuickAccessBridge
 from core.gio_bridge.volumes import VolumesBridge
 
 class ShellManager(QWidget):
@@ -59,6 +60,10 @@ class ShellManager(QWidget):
         ctx.setContextProperty("shellManager", self) # Self-reference
         ctx.setContextProperty("tabManager", self)   # Alias for compatibility
         ctx.setContextProperty("tabModel", self._model)
+        
+        # Instantiate and bind SidebarModel
+        self.sidebar_model = SidebarModel(self)
+        ctx.setContextProperty("sidebarModel", self.sidebar_model)
         
         # 5. Image Providers
         from core.image_providers.thumbnail_provider import ThumbnailProvider
@@ -115,54 +120,20 @@ class ShellManager(QWidget):
     # --- QML Data Sync ---
     
     def _rebuild_sidebar_model(self):
-        """Constructs the full section model for the Sidebar."""
-        if not self.qml_view.rootObject():
-            return
-
+        """Updates the inner models of the SidebarModel."""
         # 1. Quick Access Section
         qa_items = self.quick_access.get_items()
+        self.sidebar_model.update_section_items("Quick Access", qa_items)
         
         # 2. Volumes Section
         vol_items = self.volumes_bridge.get_volumes()
-        
-        sections = [
-            {
-                "title": "Quick Access",
-                "icon": "star",
-                "type": "GRID",
-                "collapsed": self._section_states.get("Quick Access", False),
-                "actions": ["Add", "Settings"],
-                "items": qa_items
-            },
-            {
-                "title": "Devices",
-                "icon": "hard_drive",
-                "type": "LIST",
-                "collapsed": self._section_states.get("Devices", False),
-                "actions": ["Refresh"],
-                "items": vol_items
-            }
-        ]
-        
-        # [DEBUG] MOCK DATA FOR SCROLL TESTING (RETRY)
-        for i in range(3):
-            sections.append({
-                "title": f"MOCK SECTION {i}",
-                "icon": "folder",
-                "type": "LIST",
-                "collapsed": False,
-                "actions": [],
-                "items": [{"name": f"Mock Item {j}", "path": "", "icon": "folder"} for j in range(5)]
-            })
-        
-        self.qml_view.rootObject().setProperty("sectionsModel", sections)
+        self.sidebar_model.update_section_items("Devices", vol_items)
 
     @Slot(str, bool)
     def _on_section_toggled(self, title, is_collapsed):
         """Update internal state when user toggles a section."""
         self._section_states[title] = is_collapsed
-        # No need to rebuild model here, QML handles the animation. 
-        # We just store it for the next rebuild (e.g. when a volume is mounted).
+        self.sidebar_model.set_section_collapsed(title, is_collapsed)
 
     @Slot(str)
     def _on_navigation_requested(self, path):

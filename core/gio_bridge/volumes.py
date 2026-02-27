@@ -1,277 +1,148 @@
-"""
-[DONE] VolumesBridge — Async Volume Management
-
-Wraps Gio.VolumeMonitor to provide a reactive list of drives and volumes.
-Supports async mounting and unmounting via Gio.
-
-Features:
-- Reactive updates via `volumesChanged` signal (plug/unplug/mount/unmount)
-- Unified list of Volumes (physical partitions) and Mounts (network/other)
-- Async `mount_volume` and `unmount_volume` with error handling
-- Rich metadata (UUID, icons, mount state)
-"""
-
 import gi
 gi.require_version('Gio', '2.0')
 from gi.repository import Gio, GLib
-
 from PySide6.QtCore import QObject, Signal, Slot, Property
+from core.utils.gio_qtoast import GioWorkerPool
+
+def _fetch_usage_task(path: str) -> dict | None:
+    """Synchronous usage query to be run in background."""
+    if not path: return None
+    try:
+        f = Gio.File.new_for_path(path)
+        info = f.query_filesystem_info(
+            f"{Gio.FILE_ATTRIBUTE_FILESYSTEM_SIZE},{Gio.FILE_ATTRIBUTE_FILESYSTEM_FREE}",
+            None
+        )
+        size = info.get_attribute_uint64(Gio.FILE_ATTRIBUTE_FILESYSTEM_SIZE)
+        free = info.get_attribute_uint64(Gio.FILE_ATTRIBUTE_FILESYSTEM_FREE)
+        if size > 0:
+            return {"total": size, "free": free, "used": size - free}
+    except Exception: pass
+    return None
 
 class VolumesBridge(QObject):
-    """
-    Wraps Gio.VolumeMonitor to list connected drives and volumes.
-    Provides reactive signals and async mount/unmount operations.
-    """
-    
+    """Wraps Gio.VolumeMonitor with async usage updates via GioWorkerPool."""
     volumesChanged = Signal()
-    mountSuccess = Signal(str) # identifier
-    mountError = Signal(str)   # error message
-    
-    displayTitle = "Devices"
-    displayIcon = "hard_drive"
+    mountSuccess = Signal(str)
+    mountError = Signal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.monitor = Gio.VolumeMonitor.get()
+        self._usage_cache = {}
+        self._pending_usage = set()
+        self._pool = GioWorkerPool(max_concurrent=2, parent=self)
+        self._pool.resultReady.connect(self._on_usage_ready)
         
-        # Connect signals to monitor global state changes
-        # We debounce these or just emit directly since UI will refresh the model
-        self.monitor.connect("mount-added", self._on_monitor_changed)
-        self.monitor.connect("mount-removed", self._on_monitor_changed)
-        self.monitor.connect("volume-added", self._on_monitor_changed)
-        self.monitor.connect("volume-removed", self._on_monitor_changed)
-        self.monitor.connect("drive-connected", self._on_monitor_changed)
-        self.monitor.connect("drive-disconnected", self._on_monitor_changed)
-        
-    def _on_monitor_changed(self, monitor, item):
-        """Pass-through signal when anything changes in Gioland."""
-        self.volumesChanged.emit()
+        # Connect monitor signals
+        for sig in ["mount-added", "mount-removed", "volume-added", "volume-removed", 
+                    "drive-connected", "drive-disconnected"]:
+            self.monitor.connect(sig, lambda *a: self.volumesChanged.emit())
 
     @Property(str, constant=True)
-    def title(self):
-        return self.displayTitle
+    def title(self): return "Devices"
 
     @Property(str, constant=True)
-    def icon(self):
-        return self.displayIcon
+    def icon(self): return "hard_drive"
 
-    def _get_icon_name(self, gicon):
-        """Extract the best icon name from a GIcon."""
-        if not gicon:
-            return "drive-harddisk"
-        
-        # Check if it's a ThemedIcon (common for drives)
-        if isinstance(gicon, Gio.ThemedIcon):
-            names = gicon.get_names()
-            if names:
-                # Return the detailed name (first one)
-                return names[0]
-                
-        # Fallback to string representation
-        return gicon.to_string()
+    def _on_usage_ready(self, path, stats):
+        self._pending_usage.discard(path)
+        if stats:
+            self._usage_cache[path] = stats
+            self.volumesChanged.emit()
 
     def _get_usage(self, path):
-        """Get filesystem usage stats if mounted."""
-        if not path:
-             return None
-        try:
-            f = Gio.File.new_for_path(path)
-            info = f.query_filesystem_info(
-                f"{Gio.FILE_ATTRIBUTE_FILESYSTEM_SIZE},{Gio.FILE_ATTRIBUTE_FILESYSTEM_FREE}",
-                None
-            )
-            size = info.get_attribute_uint64(Gio.FILE_ATTRIBUTE_FILESYSTEM_SIZE)
-            free = info.get_attribute_uint64(Gio.FILE_ATTRIBUTE_FILESYSTEM_FREE)
-            if size > 0:
-                 return {"total": size, "free": free, "used": size - free}
-        except Exception:
-            pass
+        """Return cached usage or enqueue background fetch."""
+        if not path: return None
+        if path in self._usage_cache:
+            return self._usage_cache[path]
+        
+        if path not in self._pending_usage:
+            self._pending_usage.add(path)
+            self._pool.enqueue(path, _fetch_usage_task, priority=100, path=path)
         return None
+
+    def _get_icon_name(self, gicon):
+        if not gicon: return "drive-harddisk"
+        if isinstance(gicon, Gio.ThemedIcon):
+            names = gicon.get_names()
+            return names[0] if names else gicon.to_string()
+        return gicon.to_string()
 
     @Slot(result=list)
     def get_volumes(self):
-        """
-        Returns a list of dicts for all drives/volumes.
-        """
         items = []
-        seen_uuids = set()
-        seen_paths = set()
+        seen_uuids, seen_paths = set(), set()
+        mounts = {m.get_uuid(): m for m in self.monitor.get_mounts() if m.get_uuid()}
         
-        # 1. Pre-process Mounts into a lookup
-        mounts = self.monitor.get_mounts()
-        mount_lookup = {}
-        for m in mounts:
-            muuid = m.get_uuid()
-            if muuid:
-                mount_lookup[muuid] = m
-        
-        # 2. Process Volumes (partitions, physical media)
-        volumes = self.monitor.get_volumes()
-        for volume in volumes:
-            # Prefer UUID, fallback to device identifier
-            uuid = volume.get_uuid()
-            if not uuid:
-                uuid = volume.get_identifier("unix-device")
-            if not uuid:
-                continue  # Skip if no identifier at all
-            
+        # 1. Process Volumes
+        for vol in self.monitor.get_volumes():
+            uuid = vol.get_uuid() or vol.get_identifier("unix-device")
+            if not uuid or uuid in seen_uuids: continue
             seen_uuids.add(uuid)
             
-            # Check intrinsic mount OR lookup fallback
-            mount = volume.get_mount()
-            if not mount and uuid in mount_lookup:
-                mount = mount_lookup[uuid]
-                
-            is_mounted = (mount is not None)
+            mount = vol.get_mount() or mounts.get(uuid)
+            is_mounted = mount is not None
             path = mount.get_root().get_path() if is_mounted else ""
+            if path: seen_paths.add(path)
             
-            if is_mounted and path:
-                seen_paths.add(path)
-                
-            name = volume.get_name()
-            
-            # Custom Icon Logic for Root
-            if is_mounted and path == "/":
-                icon = "root"
-            else:
-                icon = self._get_icon_name(volume.get_icon())
-            
-            usage = self._get_usage(path) if is_mounted else None
-
             items.append({
                 "identifier": uuid,
-                "name": name,
+                "name": vol.get_name(),
                 "path": path,
-                "icon": icon,
+                "icon": "root" if path == "/" else self._get_icon_name(vol.get_icon()),
                 "isMounted": is_mounted,
-                "usage": usage,
-                "canMount": volume.can_mount(),
+                "usage": self._get_usage(path) if is_mounted else None,
+                "canMount": vol.can_mount(),
                 "canUnmount": mount.can_unmount() if is_mounted else False,
                 "type": "volume"
             })
             
-        # 3. Process Remaining Mounts (network shares, ISOs, etc)
-        for mount in mounts:
-            uuid = mount.get_uuid()
+        # 2. Process Remaining Mounts
+        for mount in self.monitor.get_mounts():
             root = mount.get_root()
-            path = root.get_path()
+            path, uuid = root.get_path(), mount.get_uuid() or root.get_uri()
+            if uuid in seen_uuids or path in seen_paths: continue
             
-            # If we already processed this UUID via a Volume, skip
-            if uuid and uuid in seen_uuids:
-                continue
-                
-            # If we already processed this Path via a Volume, skip
-            if path and path in seen_paths:
-                continue
-            
-            # If no UUID, use URI as unique fallback ID
-            if not uuid:
-                uuid = root.get_uri()
-
-            name = mount.get_name()
-            icon = self._get_icon_name(mount.get_icon())
-            usage = self._get_usage(path)
-
             items.append({
                 "identifier": uuid,
-                "name": name,
+                "name": mount.get_name(),
                 "path": path,
-                "icon": icon,
+                "icon": self._get_icon_name(mount.get_icon()),
                 "isMounted": True,
-                "usage": usage,
+                "usage": self._get_usage(path),
                 "canMount": False,
                 "canUnmount": mount.can_unmount(),
                 "type": "mount"
             })
-            
         return items
 
     @Slot(str)
     def mount_volume(self, identifier):
-        """
-        Async mount a volume by UUID.
-        Emits mountSuccess(uuid) or mountError(msg).
-        """
-        # Find the volume
-        found_vol = None
-        volumes = self.monitor.get_volumes()
-        for volume in volumes:
-            if volume.get_uuid() == identifier:
-                found_vol = volume
-                break
-        
-        if not found_vol:
-            self.mountError.emit(f"Volume {identifier} not found")
-            return
-            
-        if not found_vol.can_mount():
-             self.mountError.emit(f"Volume {identifier} cannot be mounted")
-             return
+        vol = next((v for v in self.monitor.get_volumes() if v.get_uuid() == identifier), None)
+        if not vol: return self.mountError.emit(f"Volume {identifier} not found")
+        vol.mount(Gio.MountMountFlags.NONE, Gio.MountOperation(), None, self._on_mount_finished, identifier)
 
-        # Mount operation
-        op = Gio.MountOperation()
-        # Note: We rely on standard GMountOperation behavior here.
-        
-        found_vol.mount(
-            Gio.MountMountFlags.NONE,
-            op,
-            None, # Cancellable
-            self._on_mount_finished,
-            identifier
-        )
-
-    def _on_mount_finished(self, source_object, res, identifier):
-        """Callback for mount completion."""
+    def _on_mount_finished(self, obj, res, ident):
         try:
-            source_object.mount_finish(res)
-            self.mountSuccess.emit(identifier)
-            # Volume state changed, so update list
+            obj.mount_finish(res)
+            self.mountSuccess.emit(ident)
             self.volumesChanged.emit()
-        except GLib.Error as e:
-            self.mountError.emit(str(e.message))
+        except GLib.Error as e: self.mountError.emit(e.message)
 
     @Slot(str)
     def unmount_volume(self, identifier):
-        """
-        Async unmount by UUID.
-        Emits mountSuccess(uuid) or mountError(msg).
-        """
-        # Find the mount object
-        found_mount = None
+        # Try finding mount via volume UUID or direct mount name/uuid
+        mount = next((v.get_mount() for v in self.monitor.get_volumes() if v.get_uuid() == identifier), None)
+        if not mount:
+            mount = next((m for m in self.monitor.get_mounts() if m.get_uuid() == identifier or m.get_name() == identifier), None)
         
-        # Check volumes first to get their mount
-        volumes = self.monitor.get_volumes()
-        for volume in volumes:
-            if volume.get_uuid() == identifier:
-                found_mount = volume.get_mount()
-                break
-        
-        # If not found via volume, check direct mounts (e.g. network shares)
-        if not found_mount:
-            mounts = self.monitor.get_mounts()
-            for mount in mounts:
-                # Check UUID or Name fallback
-                if mount.get_uuid() == identifier or mount.get_name() == identifier:
-                    found_mount = mount
-                    break
-        
-        if not found_mount:
-            self.mountError.emit(f"Mount point for {identifier} not found")
-            return
-            
-        found_mount.unmount_with_operation(
-            Gio.MountUnmountFlags.NONE,
-            Gio.MountOperation(),
-            None,
-            self._on_unmount_finished,
-            identifier
-        )
+        if not mount: return self.mountError.emit(f"Mount for {identifier} not found")
+        mount.unmount_with_operation(Gio.MountUnmountFlags.NONE, Gio.MountOperation(), None, self._on_unmount_finished, identifier)
 
-    def _on_unmount_finished(self, source_object, res, identifier):
-        """Callback for unmount completion."""
+    def _on_unmount_finished(self, obj, res, ident):
         try:
-            source_object.unmount_with_operation_finish(res)
-            self.mountSuccess.emit(identifier)
+            obj.unmount_with_operation_finish(res)
+            self.mountSuccess.emit(ident)
             self.volumesChanged.emit()
-        except GLib.Error as e:
-            self.mountError.emit(str(e.message))
+        except GLib.Error as e: self.mountError.emit(e.message)
