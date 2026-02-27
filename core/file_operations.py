@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from PySide6.QtCore import QObject, Signal, Slot, QThreadPool, QMutex, QMutexLocker, Qt
 
 from core.file_workers import (
-    FileJob, FileOperationSignals, _make_gfile, _gfile_path,
+    FileJob, FileOperationSignals, _make_gfile, _gfile_path, _split_name_ext,
     TransferRunnable, RenameRunnable, CreateFolderRunnable,
     CreateFileRunnable, CreateSymlinkRunnable,
     generate_candidate_path,
@@ -17,15 +17,6 @@ from core.trash_workers import (
 )
 
 _MAX_RENAME_ATTEMPTS = 1000
-
-def _split_name_ext(filename: str) -> tuple[str, str]:
-    """Split filename into (base, ext). Handles .tar.gz and dotfiles."""
-    if filename.endswith(".tar.gz"):
-        return filename[:-7], ".tar.gz"
-    dot = filename.rfind(".")
-    if dot <= 0:
-        return filename, ""
-    return filename[:dot], filename[dot:]
 
 class FileOperations(QObject):
     """Central controller for non-blocking file I/O via QThreadPool."""
@@ -52,27 +43,18 @@ class FileOperations(QObject):
         
         # Internal Signal Hub
         self._signals = FileOperationSignals()
-        self._signals.started.connect(self._on_started)
-        self._signals.progress.connect(self._on_progress)
+        self._signals.started.connect(self.operationStarted)
+        self._signals.progress.connect(self.operationProgress)
         self._signals.finished.connect(self._on_finished)
         self._signals.operationError.connect(self._on_error)
         
         # Trash Specific Internal Signals
         self._signals.itemListed.connect(self.itemListed)
         self._signals.trashNotSupported.connect(self.trashNotSupported)
-        
-    def setUndoManager(self, undo_manager):
-        self._undo_manager = undo_manager
 
     # -------------------------------------------------------------------------
     # SIGNAL HANDLERS
     # -------------------------------------------------------------------------
-    def _on_started(self, job_id: str, op_type: str, path: str):
-        self.operationStarted.emit(job_id, op_type, path)
-    
-    def _on_progress(self, job_id: str, current: int, total: int):
-        self.operationProgress.emit(job_id, current, total)
-    
     def _on_finished(self, tid: str, job_id: str, op_type: str, result_path: str, success: bool, message: str):
         with QMutexLocker(self._mutex):
             if job_id in self._jobs:

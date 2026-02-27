@@ -71,10 +71,11 @@ class FileJob:
     dest: str = ""            # Destination path (or new name for rename)
     transaction_id: str = ""  # Links this job to a larger transaction (batch)
     cancellable: Gio.Cancellable = field(default_factory=Gio.Cancellable)
-    auto_rename: bool = False # [NEW] If True, automatically find a free name (For New Folder / Duplicate)
+    auto_rename: bool = False # If True, automatically find a free name (For New Folder / Duplicate)
     skipped_files: List[str] = field(default_factory=list) # For partial success
     overwrite: bool = False   # If True, overwrite existing files without prompt
     rename_to: str = ""       # Specific for Restore: if set, restore with this filename
+    status: str = "pending"   # Lifecycle: pending → running → done/error/cancelled
 
 class FileOperationSignals(QObject):
     """
@@ -131,6 +132,25 @@ class FileOperationRunnable(QRunnable):
         """Gio progress callback adapter."""
         self.emit_progress(current_bytes, total_bytes)
 
+    def _handle_gio_error(self, e: GLib.Error, op_type: str, path: str, conflict_data=None):
+        """
+        Shared GIO error handler. Covers EXISTS (conflict), CANCELLED (silent),
+        and all other errors. Always calls emit_finished(False, ...).
+        """
+        if e.code == Gio.IOErrorEnum.EXISTS:
+            if conflict_data is None:
+                conflict_data = build_conflict_payload(path, path)
+            self.signals.operationError.emit(
+                self.job.transaction_id, self.job.id,
+                op_type, path, str(e), conflict_data
+            )
+        elif e.code != Gio.IOErrorEnum.CANCELLED:
+            self.signals.operationError.emit(
+                self.job.transaction_id, self.job.id,
+                op_type, path, str(e), None
+            )
+        self.emit_finished(False, str(e))
+
     def _run_create_operation(self, op_type: str, target_path: str):
         """
         Shared logic for all create operations (folder, file, symlink).
@@ -151,12 +171,7 @@ class FileOperationRunnable(QRunnable):
                     if e.code == Gio.IOErrorEnum.EXISTS:
                         counter += 1
                         continue
-                    if e.code != Gio.IOErrorEnum.CANCELLED:
-                        self.signals.operationError.emit(
-                            self.job.transaction_id, self.job.id,
-                            op_type, candidate, str(e), None
-                        )
-                    self.emit_finished(False, str(e))
+                    self._handle_gio_error(e, op_type, candidate)
                     return
             self.emit_finished(False, "Auto-rename limit reached")
             return
@@ -167,26 +182,11 @@ class FileOperationRunnable(QRunnable):
             self._do_create(gfile)
             self.emit_finished(True, target_path)
         except GLib.Error as e:
-            if e.code == Gio.IOErrorEnum.EXISTS:
-                conflict_data = build_conflict_payload(target_path, target_path)
-                self.signals.operationError.emit(
-                    self.job.transaction_id, self.job.id,
-                    op_type, target_path, str(e), conflict_data
-                )
-                self.emit_finished(False, str(e))
-            else:
-                if e.code != Gio.IOErrorEnum.CANCELLED:
-                    self.signals.operationError.emit(
-                        self.job.transaction_id, self.job.id,
-                        op_type, target_path, str(e), None
-                    )
-                self.emit_finished(False, str(e))
+            self._handle_gio_error(e, op_type, target_path)
 
     def _do_create(self, gfile):
         """Override in subclass. Execute the actual Gio create call."""
         raise NotImplementedError
-
-    # Removed local build_conflict_data helper, using global build_conflict_payload
 
 def _split_name_ext(filename: str) -> tuple[str, str]:
     """Split filename into (base, ext). Handles .tar.gz and dotfiles."""
@@ -260,7 +260,8 @@ class TransferRunnable(FileOperationRunnable):
                         self.emit_finished(True, "Success", result_override=final_dest)
                         return
                     except GLib.Error as e:
-                        # If it's a cross-device move, or directory merge, handle manually
+                        # Cross-device move or directory merge: handle manually.
+                        # 29 = G_IO_ERROR_WOULD_RECURSE (not always exposed in Python bindings)
                         if e.code in [Gio.IOErrorEnum.NOT_SUPPORTED, Gio.IOErrorEnum.WOULD_MERGE, 29]:
                             # Cross-device move or merge -> Recursive copy + delete
                             # Note: Recursive transfer logic handles its own errors, we need to catch EXISTS there too?
@@ -302,13 +303,10 @@ class TransferRunnable(FileOperationRunnable):
                     else:
                         # Conflict!
                         conflict_data = build_conflict_payload(self.job.source, final_dest)
-                        self.signals.operationError.emit(self.job.transaction_id, self.job.id, self.job.op_type, final_dest, str(e), conflict_data)
-                        self.emit_finished(False, str(e))
+                        self._handle_gio_error(e, self.job.op_type, final_dest, conflict_data)
                         return
                 else:
-                    if e.code != Gio.IOErrorEnum.CANCELLED:
-                        self.signals.operationError.emit(self.job.transaction_id, self.job.id, self.job.op_type, final_dest, str(e), None)
-                    self.emit_finished(False, str(e))
+                    self._handle_gio_error(e, self.job.op_type, final_dest)
                     return
         
         # If loop finishes without return (counter maxed)
@@ -348,7 +346,7 @@ class TransferRunnable(FileOperationRunnable):
             if is_move and not local_error:
                 try:
                     source.delete(self.job.cancellable)
-                except:
+                except Exception:
                     pass
         else:
             # File Transfer
@@ -367,22 +365,17 @@ class RenameRunnable(FileOperationRunnable):
             # dest holds the new NAME, not full path
             result = gfile.set_display_name(self.job.dest, self.job.cancellable)
             if result:
-                # Use the Gio.File returned by set_display_name for the correct path
                 abs_path = _gfile_path(result)
                 self.emit_finished(True, "Success", result_override=abs_path)
             else:
-                self.emit_finished(False, str(e))
+                self.emit_finished(False, "Rename returned no result")
         except GLib.Error as e:
             if e.code == Gio.IOErrorEnum.EXISTS:
-                 src_gfile = _make_gfile(self.job.source)
-                 dest_path = _gfile_path(src_gfile.get_parent().get_child(self.job.dest))
+                 dest_path = _gfile_path(gfile.get_parent().get_child(self.job.dest))
                  conflict_data = build_conflict_payload(self.job.source, dest_path)
-                 self.signals.operationError.emit(self.job.transaction_id, self.job.id, "rename", dest_path, str(e), conflict_data)
-                 self.emit_finished(False, str(e))
+                 self._handle_gio_error(e, "rename", dest_path, conflict_data)
             else:
-                 if e.code != Gio.IOErrorEnum.CANCELLED:
-                     self.signals.operationError.emit(self.job.transaction_id, self.job.id, "rename", self.job.source, str(e), None)
-                 self.emit_finished(False, str(e))
+                 self._handle_gio_error(e, "rename", self.job.source)
 
 class CreateFolderRunnable(FileOperationRunnable):
     """Creates a new directory."""
