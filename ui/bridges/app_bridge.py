@@ -70,16 +70,16 @@ class AppBridge(QObject):
         drag.setHotSpot(pixmap.rect().center())
         
         # Execute Drag
-        # Qt.MoveAction | Qt.CopyAction allows both. default to Copy.
-        drag.exec(Qt.CopyAction | Qt.MoveAction, Qt.CopyAction)
+        # Qt.MoveAction | Qt.CopyAction allows both. default to Move.
+        drag.exec(Qt.CopyAction | Qt.MoveAction, Qt.MoveAction)
 
-    @Slot(list, str)
-    def handleDrop(self, urls, dest_dir=None):
+    @Slot(list, str, str)
+    def handleDrop(self, urls, dest_dir="", mode="auto"):
         """
         Handles files dropped onto the view or a folder.
         Delegated to FileManager.
         """
-        self.mw.file_manager.handle_drop(urls, dest_dir)
+        self.mw.file_manager.handle_drop(urls, dest_dir, mode)
 
     @Slot(str)
     def openPath(self, path):

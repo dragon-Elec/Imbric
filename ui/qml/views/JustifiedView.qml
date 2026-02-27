@@ -108,14 +108,27 @@ Item {
         // 2. DropArea — External file drops
         DropArea {
             anchors.fill: parent
-            onEntered: (drag) => drag.accept(Qt.CopyAction)
+            onEntered: (drag) => {
+                if (drag.modifiers & Qt.ControlModifier) {
+                    drag.accept(Qt.CopyAction)
+                } else {
+                    drag.accept(Qt.MoveAction)
+                }
+            }
             onDropped: (drop) => {
                 if (drop.hasUrls) {
+                    var mode = "auto"
+                    if (drop.action === Qt.CopyAction || (drop.modifiers & Qt.ControlModifier)) {
+                        mode = "copy"
+                    } else if (drop.action === Qt.MoveAction) {
+                        mode = "move"
+                    }
+
                     drop.accept()
                     var urls = []
                     for (var i = 0; i < drop.urls.length; i++) 
                         urls.push(drop.urls[i].toString())
-                    root.bridge.handleDrop(urls, "")
+                    root.bridge.handleDrop(urls, "", mode)
                 }
             }
         }

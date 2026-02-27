@@ -195,7 +195,7 @@ class FileManager(QObject):
 
     # --- Drag & Drop ---
     
-    def handle_drop(self, urls: List[str], dest_dir: Optional[str] = None):
+    def handle_drop(self, urls: List[str], dest_dir: Optional[str] = None, mode: str = "auto"):
         """Called by AppBridge when QML drops files."""
         if not dest_dir:
             if tab := self._current_tab():
@@ -213,7 +213,7 @@ class FileManager(QObject):
                 real_paths.append(u)
 
         if real_paths:
-            # Delegate to Core — "auto" mode lets FileOperations decide move vs copy
+            # Delegate to Core — mode specifies if it's explicitly a copy/move or left up to Core ("auto")
             self.mw.transaction_manager.batchTransfer(
-                real_paths, dest_dir, mode="auto"
+                real_paths, dest_dir, mode=mode
             )
