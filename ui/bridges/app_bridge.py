@@ -1,11 +1,10 @@
-from PySide6.QtCore import QObject, Signal, Property, Slot, QUrl, QMimeData, Qt
-from PySide6.QtWidgets import QMenu
-from PySide6.QtGui import QCursor, QIcon, QDrag
+from PySide6.QtCore import QObject, Signal, Property, Slot, Qt
+from PySide6.QtGui import QCursor, QIcon
+from ui.widgets.drag_helper import start_drag_session
+from ui.widgets.context_menu import FileContextMenu, BackgroundContextMenu
 from ui.services.conflict_resolver import ConflictResolver
 from ui.dialogs.conflicts import ConflictAction
 from core.search_worker import SearchWorker
-from ui.models.shortcuts import ShortcutAction
-from core.gio_bridge.desktop import open_with_default_app as _open_file
 
 
 class AppBridge(QObject):
@@ -46,32 +45,8 @@ class AppBridge(QObject):
 
     @Slot(list)
     def startDrag(self, paths):
-        """
-        Initiates a system drag-and-drop operation for the given paths.
-        This is a blocking call (exec) until drag ends.
-        """
-        if not paths:
-            return
-
-        drag = QDrag(self.mw)
-        mime_data = QMimeData()
-        
-        # Format as text/uri-list
-        urls = [QUrl.fromLocalFile(p) for p in paths]
-        mime_data.setUrls(urls)
-        
-        drag.setMimeData(mime_data)
-        
-        # VISUAL FEEDBACK: Create a pixmap that looks like a file/stack of files
-        # We grab a standard icon from the theme
-        icon = QIcon.fromTheme("text-x-generic")
-        pixmap = icon.pixmap(64, 64)
-        drag.setPixmap(pixmap)
-        drag.setHotSpot(pixmap.rect().center())
-        
-        # Execute Drag
-        # Qt.MoveAction | Qt.CopyAction allows both. default to Move.
-        drag.exec(Qt.CopyAction | Qt.MoveAction, Qt.MoveAction)
+        """Initiates a system drag-and-drop operation via DragHelper."""
+        start_drag_session(self.mw, paths)
 
     @Slot(list, str, str)
     def handleDrop(self, urls, dest_dir="", mode="auto"):
@@ -87,56 +62,13 @@ class AppBridge(QObject):
     
     @Slot(list)
     def showContextMenu(self, paths):
-        """
-        Shows a native QMenu using ActionManager actions.
-        """
-        if not paths: return
-            
-        menu = QMenu(self.mw)
-        am = self.mw.action_manager
-        
-        is_single = len(paths) == 1
-        
-        # Open (single only) - we don't have an action for "Open" in AM yet (it's logic here)
-        # But we can keep specific logic or move it. 
-        # For now, let's keep Open logic or create a one-off action.
-        if is_single:
-            act_open = menu.addAction(QIcon.fromTheme("document-open"), "Open")
-            act_open.triggered.connect(lambda checked=False, p=paths[0]: _open_file(p))
-            menu.addSeparator()
-        
-        menu.addAction(am.get_action(ShortcutAction.COPY))
-        menu.addAction(am.get_action(ShortcutAction.CUT))
-        
-        # Paste needs enabled check
-        act_paste = am.get_action(ShortcutAction.PASTE)
-        act_paste.setEnabled(self.mw.file_manager.get_clipboard_files() != [])
-        menu.addAction(act_paste)
-        
-        menu.addSeparator()
-        
-        if is_single:
-            menu.addAction(am.get_action(ShortcutAction.RENAME))
-            
-        menu.addSeparator()
-        menu.addAction(am.get_action(ShortcutAction.TRASH))
-            
-        menu.exec(QCursor.pos())
+        """Shows a native QMenu via ContextMenu widget."""
+        if paths: FileContextMenu(self.mw, paths).exec(QCursor.pos())
 
     @Slot()
     def showBackgroundContextMenu(self):
-        """Shows a context menu for empty space."""
-        menu = QMenu(self.mw)
-        am = self.mw.action_manager
-        
-        act_paste = am.get_action(ShortcutAction.PASTE)
-        act_paste.setEnabled(self.mw.file_manager.get_clipboard_files() != [])
-        menu.addAction(act_paste)
-        
-        menu.addSeparator()
-        menu.addAction(am.get_action(ShortcutAction.NEW_FOLDER))
-        
-        menu.exec(QCursor.pos())
+        """Shows a context menu for empty space via ContextMenu widget."""
+        BackgroundContextMenu(self.mw).exec(QCursor.pos())
     
     # _create_new_folder moved to FileManager
     
