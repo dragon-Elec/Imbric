@@ -14,36 +14,36 @@ Index: None
 ---
 
 ### [FILE: app_bridge.py] [DONE]
-Role: Primary QML interface exposing core application capabilities.
+Role: Primary QML interface exposing core application capabilities and bridging UI actions to managers.
 
-/DNA/: [call:Slot] -> call:mw.[manager/worker] -> em:Signal -> [update:QML]
+/DNA/: [call:Slot -> call:mw.(manager/worker) -> em:Signal -> update:QML] + [mw.clipboard.em:changed -> em:cutPathsChanged -> Property:cutPaths] + [call:startSearch -> SearchWorker.exec -> em:searchResultsFound]
 
 - SrcDeps:
-  - ui.services.conflict_resolver
-  - ui.dialogs.conflicts
-  - core.search_worker
-  - ui.models.shortcuts
-  - core.gio_bridge.desktop
+  - ui.widgets.drag_helper.start_drag_session
+  - ui.widgets.context_menu.FileContextMenu, BackgroundContextMenu
+  - ui.services.conflict_resolver.ConflictResolver
+  - ui.dialogs.conflicts.ConflictAction
+  - core.search_worker.SearchWorker
 - SysDeps:
-  - PySide6.QtCore.QObject, Signal, Property, Slot, QUrl, QMimeData, Qt
-  - PySide6.QtWidgets.QMenu
-  - PySide6.QtGui.QCursor, QIcon, QDrag
-  - pathlib
-  - hashlib
-  - urllib
+  - PySide6.QtCore.QObject, Signal, Property, Slot, Qt
+  - PySide6.QtGui.QCursor, QIcon
+  - gi.repository.Gio
 
 API:
   - AppBridge(QObject):
-    - cutPaths [Property(list)]
-    - targetCellWidth [Property(int)] 
-    - searchEngineName [Property(str)]
-    - startDrag(paths) -> None: Initiates system drag-and-drop defaulting to MoveAction.
-    - handleDrop(urls, dest_dir, mode) -> None: Delegates drop context and action intent to FileManager.
-    - openPath(path) -> None: Navigates UI to given path via view manager.
-    - showContextMenu(paths) -> None: Displays native desktop QMenu for paths.
-    - renameFile(old_path, new_name) -> None: Resolves conflicts and executes rename.
-    - startSearch(directory, pattern, recursive) -> None: Triggers Async SearchWorker.
-    - cancelSearch() -> None: Stops active search execution.
-    - queueSelectionAfterRefresh(paths) -> None: Stages paths for selection post-reload.
-    - selectPendingPaths() -> list: Consumes staged paths.
+    - cutPaths [Property(list)]: Returns list of paths in cut state from FileManager.
+    - targetCellWidth [Property(int)]: Controls thumbnail grid spacing.
+    - searchEngineName [Property(str)]: Identifies active search backend (fd/scandir).
+    - startDrag(paths) -> None: Initiates system drag via DragHelper utility.
+    - handleDrop(urls, dest_dir, mode) -> None: Delegates drop intent and action to FileManager.
+    - openPath(path) -> None: Navigates UI to given path via main window.
+    - showContextMenu(paths) -> None: Displays FileContextMenu at cursor position.
+    - showBackgroundContextMenu() -> None: Displays BackgroundContextMenu for empty space.
+    - renameFile(old_path, new_name) -> None: Resolves conflicts and executes rename via file_ops.
+    - paste() -> None: Triggers paste_to_current in FileManager.
+    - startSearch(dir, pattern, recursive) -> None: Starts background SearchWorker.
+    - cancelSearch() -> None: Stops active search.
+    - zoom(delta) -> None: Delegates zoom_in/out to view_manager.
+    - queueSelectionAfterRefresh(paths) -> None: Stages paths for selection after next directory reload.
+    - selectPendingPaths() -> list: Consumes and clears the staged selection queue.
 !Caveat: `getThumbnailPath()` is deprecated; thumbnail URL resolution has moved to `RowBuilder._resolve_thumbnail_url()` to avoid blocking I/O on render thread.

@@ -31,7 +31,23 @@ API:
 !Caveat: Assumes the parent window has the `Qt.FramelessWindowHint` flag set.
 
 ---
-
+ 
+### [FILE: drag_helper.py] [DONE]
+Role: Minimal utility for initiating system-native drag-and-drop sessions.
+ 
+/DNA/: [call:start_drag_session(paths) -> QMimeData(urls) -> drag.setPixmap -> drag.exec(MoveAction)]
+ 
+- SrcDeps:
+  - None
+- SysDeps:
+  - PySide6.QtCore.Qt, QUrl, QMimeData
+  - PySide6.QtGui.QDrag, QIcon
+ 
+API:
+  - start_drag_session(parent, paths) -> None: Blocking call that executes a system drag for the given local paths.
+ 
+---
+ 
 ### [FILE: navigation_bar.py] [DONE]
 Role: Unified navigation controls including Up button, Path entry, and Zoom controls.
 

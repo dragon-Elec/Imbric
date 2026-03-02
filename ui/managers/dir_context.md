@@ -84,43 +84,38 @@ API:
     - forward() -> None: Navigates forward.
 
 ### [FILE: shell_manager.py] [DONE]
-Role: Central QML coordinator initializing the main layout, sidebar sections (Quick Access/Volumes), and tab/navigation management.
+Role: Central QML coordinator managing the unified shell (Sidebar + Tabs), decoupled from QtWidgets.
 
-/DNA/: `[init -> setup(QQuickView) -> addContextProperty(self)] + [bridge.itemsChanged -> call:_rebuild_sidebar_model() -> sidebar_model.update_section_items()] + [tab routing: add/close/next/prev -> TabListModel] + [nav routing: go_back/forward/home -> current_tab.go_*()]`
+/DNA/: [init -> setup(QQuickView) -> ctx.setContextProperty()] + [bridges.em:changed -> call:_rebuild_sidebar_model -> sidebar_model.update] + [QML.em:navigationRequested -> call:navigate_to] + [tab routing: add/close/next/prev -> TabListModel]
 
 - SrcDeps:
-  - `ui.models.tab_model.TabListModel`
-  - `ui.models.tab_controller.TabController`
-  - `ui.models.sidebar_model.SidebarModel`
-  - `core.gio_bridge.desktop.QuickAccessBridge`
-  - `core.gio_bridge.volumes.VolumesBridge`
+  - ui.models.tab_model.TabListModel
+  - ui.models.tab_controller.TabController
+  - ui.models.sidebar_model.SidebarModel
+  - core.gio_bridge.desktop.QuickAccessBridge
+  - core.gio_bridge.volumes.VolumesBridge
+  - core.image_providers.thumbnail_provider.ThumbnailProvider
+  - core.image_providers.theme_provider.ThemeImageProvider
 - SysDeps:
-  - `PySide6.QtWidgets.QWidget`
-  - `PySide6.QtWidgets.QVBoxLayout`
-  - `PySide6.QtCore.Qt`
-  - `PySide6.QtCore.QUrl`
-  - `PySide6.QtCore.Slot`
-  - `PySide6.QtCore.Signal`
-  - `PySide6.QtCore.Property`
-  - `PySide6.QtCore.QTimer`
-  - `PySide6.QtCore.QObject`
-  - `PySide6.QtQuick.QQuickView`
-  - `pathlib.Path`
+  - PySide6.QtQuick.QQuickView
+  - PySide6.QtCore.QObject, Qt, QUrl, Slot, Signal, Property, QTimer
+  - pathlib.Path
 
 API:
-  - ShellManager(QWidget):
-    - currentIndex [Property(int)]: Active tab index, notifies QML.
-    - quickAccess [Property(QObject)]: Exposes QuickAccessBridge to QML.
-    - volumes [Property(QObject)]: Exposes VolumesBridge to QML.
-    - add_tab(path) -> TabController: Appends a new tab to model.
-    - close_tab(index) -> None: Disposes tab and adjusts currentIndex.
-    - next_tab() / prev_tab() -> None: Cycles active tab index.
-    - close_current_tab() -> None: Closes the active tab.
+  - ShellManager(QObject):
+    - currentIndex [Property(int)]: Active tab index with QML notification.
+    - quickAccess [Property(QObject)]: Exposes QuickAccessBridge.
+    - volumes [Property(QObject)]: Exposes VolumesBridge.
+    - add_tab(path) -> TabController: Appends tab to model and sets currentIndex to new tab.
+    - close_tab(index) -> None: Removes tab from model and resets currentIndex if out of bounds.
+    - next_tab() / prev_tab() -> None: Cycles active tab index with wrap-around.
+    - close_current_tab() -> None: Closes active tab.
     - navigate_to(path) -> None: Navigates active tab to path.
-    - current_tab -> TabController: Returns the active TabController.
-    - go_back() / go_forward() / go_home() -> None: Delegates to active tab's history.
-    - _rebuild_sidebar_model() -> None: Pushes updated bridge data into existing `SidebarModel` instances.
-!Caveat: `SidebarModel` contains hardcoded MOCK sections alongside dynamically populated sections for UI scroll testing.
+    - current_tab -> TabController: Returns active TabController instance.
+    - go_back() / go_forward() / go_home() -> None: Delegates history navigation to active tab.
+    - _rebuild_sidebar_model() -> None: Syncs bridge data to SidebarModel.
+    - _on_section_toggled(title, collapsed) -> None: Persists sidebar section collapse state.
+!Caveat: Decoupled from `QWidget` inheritance; use `container` property for embedding in `QMainWindow`.
 
 ### [FILE: view_manager.py] [DONE]
 Role: Global controller for view adjustments (zoom level, toggling hidden files) that acts on the active tab.
