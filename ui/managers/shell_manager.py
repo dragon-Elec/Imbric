@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QUrl, Slot, Signal, Property, QTimer, QObject
 from PySide6.QtQuick import QQuickView
 from pathlib import Path
@@ -10,10 +10,10 @@ from ui.models.sidebar_model import SidebarModel
 from core.gio_bridge.desktop import QuickAccessBridge
 from core.gio_bridge.volumes import VolumesBridge
 
-class ShellManager(QWidget):
+class ShellManager(QObject):
     """
     Manages the unified QML Shell (Sidebar + Tabs).
-    Replaces TabManager and SidebarWidget.
+    Decoupled from QtWidgets inheritance.
     """
     
     # Signals for Main Window integration
@@ -32,7 +32,7 @@ class ShellManager(QWidget):
         return self.volumes_bridge # Renaming self.volumes to self.volumes_bridge to avoid name clash with property
 
     def __init__(self, main_window):
-        super().__init__()
+        super().__init__(main_window)
         self.mw = main_window
         
         # 1. Initialize Bridges
@@ -105,14 +105,10 @@ class ShellManager(QWidget):
         # Initial Load
         self._rebuild_sidebar_model()
         
-        # 9. Layout (Widget Wrapper)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        
-        self.container = QWidget.createWindowContainer(self.qml_view, self)
+        # 9. Container (The actual widget for MainWindow)
+        # Pass main_window as parent for the window container
+        self.container = QWidget.createWindowContainer(self.qml_view, main_window)
         self.container.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        layout.addWidget(self.container)
         
         # 10. Signal Connections
         self.currentIndexChanged.connect(self._on_current_changed)
