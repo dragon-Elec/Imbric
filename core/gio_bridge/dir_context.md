@@ -11,7 +11,7 @@ Role: Interface layer between Imbric business logic and GNOME/Gio virtual file s
 - !Pattern: [Batched Coalescing] - Reason: Buffered emission (100ms) prevents layout thrashing during directory loads.
 - !Rule: [Native Non-Blocking] - Reason: Enumeration and metadata fetching must never block the main thread.
 - !Pattern: [Lazy Metadata] - Reason: Core listing is fast; dimensions and counts load async via priority workers.
-- !Decision: [Cached FS Usage] - Reason: File system capacity checks are blocking; async fetch + cache prevents UI stutter.
+- !Decision: [Hybrid Visual Oracle] - Reason: Native paths use strict factory.can_thumbnail(); non-native (mtp, smb, recent, trash, sftp) use optimistic MIME heuristic to avoid blocking C-calls.
 - !Rule: [GIO Monitor Priority] - Reason: Use GIO signals for volume/drive changes instead of polling /proc or /dev.
 
 ## Sub-Directory Index
@@ -20,24 +20,25 @@ Role: Interface layer between Imbric business logic and GNOME/Gio virtual file s
 ## Module Audits
 
 ### [FILE: [desktop.py](./desktop.py)] [DONE]
-Role: Desktop integration and Sidebar data providers.
+Role: Desktop integration and Sidebar data providers. Consolidates GNOME-compliant MIME payload generation.
 
-/DNA/: [[Path.home() -> GTK Bookmarks -> monitor_file() -> em:bookmarksChanged] + [trash:/// -> monitor_directory() -> _check_trash_task -> em:itemsChanged]]
+/DNA/: [[Path.home() -> GTK Bookmarks -> monitor_file() -> em:bookmarksChanged] + [trash:/// -> monitor_directory() -> _check_trash_task -> em:itemsChanged] + [create_desktop_mime_data() => QMimeData]]
 
-- SrcDeps: core.utils.gio_qtoast
-- SysDeps: gi.repository (Gio, GLib), pathlib.Path, urllib.parse.unquote, PySide6.QtCore (QObject, Signal, Slot, Property)
+- SrcDeps: core.utils.gio_qtoast, core.metadata_utils
+- SysDeps: gi.repository (Gio, GLib), pathlib.Path, urllib.parse.unquote, PySide6.QtCore (QObject, Signal, Slot, Property, QMimeData, QUrl)
 
 API:
   - [open_with_default_app()](./desktop.py#L11) -> bool: Launches default URI handler.
   - [BookmarksBridge](./desktop.py#L20)(QObject): Watches GTK bookmarks file.
   - [QuickAccessBridge](./desktop.py#L79)(QObject): Aggregates XDG dirs + Trash status + Bookmarks.
+  - [create_desktop_mime_data()](./desktop.py#L149) -> QMimeData: Unified factory for Clipboard/DnD payloads.
 
 ### [FILE: [metadata.py](./metadata.py)] [DONE]
 Role: Async metadata extraction workers using GioWorkerPool.
 
-/DNA/: [[path -> ItemCountWorker -> enumerator.next_files(200) -> em:countReady] + [path -> DimensionWorker -> gfile.is_native() -> QImageReader -> em:dimensionsReady]]
+/DNA/: [[path -> ItemCountWorker -> enumerator.next_files(200) -> em:countReady] + [path -> DimensionWorker -> gfile.is_native() -> QImageReader -> em:dimensionsReady] + [path -> PropertiesWorker -> get_file_info -> em:propertiesReady]]
 
-- SrcDeps: .metadata_utils, .utils.gio_qtoast
+- SrcDeps: core.metadata_utils, core.utils.gio_qtoast
 - SysDeps: gi.repository (Gio, GLib), datetime, PySide6.QtCore (QObject, Signal, Slot), PySide6.QtGui (QImageReader)
 
 API:
@@ -49,13 +50,13 @@ API:
 ### [FILE: [scanner.py](./scanner.py)] [DONE]
 Role: Async Directory Enumeration using Gio.enumerate_children_async.
 
-/DNA/: [scan_directory() -> enumerate_children_async -> _process_batch -> _batch_buffer -> _flush_buffer -> em:filesFound -> [can_thumbnail()? -> worker.enqueue()]]
+/DNA/: [scan_directory() -> is_native() -> enumerate_children_async -> _process_batch -> _batch_buffer -> _flush_buffer -> em:filesFound(session_id, [iconName, isVisual])] + [native? factory.can_thumbnail() : mime heuristic]
 
-- SrcDeps: .metadata.ItemCountWorker, .metadata.DimensionWorker
+- SrcDeps: core.gio_bridge.metadata
 - SysDeps: gi.repository (Gio, GLib, GnomeDesktop), urllib.parse, uuid.uuid4, PySide6.QtCore (QObject, Signal, Slot, QTimer, Property)
 
 API:
-  - [DirectoryReader](./scanner.py#L28)(QObject):
+  - [FileScanner](./scanner.py#L28)(QObject):
     - [scan_directory()](./scanner.py#L136)(path): Async scan with session tracking.
     - [scan_single_file()](./scanner.py#L169)(path): Surgical update for UI.
     - [cancel()](./scanner.py#L191)(): Aborts scan and worker tasks.
@@ -66,7 +67,7 @@ Role: Wraps Gio.VolumeMonitor with async usage updates.
 
 /DNA/: [[monitor.get_mounts() -> _get_usage() -> _pool.enqueue(_fetch_usage_task) -> em:volumesChanged] + [mount_volume() -> vol.mount() -> em:mountSuccess]]
 
-- SrcDeps: .utils.gio_qtoast
+- SrcDeps: core.utils.gio_qtoast
 - SysDeps: gi.repository (Gio, GLib), PySide6.QtCore (QObject, Signal, Slot, Property)
 
 API:
@@ -74,16 +75,5 @@ API:
     - [get_volumes()](./volumes.py#L73) -> list: Aggregates volumes and active mounts.
     - [mount_volume()](./volumes.py#L121)(identifier): Async mount request.
     - [unmount_volume()](./volumes.py#L134)(identifier): Async unmount request.
-### [FILE: [uri_utils.py](./uri_utils.py)] [DONE]
-Role: Robust string-to-QUrl translation and GNOME-specific MIME payload generation.
-
-/DNA/: [path_or_uri -> to_qurl() -> [:// ? QUrl(u) : QUrl.fromLocalFile(p)]]
-
-- SrcDeps: None
-- SysDeps: PySide6.QtCore.QUrl
-
-API:
-  - [to_qurl()](./uri_utils.py#L3) -> QUrl: Safe translation for hybrid paths.
-  - [build_gnome_copied_files()](./uri_utils.py#L9) -> str: Payload for x-special/gnome-copied-files.
 
 !Caveat: Usage stats are lazily loaded and cached; first call returns null/loading.

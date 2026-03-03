@@ -25,7 +25,7 @@ from PySide6.QtCore import QObject, Signal, Slot, QTimer, Property
 from core.gio_bridge.metadata import ItemCountWorker, DimensionWorker
 
 
-class DirectoryReader(QObject):
+class FileScanner(QObject):
     """
     Async directory scanner using Gio.
     
@@ -54,6 +54,9 @@ class DirectoryReader(QObject):
         "standard::type",
         "standard::is-hidden",
         "standard::size",
+        
+        # Virtual Target (Active: for Recent/Trash resolution)
+        "standard::target-uri",
         
         # MIME type (Active: for icons and "Open With")
         "standard::content-type",
@@ -109,8 +112,8 @@ class DirectoryReader(QObject):
         # [NEW] Background dimension reader (Async)
         self._dimension_worker = DimensionWorker(self)
         self._dimension_worker.dimensionsReady.connect(self._on_dimensions_ready)
-        
-        # [NEW] Shared Thumbnail Factory (Lazy load to avoid overhead if not needed immediately)
+
+        # [NEW] Shared Thumbnail Factory (Lazy load)
         self._factory = None
 
     @property
@@ -147,14 +150,18 @@ class DirectoryReader(QObject):
         
         self._current_path = path
         self._is_trash = path.startswith("trash://")
+        
+        # Detect if the target is a local (native) filesystem.
+        # Non-native (mtp://, smb://, recent://, trash://, sftp://, etc.)
+        # uses optimistic visual detection to avoid blocking C-calls.
+        gfile = Gio.File.new_for_commandline_arg(path)
+        self._is_native = gfile.is_native()
         self._cancellable = Gio.Cancellable()
         # [FIX] Generate unique session ID for cross-talk prevention
         self._session_id = str(uuid4())
         
         # Capture the specific token for this scan
         cancellable = self._cancellable
-        
-        gfile = Gio.File.new_for_commandline_arg(path)
         
         gfile.enumerate_children_async(
             self.QUERY_ATTRIBUTES,
@@ -311,11 +318,7 @@ class DirectoryReader(QObject):
             file_type = info.get_file_type()
             is_dir = file_type == Gio.FileType.DIRECTORY
             
-            # 1. Initialize factory if needed
-            if self._factory is None:
-                self._factory = GnomeDesktop.DesktopThumbnailFactory.new(GnomeDesktop.DesktopThumbnailSize.LARGE)
-
-            # Safely get MIME type to prevent GLib-GIO-CRITICAL errors on FTP servers
+            # 1. Gather MIME (Instant/Non-blocking)
             mime_type = ""
             if info.has_attribute("standard::content-type"):
                 mime_type = info.get_content_type() or ""
@@ -332,20 +335,23 @@ class DirectoryReader(QObject):
             if thumb_path:
                 is_visual = True
             else:
-                # 3. Ask the Oracle (Can we thumbnail this?)
-                # We need a URI for this check. If full_path is already a URI, use it.
-                if "://" in full_path:
-                    uri = full_path
+                # Optimized "Oracle":
+                # Non-native paths (mtp, smb, recent, trash, sftp, etc.): be optimistic
+                # to avoid blocking C-calls that hit the network/mount.
+                # Native (local) paths: use the strict factory check for accurate layout.
+                if not self._is_native:
+                    is_visual = mime_type.startswith(("image/", "video/", "application/pdf"))
                 else:
+                    if self._factory is None:
+                        self._factory = GnomeDesktop.DesktopThumbnailFactory.new(GnomeDesktop.DesktopThumbnailSize.LARGE)
+                    
                     uri = "file://" + urllib.parse.quote(full_path)
-                
-                mtime = info.get_modification_date_time().to_unix() if info.get_modification_date_time() else 0
-                
-                try:
-                    is_visual = self._factory.can_thumbnail(uri, mime_type, mtime)
-                except Exception:
-                    pass
-            
+                    mtime = info.get_modification_date_time().to_unix() if info.get_modification_date_time() else 0
+                    try:
+                        is_visual = self._factory.can_thumbnail(uri, mime_type, mtime)
+                    except Exception:
+                        is_visual = mime_type.startswith(("image/", "video/", "application/pdf"))
+
             # is_visual tells the UI to request a thumbnail.
             # should_read_dimensions tells the backend to read the header for Aspect Ratio.
             # We ONLY read dims for actual images. Videos/PDFs get thumbnails but stay square.
@@ -433,7 +439,10 @@ class DirectoryReader(QObject):
                 
                 # Trash specific (Active)
                 "trashOrigPath": info.get_attribute_byte_string("trash::orig-path") or "",
-                "trashDeletionDate": info.get_attribute_string("trash::deletion-date") or ""
+                "trashDeletionDate": info.get_attribute_string("trash::deletion-date") or "",
+                
+                # Target Path (For Recent/Search)
+                "targetUri": info.get_attribute_string("standard::target-uri") or ""
             })
             
             # [NEW] Queue dimension reading (Async)
