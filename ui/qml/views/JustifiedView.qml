@@ -76,6 +76,12 @@ Item {
         function onRenameRequested(path) {
             root.pathBeingRenamed = path
         }
+        
+        function onRequestContextMenu(paths) {
+            contextMenu.currentPaths = paths
+            contextMenu.modelData = contextMenuViewModel.getModelForPaths(paths)
+            contextMenu.popup()
+        }
     }
 
     // =========================================================================
@@ -148,6 +154,20 @@ Item {
             gesturePolicy: TapHandler.WithinBounds
             onTapped: {
                 if (root.bridge) root.bridge.showBackgroundContextMenu()
+            }
+        }
+
+        // 4. Keyboard Shortcuts for Context Menu
+        Shortcut {
+            sequences: [StandardKey.ContextMenu, "Shift+F10"]
+            onActivated: {
+                if (root.bridge) {
+                    if (selectionModel.selection.length > 0) {
+                        root.bridge.showContextMenu(selectionModel.selection)
+                    } else {
+                        root.bridge.showBackgroundContextMenu()
+                    }
+                }
             }
         }
 
@@ -384,6 +404,15 @@ Item {
         Components.RubberBand {
             id: rubberBand
             visible: false 
+        }
+
+        Components.GtkActionMenu {
+            id: contextMenu
+            property var currentPaths: []
+            
+            onActionTriggered: (actionId) => {
+                contextMenuViewModel.executeAction(actionId, currentPaths)
+            }
         }
     }
 }

@@ -26,34 +26,34 @@ class ActionManager(QObject):
         # Note: Slot can be None if implemented elsewhere or TODO
         bindings: Dict[ShortcutAction, Tuple[str, str, Callable]] = {
             # --- File Operations ---
-            ShortcutAction.COPY:            ("edit-copy", "Copy", file_manager.copy_selection),
-            ShortcutAction.CUT:             ("edit-cut", "Cut", file_manager.cut_selection),
-            ShortcutAction.PASTE:           ("edit-paste", "Paste", file_manager.paste_to_current),
-            ShortcutAction.TRASH:           ("user-trash", "Move to Trash", file_manager.trash_selection),
-            ShortcutAction.RENAME:          ("edit-rename", "Rename", file_manager.rename_selection),
-            ShortcutAction.DUPLICATE:       ("edit-copy", "Duplicate", file_manager.duplicate_selection),
-            ShortcutAction.NEW_FOLDER:      ("folder-new", "New Folder", file_manager.create_new_folder),
-            ShortcutAction.DELETE_PERMANENT:("edit-delete", "Delete Permanently", None), 
+            ShortcutAction.COPY:            ("edit-copy-symbolic", "Copy", file_manager.copy_selection),
+            ShortcutAction.CUT:             ("edit-cut-symbolic", "Cut", file_manager.cut_selection),
+            ShortcutAction.PASTE:           ("edit-paste-symbolic", "Paste", file_manager.paste_to_current),
+            ShortcutAction.TRASH:           ("user-trash-symbolic", "Move to Trash", file_manager.trash_selection),
+            ShortcutAction.RENAME:          ("edit-rename-symbolic", "Rename", file_manager.rename_selection),
+            ShortcutAction.DUPLICATE:       ("edit-copy-symbolic", "Duplicate", file_manager.duplicate_selection),
+            ShortcutAction.NEW_FOLDER:      ("folder-new-symbolic", "New Folder", file_manager.create_new_folder),
+            ShortcutAction.DELETE_PERMANENT:("edit-delete-symbolic", "Delete Permanently", None), 
             
             # --- Undo / Redo ---
-            ShortcutAction.UNDO:            ("edit-undo", "Undo", undo_manager.undo),
-            ShortcutAction.REDO:            ("edit-redo", "Redo", undo_manager.redo),
+            ShortcutAction.UNDO:            ("edit-undo-symbolic", "Undo", undo_manager.undo),
+            ShortcutAction.REDO:            ("edit-redo-symbolic", "Redo", undo_manager.redo),
 
             # --- Navigation ---
-            ShortcutAction.GO_UP:           ("go-up", "Go Up", window.go_up),
-            ShortcutAction.GO_BACK:         ("go-previous", "Back", tab_manager.go_back),
-            ShortcutAction.GO_FORWARD:      ("go-next", "Forward", tab_manager.go_forward),
-            ShortcutAction.GO_HOME:         ("go-home", "Home", tab_manager.go_home),
-            ShortcutAction.REFRESH:         ("view-refresh", "Refresh", lambda: tab_manager.current_tab.scanner.scan_directory(tab_manager.current_tab.current_path) if tab_manager.current_tab else None),
+            ShortcutAction.GO_UP:           ("go-up-symbolic", "Go Up", window.go_up),
+            ShortcutAction.GO_BACK:         ("go-previous-symbolic", "Back", tab_manager.go_back),
+            ShortcutAction.GO_FORWARD:      ("go-next-symbolic", "Forward", tab_manager.go_forward),
+            ShortcutAction.GO_HOME:         ("go-home-symbolic", "Home", tab_manager.go_home),
+            ShortcutAction.REFRESH:         ("view-refresh-symbolic", "Refresh", lambda: tab_manager.current_tab.scanner.scan_directory(tab_manager.current_tab.current_path) if tab_manager.current_tab else None),
             ShortcutAction.FOCUS_PATH_BAR:  ("", "Focus Path Bar", nav_bar.focus_path),
-            ShortcutAction.FIND:            ("edit-find", "Find", nav_bar.focus_path),
+            ShortcutAction.FIND:            ("edit-find-symbolic", "Find", nav_bar.focus_path),
 
             # --- View ---
-            ShortcutAction.TOGGLE_HIDDEN:   ("view-hidden", "Toggle Hidden Files", view_manager.toggle_hidden),
-            ShortcutAction.ZOOM_IN:         ("zoom-in", "Zoom In", view_manager.zoom_in),
-            ShortcutAction.ZOOM_OUT:        ("zoom-out", "Zoom Out", view_manager.zoom_out),
-            ShortcutAction.ZOOM_RESET:      ("zoom-original", "Reset Zoom", view_manager.reset_zoom),
-            ShortcutAction.SELECT_ALL:      ("edit-select-all", "Select All", view_manager.select_all),
+            ShortcutAction.TOGGLE_HIDDEN:   ("view-hidden-symbolic", "Toggle Hidden Files", view_manager.toggle_hidden),
+            ShortcutAction.ZOOM_IN:         ("zoom-in-symbolic", "Zoom In", view_manager.zoom_in),
+            ShortcutAction.ZOOM_OUT:        ("zoom-out-symbolic", "Zoom Out", view_manager.zoom_out),
+            ShortcutAction.ZOOM_RESET:      ("zoom-original-symbolic", "Reset Zoom", view_manager.reset_zoom),
+            ShortcutAction.SELECT_ALL:      ("edit-select-all-symbolic", "Select All", view_manager.select_all),
 
             # --- Tabs ---
             ShortcutAction.NEW_TAB:         ("tab-new", "New Tab", lambda: tab_manager.add_tab()),

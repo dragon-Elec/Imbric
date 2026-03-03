@@ -1,7 +1,6 @@
 from PySide6.QtCore import QObject, Signal, Property, Slot, Qt
 from PySide6.QtGui import QCursor, QIcon
 from ui.widgets.drag_helper import start_drag_session
-from ui.widgets.context_menu import FileContextMenu, BackgroundContextMenu
 from ui.services.conflict_resolver import ConflictResolver
 from ui.dialogs.conflicts import ConflictAction
 from core.search_worker import SearchWorker
@@ -17,6 +16,9 @@ class AppBridge(QObject):
     searchResultsFound = Signal(list)   # Batch of paths
     searchFinished = Signal(int)         # Total count
     searchError = Signal(str)            # Error message
+    
+    # Context Menu Signals
+    requestContextMenu = Signal(list)     # paths: list of strings (empty for background)
     
     def __init__(self, main_window):
         super().__init__()
@@ -62,13 +64,14 @@ class AppBridge(QObject):
     
     @Slot(list)
     def showContextMenu(self, paths):
-        """Shows a native QMenu via ContextMenu widget."""
-        if paths: FileContextMenu(self.mw, paths).exec(QCursor.pos())
+        """Requests QML to show a context menu for the given paths."""
+        self.requestContextMenu.emit(paths)
 
     @Slot()
     def showBackgroundContextMenu(self):
-        """Shows a context menu for empty space via ContextMenu widget."""
-        BackgroundContextMenu(self.mw).exec(QCursor.pos())
+        """Requests QML to show a background context menu."""
+        self.requestContextMenu.emit([])
+
     
     # _create_new_folder moved to FileManager
     
