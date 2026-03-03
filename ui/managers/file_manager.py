@@ -11,6 +11,8 @@ from PySide6.QtCore import QObject, Signal, Slot, QMimeData, QUrl
 from PySide6.QtGui import QClipboard, QGuiApplication
 from ui.services.conflict_resolver import ConflictResolver
 from ui.dialogs.conflicts import ConflictAction
+from core.metadata_utils import ensure_uri
+from core.gio_bridge.desktop import build_gnome_copied_files
 
 from typing import List, Optional
 
@@ -121,17 +123,20 @@ class FileManager(QObject):
         self.cutPathsChanged.emit()
 
     def _set_clipboard(self, paths: list, is_cut: bool):
+        """Sets the system clipboard with robust URIs and GNOME metadata."""
         self._is_cut = is_cut
         mime_data = QMimeData()
         
-        urls = [QUrl.fromLocalFile(p) for p in paths]
+        # 1. URI List (Standard Qt/XFCE compatibility)
+        urls = [QUrl(ensure_uri(p)) for p in paths]
         mime_data.setUrls(urls)
         
-        action = "cut" if is_cut else "copy"
-        uri_list = "\n".join(["file://" + p for p in paths])
-        gnome_data = f"{action}\n{uri_list}"
+        # 2. GNOME-specific Metadata (Nautilus compatibility)
+        gnome_data = build_gnome_copied_files(paths, is_cut)
         mime_data.setData(self.GNOME_COPIED_FILES, gnome_data.encode('utf-8'))
-        mime_data.setData(self.URI_LIST, uri_list.encode('utf-8'))
+        
+        # 3. Plain Text Fallback
+        mime_data.setText("\n".join([u.toString() for u in urls]))
         
         self._clipboard.setMimeData(mime_data)
 

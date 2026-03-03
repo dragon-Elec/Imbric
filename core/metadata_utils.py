@@ -111,6 +111,16 @@ def format_size(size_bytes: int) -> str:
             return f"{size_bytes:.1f} {unit}"
         size_bytes /= 1024.0
     return f"{size_bytes:.1f} PB"
+    
+
+def ensure_uri(path_or_uri: str) -> str:
+    """
+    Robustly converts a string to a GIO URI.
+    Uses Gio.File.new_for_commandline_arg for canonical parsing.
+    """
+    if not path_or_uri:
+        return ""
+    return Gio.File.new_for_commandline_arg(path_or_uri).get_uri()
 
 
 def to_unix_timestamp(dt: GLib.DateTime | None) -> int:

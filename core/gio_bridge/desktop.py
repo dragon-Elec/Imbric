@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import unquote
 from PySide6.QtCore import QObject, Signal, Slot, Property
 from core.utils.gio_qtoast import GioWorkerPool
+from core.metadata_utils import ensure_uri
 
 def open_with_default_app(path: str) -> bool:
     """Launch the default application for the given file path/URI."""
@@ -144,3 +145,9 @@ class QuickAccessBridge(QObject):
                 b['type'] = "bookmark"
                 items.append(b)
         return items
+
+def build_gnome_copied_files(paths: list, is_cut: bool) -> str:
+    """Generates the payload for x-special/gnome-copied-files."""
+    action = "cut" if is_cut else "copy"
+    uris = [ensure_uri(p) for p in paths]
+    return f"{action}\n" + "\n".join(uris)
