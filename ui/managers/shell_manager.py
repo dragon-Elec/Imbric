@@ -65,6 +65,11 @@ class ShellManager(QObject):
         self.sidebar_model = SidebarModel(self)
         ctx.setContextProperty("sidebarModel", self.sidebar_model)
         
+        # Instantiate ViewModel for Context Menu
+        from ui.models.context_menu_model import ContextMenuViewModel
+        self.context_menu_model = ContextMenuViewModel(main_window)
+        ctx.setContextProperty("contextMenuViewModel", self.context_menu_model)
+        
         # 5. Image Providers
         from core.image_providers.thumbnail_provider import ThumbnailProvider
         from core.image_providers.theme_provider import ThemeImageProvider

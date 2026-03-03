@@ -10,3 +10,6 @@ GtkTabButton 1.0 GtkTabButton.qml
 Sidebar 1.0 Sidebar.qml
 SidebarItem 1.0 SidebarItem.qml
 SidebarHeader 1.0 SidebarHeader.qml
+GtkMenu 1.0 GtkMenu.qml
+GtkActionMenu 1.0 GtkActionMenu.qml
+GtkMenuSeparator 1.0 GtkMenuSeparator.qml
