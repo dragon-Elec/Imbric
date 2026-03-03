@@ -14,19 +14,19 @@ Identity: Routing layer for high-level UI coordination. Managers sit above the b
 ## Audits
 
 ### [FILE: action_manager.py] [DONE]
-Role: Dynamically constructs and registers all global `QAction` objects from the `Shortcuts` model.
+Role: Dynamically constructs and registers all global `QAction` objects from the `Shortcuts` model, mapping them to GNOME symbolic icons.
 
-/DNA/: `[loop: bindings.items() -> call:_create_action() -> setShortcut(model) -> connect(slot) -> window.addAction()]`
+/DNA/: [loop: bindings.items() -> call:_create_action() -> setIcon(fromTheme:symbolic) -> setShortcut(model) -> connect(slot) -> window.addAction()]
 
 - SrcDeps:
-  - `ui.models.shortcuts`
+  - ui.models.shortcuts
 - SysDeps:
-  - `PySide6.QtCore.QObject`
-  - `PySide6.QtCore.Qt`
-  - `PySide6.QtGui.QAction`
-  - `PySide6.QtGui.QKeySequence`
-  - `PySide6.QtGui.QIcon`
-  - `PySide6.QtWidgets.QWidget`
+  - PySide6.QtCore.QObject
+  - PySide6.QtCore.Qt
+  - PySide6.QtGui.QAction
+  - PySide6.QtGui.QKeySequence
+  - PySide6.QtGui.QIcon
+  - PySide6.QtWidgets.QWidget
 
 API:
   - ActionManager(QObject):
@@ -36,19 +36,21 @@ API:
 ### [FILE: file_manager.py] [DONE]
 Role: Consolidates clipboard state, file action dispatch (trash, rename, duplicate), and drag/drop handling.
 
-/DNA/: `[action_slot() -> _get_selection() -> mw.transaction_manager/file_ops] + [_set_clipboard(paths, is_cut) -> GNOME_COPIED_FILES mime -> em:clipboardChanged] + [handle_drop() -> batchTransfer(mode)] + [_run_transfer() -> ConflictResolver callback -> batchTransfer()]`
+/DNA/: [action_slot() -> _get_selection() -> mw.transaction_manager/file_ops] + [_set_clipboard(paths, is_cut) -> create_desktop_mime_data -> em:clipboardChanged] + [handle_drop() -> batchTransfer(mode)] + [_run_transfer() -> ConflictResolver callback -> batchTransfer()]
 
 - SrcDeps:
-  - `ui.services.conflict_resolver`
-  - `ui.dialogs.conflicts`
+  - core.gio_bridge.desktop
+  - core.metadata_utils
+  - ui.services.conflict_resolver
+  - ui.dialogs.conflicts
 - SysDeps:
-  - `PySide6.QtCore.QObject`
-  - `PySide6.QtCore.Signal`
-  - `PySide6.QtCore.Slot`
-  - `PySide6.QtCore.QMimeData`
-  - `PySide6.QtCore.QUrl`
-  - `PySide6.QtGui.QClipboard`
-  - `PySide6.QtGui.QGuiApplication`
+  - PySide6.QtCore.QObject
+  - PySide6.QtCore.Signal
+  - PySide6.QtCore.Slot
+  - PySide6.QtCore.QMimeData
+  - PySide6.QtCore.QUrl
+  - PySide6.QtGui.QClipboard
+  - PySide6.QtGui.QGuiApplication
 
 API:
   - FileManager(QObject):
@@ -68,14 +70,14 @@ API:
 ### [FILE: navigation_manager.py] [DONE]
 Role: Maintains back/forward history stacks and tracks the current active path.
 
-/DNA/: `[call:navigate(path) -> _back_stack.append(old) -> _forward_stack.clear() -> em:currentPathChanged]`
+/DNA/: [call:navigate(path) -> _back_stack.append(old) -> _forward_stack.clear() -> em:currentPathChanged]
 
 - SrcDeps:
 - SysDeps:
-  - `PySide6.QtCore.QObject`
-  - `PySide6.QtCore.Signal`
-  - `PySide6.QtCore.Slot`
-  - `PySide6.QtCore.Property`
+  - PySide6.QtCore.QObject
+  - PySide6.QtCore.Signal
+  - PySide6.QtCore.Slot
+  - PySide6.QtCore.Property
 
 API:
   - NavigationManager(QObject):
@@ -84,14 +86,15 @@ API:
     - forward() -> None: Navigates forward.
 
 ### [FILE: shell_manager.py] [DONE]
-Role: Central QML coordinator managing the unified shell (Sidebar + Tabs), decoupled from QtWidgets.
+Role: Central QML coordinator managing the unified shell (Sidebar + Tabs), injecting context-responsive ViewModels for Gtk-mimic menus.
 
-/DNA/: [init -> setup(QQuickView) -> ctx.setContextProperty()] + [bridges.em:changed -> call:_rebuild_sidebar_model -> sidebar_model.update] + [QML.em:navigationRequested -> call:navigate_to] + [tab routing: add/close/next/prev -> TabListModel]
+/DNA/: [init -> setup(QQuickView) -> ctx.setContextProperty(shell|tab|sidebar|contextMenuViewModel)] + [bridges.em:changed -> call:_rebuild_sidebar_model -> sidebar_model.update] + [QML.em:navigationRequested -> call:navigate_to] + [tab routing: add/close/next/prev -> TabListModel]
 
 - SrcDeps:
   - ui.models.tab_model.TabListModel
   - ui.models.tab_controller.TabController
   - ui.models.sidebar_model.SidebarModel
+  - ui.models.context_menu_model.ContextMenuViewModel
   - core.gio_bridge.desktop.QuickAccessBridge
   - core.gio_bridge.volumes.VolumesBridge
   - core.image_providers.thumbnail_provider.ThumbnailProvider
@@ -120,13 +123,13 @@ API:
 ### [FILE: view_manager.py] [DONE]
 Role: Global controller for view adjustments (zoom level, toggling hidden files) that acts on the active tab.
 
-/DNA/: `[call:zoom_in() -> tab.change_zoom() -> em:zoomChanged(height)]`
+/DNA/: [call:zoom_in() -> tab.change_zoom() -> em:zoomChanged(height)]
 
 - SrcDeps:
 - SysDeps:
-  - `PySide6.QtCore.QObject`
-  - `PySide6.QtCore.Slot`
-  - `PySide6.QtCore.Signal`
+  - PySide6.QtCore.QObject
+  - PySide6.QtCore.Slot
+  - PySide6.QtCore.Signal
 
 API:
   - ViewManager(QObject):

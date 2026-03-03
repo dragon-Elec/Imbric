@@ -33,18 +33,18 @@ API:
 ---
  
 ### [FILE: drag_helper.py] [DONE]
-Role: Minimal utility for initiating system-native drag-and-drop sessions.
- 
-/DNA/: [call:start_drag_session(paths) -> QMimeData(urls) -> drag.setPixmap -> drag.exec(MoveAction)]
- 
+Role: Lightweight wrapper for initiating system-native drag-and-drop sessions using centralized MIME logic.
+
+/DNA/: [call:start_drag_session(paths) -> create_desktop_mime_data -> drag.setMimeData -> drag.exec(MoveAction)]
+
 - SrcDeps:
-  - None
+  - core.gio_bridge.desktop.create_desktop_mime_data
 - SysDeps:
-  - PySide6.QtCore.Qt, QUrl, QMimeData
-  - PySide6.QtGui.QDrag, QIcon
- 
+  - PySide6.QtCore.Qt, QMimeData
+  - PySide6.QtGui.QDrag, QIcon, QPixmap
+
 API:
-  - start_drag_session(parent, paths) -> None: Blocking call that executes a system drag for the given local paths.
+  - start_drag_session(mainwindow, paths) -> None: Initiates a system drag using the appropriate source widget (Container or MainWindow).
  
 ---
  

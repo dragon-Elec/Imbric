@@ -146,8 +146,30 @@ class QuickAccessBridge(QObject):
                 items.append(b)
         return items
 
-def build_gnome_copied_files(paths: list, is_cut: bool) -> str:
-    """Generates the payload for x-special/gnome-copied-files."""
+def create_desktop_mime_data(paths: list, is_cut: bool) -> 'QMimeData':
+    """
+    Universally robust QMimeData factory for GNOME/GTK desktop operations.
+    Returns a QMimeData object containing:
+    1. Standard URI List (QUrl)
+    2. GNOME-specific Metadata (x-special/gnome-copied-files)
+    3. Plain Text fallback
+    """
+    from PySide6.QtCore import QMimeData, QUrl
+    from core.metadata_utils import ensure_uri
+    
+    mime_data = QMimeData()
+    
+    # 1. Standard URI List (Cross-platform/Standard DND)
+    urls = [QUrl(ensure_uri(p)) for p in paths]
+    mime_data.setUrls(urls)
+    
+    # 2. GNOME Metadata (Nautilus/Files compatibility)
     action = "cut" if is_cut else "copy"
     uris = [ensure_uri(p) for p in paths]
-    return f"{action}\n" + "\n".join(uris)
+    gnome_data = f"{action}\n" + "\n".join(uris)
+    mime_data.setData("x-special/gnome-copied-files", gnome_data.encode('utf-8'))
+    
+    # 3. Plain Text Fallback (Terminals/Editors)
+    mime_data.setText("\n".join([u.toString() for u in urls]))
+    
+    return mime_data

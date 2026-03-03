@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt, QMimeData
 from PySide6.QtGui import QDrag, QIcon, QImage, QPixmap
 from core.metadata_utils import ensure_uri
-from core.gio_bridge.desktop import build_gnome_copied_files
+from core.gio_bridge.desktop import create_desktop_mime_data
 
 def start_drag_session(mainwindow, paths):
     """
@@ -25,20 +25,7 @@ def start_drag_session(mainwindow, paths):
         print(f"[DragHelper] Warning: No ShellManager found, using MainWindow: {source_widget}")
 
     drag = QDrag(source_widget)
-    mime_data = QMimeData()
-    
-    # 1. Standard URI List (Standard DND)
-    urls = [QUrl(ensure_uri(p)) for p in paths]
-    mime_data.setUrls(urls)
-    
-    # 2. GNOME-specific MIME type (Nautilus/Files compatibility)
-    gnome_payload = build_gnome_copied_files(paths, is_cut=False).encode('utf-8')
-    mime_data.setData("x-special/gnome-copied-files", gnome_payload)
-    
-    # 3. Plain Text Fallback (For Text Editors/Terminals)
-    uri_list_str = "\n".join([u.toString() for u in urls])
-    mime_data.setText(uri_list_str)
-    
+    mime_data = create_desktop_mime_data(paths, is_cut=False)
     drag.setMimeData(mime_data)
     
     # Visual Feedback

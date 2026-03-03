@@ -114,13 +114,11 @@ class MainWindow(QMainWindow):
             self.header = CustomHeader(self.nav_bar, self)
             central_layout.addWidget(self.header)
         else:
-            # Standard Toolbar
-            # NavigationBar is a QWidget not QToolBar now, so we must wrap it
-            from PySide6.QtWidgets import QToolBar
-            toolbar = QToolBar(self)
-            toolbar.setMovable(False)
-            toolbar.addWidget(self.nav_bar)
-            self.addToolBar(toolbar)
+            # Directly add NavigationBar to central layout to avoid QToolBar height constraints.
+            # This allows the elements below (Tabs/Grid) to lift up.
+            self.nav_bar.setObjectName("HeaderBar")
+            # Height determined naturally by content + QSS padding
+            central_layout.insertWidget(0, self.nav_bar)
 
         # UNIFIED SHELL (Replaces Splitter/Sidebar/Tabs)
         central_layout.addWidget(self.shell_manager.container, 1)
