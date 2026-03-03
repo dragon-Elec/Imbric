@@ -31,7 +31,7 @@ from gi.repository import Gio, GLib
 GIO_STANDARD_ATTRS = (
     "standard::name,standard::display-name,standard::type,standard::size,"
     "standard::is-hidden,standard::is-symlink,standard::symlink-target,"
-    "trash::orig-path,trash::deletion-date"
+    "standard::target-uri,trash::orig-path,trash::deletion-date"
 )
 
 GIO_MIME_ATTRS = (
@@ -47,7 +47,7 @@ GIO_ICON_ATTRS = (
 )
 
 GIO_ACCESS_ATTRS = (
-    "unix::mode,unix::uid,unix::gid,owner::user,owner::group"
+    "unix::mode,unix::uid,unix::gid,owner::user,owner::group,access::can-write"
 )
 
 # Combined sets for common use cases
@@ -89,8 +89,10 @@ class FileInfo:
     permissions_str: str = ""  # "-rw-r--r--"
     owner: str = ""
     group: str = ""
+    can_write: bool = True
     
-    # Trash Specific
+    # Target Resolution
+    target_uri: str = ""
     trash_orig_path: str = ""
     trash_deletion_date: str = ""
 
@@ -246,7 +248,9 @@ def get_file_info(path: str, attributes: str = ATTRS_FULL) -> Optional[FileInfo]
         owner = info.get_attribute_string("owner::user") or str(info.get_attribute_uint32("unix::uid"))
         group = info.get_attribute_string("owner::group") or str(info.get_attribute_uint32("unix::gid"))
         
-        # 5. Trash Metadata
+        # 5. Resolution Metadata
+        can_write = info.get_attribute_boolean("access::can-write") if info.has_attribute("access::can-write") else True
+        target_uri = info.get_attribute_string("standard::target-uri") or ""
         trash_orig = info.get_attribute_byte_string("trash::orig-path") or ""
         trash_date = info.get_attribute_string("trash::deletion-date") or ""
 
@@ -269,6 +273,8 @@ def get_file_info(path: str, attributes: str = ATTRS_FULL) -> Optional[FileInfo]
             permissions_str=perm_str,
             owner=owner,
             group=group,
+            can_write=can_write,
+            target_uri=target_uri,
             trash_orig_path=trash_orig,
             trash_deletion_date=trash_date
         )

@@ -26,14 +26,16 @@ API:
   - [ThemeImageProvider](./theme_provider.py#L8)(QQuickImageProvider): Maps MIME names to system theme icons.
 
 ### [FILE: [thumbnail_provider.py](./thumbnail_provider.py)] [DONE]
-Role: High-performance GNOME-native thumbnail extraction.
+Role: High-performance GNOME-native thumbnail extraction with virtual-URI resolution.
 
-/DNA/: [requestImage(path) -> gfile.query_info(thumbnail-path) -> if(cached) -> read() => QImage]
-/DNA/: [if(!cached) -> factory.generate_thumbnail() -> read() => QImage]
+/DNA/: [requestImage(path) -> metadata_utils.get_file_info(path) -> resolve(target_uri)]
+/DNA/: [factory.lookup/generate(synchronized via QMutex) -> read() => QImage]
+/DNA/: [Fallback: if(thumbnail_fail) -> resolve_mime_icon() => QImage]
 
 - SrcDeps: core.metadata_utils
-- SysDeps: gi.repository (Gio, GLib, GnomeDesktop), PySide6.QtQuick (QQuickImageProvider), PySide6.QtGui (QImage, QPixmap)
+- SysDeps: gi.repository (Gio, GLib, GnomeDesktop), PySide6.QtQuick, PySide6.QtGui
 
 API:
-  - [ThumbnailProvider](./thumbnail_provider.py#L25)(QQuickImageProvider): Direct integration with `GnomeDesktop.DesktopThumbnailFactory`.
-!Caveat: Thumbnail generation is blocking; for large batches, the `FileScanner` pre-queues metadata to trigger the system's background thumbnailer (bubblewrap) first.
+  - [ThumbnailProvider](./thumbnail_provider.py#L25)(QQuickAsyncImageProvider): Thread-safe integration with `GnomeDesktop.DesktopThumbnailFactory`.
+!Caveat: `DesktopThumbnailFactory` is NOT thread-safe for concurrent generation; the provider uses a static `QMutex` to serialize calls across all worker threads.
+!Feature: Transparently resolves `recent:///` and `trash:///` virtual URIs to their physical targets via GIO's `standard::target-uri`.

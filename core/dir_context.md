@@ -38,13 +38,14 @@ API:
 ### [FILE: [file_operations.py](./file_operations.py)] [DONE]
 Role: Orchestrates low-level Gio I/O via QThreadPool workers.
 
-/DNA/: [Slot -> _create_job(uuid4) -> tid.addOperation() -> _submit(QThreadPool) -> em:operationStarted -> [Worker.run() -> em:finished] -> del _jobs[id]]
+/DNA/: [Slot -> _create_job(uuid4) -> tm.addOperation() -> _submit(QThreadPool) -> em:operationStarted -> [Worker.run() -> em:finished] -> del _jobs[id]]
 
 - SrcDeps: .file_workers, .trash_workers
 - SysDeps: PySide6.QtCore (QObject, Signal, Slot, QThreadPool, QMutex), uuid.uuid4
 
 API:
   - [copy/move/transfer/rename](./file_operations.py#L103-L131)(paths, tid): Job Factory + Submission.
+  - [createFolder/createFile/createSymlink](./file_operations.py#L133-L151)(path, tid): Atomic creation.
   - [trash/trashMultiple](./file_operations.py#L156-L175)(paths, tid): VFS trash orchestration.
   - [restore](./file_operations.py#L179)(orig_path, tid): Specific reversal from trash://.
   - [generate_unique_name](./file_operations.py#L225)(dest, style) => str: Collision-safe path generator.
@@ -53,8 +54,8 @@ API:
 ### [FILE: [transaction_manager.py](./transaction_manager.py)] [DONE]
 Role: Central hub bridging UI bridges to FileOperations; owns conflict state.
 
-/DNA/: [batchTransfer() -> startTransaction() -> file_ops.transfer() -> onOperationFinished() -> if(all_done) -> em:historyCommitted]
-/DNA/: [onOperationError() -> if(conflict) -> _pending_conflicts.add(job_id) -> em:conflictDetected -> wait -> resolveConflict() -> file_ops.retry()]
+/DNA/: [batchTransfer() -> startTransaction() -> for item in sources -> file_ops.transfer() -> onOperationFinished() -> em:transactionUpdate/Progress]
+/DNA/: [onOperationError() -> if(conflict) -> _pending_conflicts.add(job_id) -> em:conflictDetected -> wait -> resolveConflict() -> file_ops.resolve()]
 
 - SrcDeps: .transaction, .file_operations, .operation_validator
 - SysDeps: PySide6.QtCore (QObject, Signal, Slot), uuid.uuid4
@@ -62,6 +63,9 @@ Role: Central hub bridging UI bridges to FileOperations; owns conflict state.
 API:
   - [startTransaction](./transaction_manager.py#L63)(desc) => tid: Initialize batch tracking.
   - [batchTransfer](./transaction_manager.py#L152)(sources, dest_dir, mode, resolver): Core I/O loop with conflict gating.
+  - jobCompleted(op_type, result, msg): Emitted on job success for UI reactions.
+  - transactionUpdate(tid, desc, completed, total): UI-friendly batch progress.
+  - operationFailed(op_type, path, msg): Emitted for general errors.
   - [resolveConflict](./transaction_manager.py#L92)(job_id, resolution, new_name): Resumes operations from UI-provided choice.
 !Contract: Transaction ONLY closes (commits to history) when `completed_ops == total_ops`.
 
@@ -94,7 +98,7 @@ API:
 ### [FILE: [file_workers.py](./file_workers.py)] [DONE]
 Role: Multithreaded implementations of VFS operations.
 
-/DNA/: [QRunnable.run() -> Gio.File.copy/move() -> wait -> if(X-Device) -> recursive_copy() -> em:finished]
+/DNA/: [QRunnable.run() -> if(auto_rename) -> generate_candidate_path() -> Gio.File.copy/move/create() -> if(EXISTS) -> retry/conflict -> em:finished]
 
 - SrcDeps: .metadata_utils
 - SysDeps: PySide6.QtCore (QRunnable), gi.repository (Gio, GLib)
@@ -121,19 +125,20 @@ API:
 ### [FILE: [operation_validator.py](./operation_validator.py)] [DONE]
 Role: Post-operation verification layer using QThreadPool.
 
-/DNA/: [validate(job) -> ValidationRunnable -> checker(src, dest) -> query_exists() => em:validationPassed]
+/DNA/: [validate(job) -> ValidationRunnable.run() -> _VALIDATORS[op_type]() -> query_exists() => em:validationPassed/Failed]
 
 - SrcDeps: .file_workers
 - SysDeps: gi.repository.Gio, PySide6.QtCore (QObject, Signal, QRunnable, QThreadPool)
 
 API:
-  - [validate](./operation_validator.py#L46)(job_id, op_type, source, result_path, success): Queues verification runnable.
+  - [setEnabled](./operation_validator.py#L42)(enabled): Toggles post-operation validation async checks.
+  - [validate](./operation_validator.py#L46)(job_id, op_type, source, result_path, success): Queues verification runnable (supports restore, createSymlink, etc).
 !Rule: [Fire-and-Forget] - Reason: Validation runs after transaction commit; failures do not roll back but notify UI of inconsistency.
 
-### [FILE: [search.py](./search.py)] [WIP]
+### [FILE: [search.py](./search.py)] [DONE]
 Role: Pluggable search engine interface (fd/fdfind vs os.scandir).
 
-/DNA/: [get_search_engine() -> FdSearchEngine if available else ScandirSearchEngine]
+/DNA/: [get_search_engine() -> FdSearchEngine if available else ScandirSearchEngine -> engine.search() -> yields paths]
 
 - SrcDeps: None
 - SysDeps: subprocess, fnmatch, os, shutil
@@ -143,10 +148,10 @@ API:
   - [get_search_engine](./search.py#L216)(): Factory for best performance (Rust-based `fd` preferred).
   - [FileSearch](./search.py#L236)(QObject): Legacy Qt-compatible wrapper.
 
-### [FILE: [search_worker.py](./search_worker.py)] [WIP]
+### [FILE: [search_worker.py](./search_worker.py)] [DONE]
 Role: QThread wrapper for SearchEngine results streaming.
 
-/DNA/: [start_search() -> QThread.run() -> for path in engine.search() -> batch.append(50) -> em:resultsFound]
+/DNA/: [start_search() -> QThread.run() -> lock(mutex) -> for path in engine.search() -> batch.append() -> if(len>=50) -> em:resultsFound]
 
 - SrcDeps: .search
 - SysDeps: PySide6.QtCore (QThread, Signal, Slot, QMutex)
@@ -170,7 +175,7 @@ API:
 ### [FILE: [trash_workers.py](./trash_workers.py)] [DONE]
 Role: Gio-specific trash operations (List, Restore, Empty).
 
-/DNA/: [Restore -> enumerate(trash:///) -> match(orig-path) -> latest_date -> move(dest)]
+/DNA/: [Restore -> _do_restore() -> enumerate(trash:///) -> match(orig_path) & latest_date -> cache_meta -> move(dest)]
 
 - SrcDeps: .file_workers, .metadata_utils
 - SysDeps: gi.repository (Gio, GLib)
@@ -180,4 +185,4 @@ API:
   - RestoreFromTrashRunnable: Specialized mover from trash:/// to original path.
   - ListTrashRunnable: yields TrashItem objects with original paths.
   - EmptyTrashRunnable: recursive physical deletion from trash root.
-!Caveat: Restore matches based on the LATEST deletion date if multiple entries for the same path exist.
+!Caveat: Restore matches based on the LATEST deletion date if multiple entries for the same path exist. EmptyTrash falls back to `_delete_recursive` on NOT_EMPTY errors.

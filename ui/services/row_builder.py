@@ -164,24 +164,23 @@ class RowBuilder(QObject):
     _THUMB_CACHE_DIR = Path(GLib.get_user_cache_dir()) / "thumbnails/large"
 
     @staticmethod
-    def _resolve_thumbnail_url(path: str) -> str:
+    def _resolve_thumbnail_url(path: str, target_uri: str = "") -> str:
         """
         Pre-compute the thumbnail URL for a visual item.
         
         Checks the GNOME thumbnail cache (MD5 of URI -> ~/.cache/thumbnails/large/).
         Returns a direct file:// URL if cached, else falls back to the async
         image://thumbnail/ provider.
-        
-        This runs once per item at load time, removing all blocking I/O
-        from the QML render path.
         """
         try:
-            uri = "file://" + urllib.parse.quote(path)
-            md5_hash = hashlib.md5(uri.encode('utf-8')).hexdigest()
+            # Use the physical URI for hashing if available (critical for Recent/Trash)
+            resolved_uri = target_uri if target_uri else "file://" + urllib.parse.quote(path)
+            
+            md5_hash = hashlib.md5(resolved_uri.encode('utf-8')).hexdigest()
             thumb_path = RowBuilder._THUMB_CACHE_DIR / f"{md5_hash}.png"
-            # [DEBUG] Force disable direct file access to test if it causes lag
-            # if os.path.exists(thumb_path):
-            #    return f"file://{thumb_path}"
+            
+            if thumb_path.exists():
+                return f"file://{thumb_path}"
         except Exception:
             pass
         return f"image://thumbnail/{path}"
@@ -205,9 +204,9 @@ class RowBuilder(QObject):
             # Calculate thumbnail cap dimensions
             self._calculate_thumbnail_cap(item)
             
-            # [PERF] Pre-compute thumbnail URL (removes blocking I/O from QML render path)
+            # [PERF] Pre-compute thumbnail URL
             if item.get("isVisual") and path:
-                item["thumbnailUrl"] = self._resolve_thumbnail_url(path)
+                item["thumbnailUrl"] = self._resolve_thumbnail_url(path, item.get("targetUri", ""))
             else:
                 item["thumbnailUrl"] = ""
         
@@ -281,7 +280,7 @@ class RowBuilder(QObject):
             
         self._calculate_thumbnail_cap(item)
         if item.get("isVisual"):
-            item["thumbnailUrl"] = self._resolve_thumbnail_url(path)
+            item["thumbnailUrl"] = self._resolve_thumbnail_url(path, item.get("targetUri", ""))
         else:
             item["thumbnailUrl"] = ""
             

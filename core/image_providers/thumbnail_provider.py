@@ -13,10 +13,11 @@ from gi.repository import GnomeDesktop, GLib, Gio
 
 from PySide6.QtQuick import QQuickAsyncImageProvider, QQuickImageResponse
 from PySide6.QtGui import QImage, QIcon
-from PySide6.QtCore import QSize, QRunnable, QThreadPool, Signal, QObject
+from PySide6.QtCore import QSize, QRunnable, QThreadPool, Signal, QObject, QMutex, QMutexLocker
 
 import os
 import urllib.parse
+from core.metadata_utils import get_file_info # Used for URI resolution
 
 # Supported image extensions that Qt can load directly
 # IMAGE_EXTENSIONS removed in favor of MIME fallback
@@ -74,77 +75,56 @@ class ThumbnailRunnable(QRunnable):
         requested_size = self._response._requested_size
         factory = self._response._factory
         
+        # --- GIO / METADATA SYNC ---
         target_size = requested_size if requested_size.isValid() else QSize(256, 256)
-
-        # [NEW] Check if this is a generic MIME request
-        if file_path.startswith("mime/"):
-            mime_type = file_path.replace("mime/", "")
-            
-            # 1. Check Cache First
-            if mime_type in self._mime_icon_cache:
-                self._response.set_image(self._mime_icon_cache[mime_type])
-                return
-
-            # 2. Generate and Cache
-            img = self._get_mime_icon_from_type(mime_type, target_size)
-            self._mime_icon_cache[mime_type] = img
-            
-            self._response.set_image(img)
-            return
         
-        # --- Gio.File Init ---
-        gfile = Gio.File.parse_name(file_path)
-        
-        # --- 1. HANDLE BROKEN SYMLINKS/MISSING ---
-        if not gfile.query_exists(None):
-            # Broken/Missing
+        # 1. Resolve Path via MetadataUtils (handles recent:// targets)
+        info = get_file_info(file_path)
+        if not info:
+             # File missing/broken
             img = self._get_emblemed_icon("emblem-unreadable", "emblem-unreadable", target_size)
             self._response.set_image(img)
             return
 
-        try:
-            info = gfile.query_info(
-                "standard::type,standard::content-type,time::modified,access::can-write", 
-                Gio.FileQueryInfoFlags.NONE, None
-            )
-        except GLib.Error:
-            self._response.set_image(self._get_themed_icon("application-x-generic", target_size))
-            return
+        # Use target_uri if it's a virtual shortcut (recent, search, etc)
+        effective_path = info.target_uri if info.target_uri else file_path
+        gfile = Gio.File.new_for_commandline_arg(effective_path)
+        uri = gfile.get_uri()
+        mtime = info.modified_ts
+        mime_type = info.mime_type
+        locked = not info.can_write
 
         # --- 2. HANDLE DIRECTORIES ---
-        if info.get_file_type() == Gio.FileType.DIRECTORY:
+        if info.is_dir:
             base_icon = "folder"
-            can_write = info.get_attribute_boolean("access::can-write") if info.has_attribute("access::can-write") else True
-            if not can_write:
+            if locked:
                 img = self._get_emblemed_icon(base_icon, "emblem-readonly", target_size)
             else:
                 img = self._get_themed_icon(base_icon, target_size)
             self._response.set_image(img)
             return
-        
+
         # --- 3. GATHER METADATA ---
-        uri = gfile.get_uri()
-        mtime = info.get_modification_date_time().to_unix() if info.get_modification_date_time() else 0
-        mime_type = info.get_content_type() if info.has_attribute("standard::content-type") else ""
-        
-        if not mime_type:
-            guessed_type, _certain = Gio.content_type_guess(gfile.get_basename(), None)
-            mime_type = guessed_type or 'application/octet-stream'
-            
-        locked = info.has_attribute("access::can-write") and not info.get_attribute_boolean("access::can-write")
+        # (Using 'info' gathered above)
         
         # --- 4. HANDLE THUMBNAILS (Images, Audio, Video) ---
-        thumb_path = factory.lookup(uri, mtime)
+        thumb_path = ""
         
-        if not thumb_path:
-            # Tell GNOME to generate it using its external thumbnailers (like for songs and videos)
-            try:
-                pixbuf = factory.generate_thumbnail(uri, mime_type)
-                if pixbuf:
-                    factory.save_thumbnail(pixbuf, uri, mtime)
-                    thumb_path = factory.lookup(uri, mtime) 
-            except Exception as e:
-                print(f"[ThumbnailProvider] GNOME Factory failed to generate thumbnail for {uri}: {e}")
+        # [CRITICAL] DesktopThumbnailFactory is NOT thread-safe for generation.
+        # We must wrap the singleton lookup and generation in a mutex.
+        with QMutexLocker(ThumbnailProvider._lock):
+            thumb_path = factory.lookup(uri, mtime)
+            
+            if not thumb_path:
+                try:
+                    # GNOME external thumbnailers can crash or hang, giving us the Segfault
+                    # if accessed concurrently from multiple threads.
+                    pixbuf = factory.generate_thumbnail(uri, mime_type)
+                    if pixbuf:
+                        factory.save_thumbnail(pixbuf, uri, mtime)
+                        thumb_path = factory.lookup(uri, mtime)
+                except Exception as e:
+                    print(f"[ThumbnailProvider] GNOME Factory failed to generate thumbnail for {uri}: {e}")
         
         # Load from thumbnail or original
         is_from_cache = False
@@ -286,6 +266,7 @@ class ThumbnailProvider(QQuickAsyncImageProvider):
     
     # Shared factory instance (Singleton) to avoid per-tab memory overhead
     _shared_factory = None
+    _lock = QMutex() # Thread-safety for the shared factory
 
     def __init__(self):
         super().__init__()

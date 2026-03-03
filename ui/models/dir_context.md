@@ -38,7 +38,7 @@ API:
 ### [FILE: sidebar_model.py] [DONE]
 Role: Nested QAbstractListModel providing sidebar sections and items (Volumes and Bookmarks) to QML to prevent UI flickering.
 
-/DNA/: [call:update_section_items] -> beginResetModel(inner) -> _items = [] -> endResetModel(inner)
+/DNA/: [call:update_section_items] -> beginResetModel(inner) -> _items = [] -> endResetModel(inner) -> [em:dataChanged]
 
 - SrcDeps:
   - core.gio_bridge.desktop.BookmarksBridge
@@ -58,10 +58,10 @@ API:
 ### [FILE: tab_controller.py] [DONE]
 Role: State engine for a single tab, holding its dedicated Scanner, RowBuilder, and Bridge.
 
-/DNA/: [call:navigate_to -> call:scanner.scan_directory -> em:filesFound] + [em:file_monitor.fileCreated -> if(current_path) -> call:scanner.scan_single_file] => [update:row_builder]
+/DNA/: [call:navigate_to -> call:scanner.scan_directory -> em:filesFound] + [em:file_monitor.fileCreated -> if(current_path) -> call:scanner.scan_single_file] + [em:scanFinished -> bridge.selectPendingPaths] => [update:row_builder]
 
 - SrcDeps:
-  - core.gio_bridge.scanner.DirectoryReader
+  - core.gio_bridge.scanner.FileScanner
   - ui.services.row_builder.RowBuilder
   - ui.bridges.app_bridge.AppBridge
 - SysDeps:
@@ -76,6 +76,7 @@ API:
     - navigate_to(path) -> None: Triggers directory scan and updates navigation stacks.
     - go_back(), go_forward(), go_home() -> None: Modifies history stack and triggers navigation.
     - updateSelection(paths) -> None: Receives selected paths from QML view.
+    - selectPathsRequested(list) [Signal]: Emitted to force QML selection (e.g. after refresh).
     - change_zoom(direction) -> None: Modifies RowBuilder's height settings.
     - cleanup() -> None: Stops scanners and disconnects global signals on close.
 
@@ -97,3 +98,20 @@ API:
     - add_tab(path) -> TabController: Instantiates a new tab and starts navigation.
     - remove_tab(index) -> None: Disposes of tab and its resources.
     - get_tab(index) -> TabController: Retrieves instance for programmatic access.
+
+---
+
+### [FILE: context_menu_model.py] [DONE]
+Role: ViewModel handling state, data formatting, and action execution for Gtk-mimic context menus.
+
+/DNA/: [call:getModelForPaths(paths)] -> if(!paths) -> [build_bg_model] else -> [build_file_model] => list(dict) + [call:executeAction(id, paths)] -> am.get_action(id).trigger()
+
+- SrcDeps:
+  - ui.models.shortcuts.ShortcutAction
+- SysDeps:
+  - PySide6.QtCore.QObject, Slot
+
+API:
+  - ContextMenuViewModel(QObject):
+    - getModelForPaths(paths) -> list: Generates list of action objects for GtkMenu.
+    - executeAction(action_id, paths) -> void: Triggers the corresponding QAction.

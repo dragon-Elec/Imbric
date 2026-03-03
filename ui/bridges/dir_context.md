@@ -20,7 +20,6 @@ Role: Primary QML interface exposing core application capabilities and bridging 
 
 - SrcDeps:
   - ui.widgets.drag_helper.start_drag_session
-  - ui.widgets.context_menu.FileContextMenu, BackgroundContextMenu
   - ui.services.conflict_resolver.ConflictResolver
   - ui.dialogs.conflicts.ConflictAction
   - core.search_worker.SearchWorker
@@ -37,8 +36,8 @@ API:
     - startDrag(paths) -> None: Initiates system drag via DragHelper utility.
     - handleDrop(urls, dest_dir, mode) -> None: Delegates drop intent and action to FileManager.
     - openPath(path) -> None: Navigates UI to given path via main window.
-    - showContextMenu(paths) -> None: Displays FileContextMenu at cursor position.
-    - showBackgroundContextMenu() -> None: Displays BackgroundContextMenu for empty space.
+    - showContextMenu(paths) -> None: Emits `requestContextMenu(paths)` signal; menu implementation decoupled to QML.
+    - showBackgroundContextMenu() -> None: Emits `requestContextMenu([])` signal.
     - renameFile(old_path, new_name) -> None: Resolves conflicts and executes rename via file_ops.
     - paste() -> None: Triggers paste_to_current in FileManager.
     - startSearch(dir, pattern, recursive) -> None: Starts background SearchWorker.

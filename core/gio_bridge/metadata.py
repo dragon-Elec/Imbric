@@ -69,10 +69,16 @@ class DimensionWorker(QObject):
     def _read_dims(self, path: str):
         try:
             gfile = Gio.File.new_for_commandline_arg(path)
-            # QImageReader only supports local paths properly.
-            # For remote URIs (non-native), return 0,0 to avoid stalls.
+            
+            # For non-native paths (recent://, trash://, mtp://, etc.),
+            # resolve the physical target URI before reading headers.
             if not gfile.is_native():
-                return (0, 0)
+                info = get_file_info(path)
+                if not info or not info.target_uri:
+                    return (0, 0)
+                gfile = Gio.File.new_for_commandline_arg(info.target_uri)
+                if not gfile.is_native():
+                    return (0, 0)
 
             local_path = gfile.get_path()
             if not local_path:
