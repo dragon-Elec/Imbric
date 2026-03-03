@@ -74,4 +74,16 @@ API:
     - [get_volumes()](./volumes.py#L73) -> list: Aggregates volumes and active mounts.
     - [mount_volume()](./volumes.py#L121)(identifier): Async mount request.
     - [unmount_volume()](./volumes.py#L134)(identifier): Async unmount request.
+### [FILE: [uri_utils.py](./uri_utils.py)] [DONE]
+Role: Robust string-to-QUrl translation and GNOME-specific MIME payload generation.
+
+/DNA/: [path_or_uri -> to_qurl() -> [:// ? QUrl(u) : QUrl.fromLocalFile(p)]]
+
+- SrcDeps: None
+- SysDeps: PySide6.QtCore.QUrl
+
+API:
+  - [to_qurl()](./uri_utils.py#L3) -> QUrl: Safe translation for hybrid paths.
+  - [build_gnome_copied_files()](./uri_utils.py#L9) -> str: Payload for x-special/gnome-copied-files.
+
 !Caveat: Usage stats are lazily loaded and cached; first call returns null/loading.
