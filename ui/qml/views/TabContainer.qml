@@ -26,7 +26,7 @@ Item {
         Components.GtkTabBar {
             id: tabBar
             Layout.fillWidth: true
-            Layout.preferredHeight: 34 // Reduced from 36 to match removed margin
+            Layout.preferredHeight: 25 // Compact standard height
             z: 1 // Ensure TabBar is above content for mask effects
             
             model: tabModel

@@ -5,6 +5,7 @@ Rules:
 - Components should never make direct `import services` calls. They must receive data and bridge references via properties injected by the parent View.
 - Keep components agnostic to the Application scope. If it needs business logic, emit a signal.
 - Always use `SystemPalette` or `Material` properties for theming; never hardcode colors unless deriving an alpha value from a system color.
+- !Rule: [Symbolic Icons only] - Reason: ActionManager mapping uses `-symbolic` suffixes; non-symbolic names will break theme consistency.
 
 Index:
 - internal: Contains private helper components.
@@ -12,14 +13,14 @@ Index:
 ### [FILE: FileDelegate.qml] [DONE]
 Role: Represents a single file or folder in the grid layout, handling its own selection visual state, context menus, and drag-and-drop initiation.
 
-/DNA/: [TapHandler(left)] + [TapHandler(right)] + [HoverHandler] + [DragHandler] + [DropArea] + [RenameField] -> em:clicked/doubleClicked/renameCommitted
+/DNA/: [TapHandler(left)] + [TapHandler(right) -> em:clicked(RightButton)] + [HoverHandler] + [DragHandler:initiate -> selModel.select -> bridge.startDrag] + [DropArea:folder -> bridge.handleDrop] -> em:clicked/doubleClicked/renameCommitted
 
 - SrcDeps: components.RenameField
 - SysDeps: QtQuick, QtQuick.Controls
 
 API:
   - FileDelegate(Item):
-    - clicked(button, modifiers) -> signal: Emits when tapped (left or right).
+    - clicked(button, modifiers) -> signal: Emits when tapped (left or right). Context menu handling decoupled to JustifiedView via right-click signal.
     - doubleClicked() -> signal: Emits on double-tap.
     - renameCommitted(newName) -> signal: Emits when inline rename completes.
     - renameCancelled() -> signal: Emits when inline rename is aborted.
@@ -106,7 +107,7 @@ API:
 ### [FILE: SelectionModel.qml] [DONE]
 Role: Headless controller managing the array of currently selected file paths. Implements standard file browser Ctrl/Shift click logic.
 
-/DNA/: [QtObject] -> call:handleClick(path, ctrl, shift) -> _computeRange() + [selection_array] ++
+/DNA/: [QtObject] -> call:handleClick(path, ctrl, shift, allItems) -> _computeRange() + [selection_array] ++
 
 - SrcDeps: none
 - SysDeps: QtQuick
@@ -157,6 +158,41 @@ Role: Generic interactive row delegate for Sidebar lists (e.g. representing a Vo
 API:
   - SidebarItem(ItemDelegate):
     - clicked() -> signal: Standard inherited signal from ItemDelegate.
+
+### [FILE: GtkMenu.qml] [DONE]
+Role: High-fidelity GTK-styled popup menu container using a model-driven approach.
+
+/DNA/: [Popup] -> [ScrollView] -> [ListView:modelData] -> [GtkActionMenu|GtkMenuSeparator]
+
+- SrcDeps: components.GtkActionMenu, components.GtkMenuSeparator, components.GtkScrollBar
+- SysDeps: QtQuick, QtQuick.Controls
+
+API:
+  - GtkMenu(Popup):
+    - modelData: Array of objects {id, text, icon, shortcut, isSeparator}.
+    - actionTriggered(actionId) -> signal: Emits when a menu item is clicked.
+
+### [FILE: GtkActionMenu.qml] [DONE]
+Role: Individual interactive item within a GtkMenu, supporting icons and right-aligned shortcuts.
+
+/DNA/: [ItemDelegate] -> [RowLayout] -> [Icon + Label] + [ShortcutLabel:elide] -> em:triggered
+
+- SrcDeps: none
+- SysDeps: QtQuick, QtQuick.Controls, QtQuick.Layouts
+
+API:
+  - GtkActionMenu(ItemDelegate):
+    - actionId: Internal identifier for the action.
+    - iconName: The symbolic icon to display.
+    - shortcut: Textual representation of the key sequence.
+
+### [FILE: GtkMenuSeparator.qml] [DONE]
+Role: Visual horizontal divider for GtkMenu sections.
+
+/DNA/: [Rectangle:height=1] -> [activePalette.mid]
+
+- SrcDeps: none
+- SysDeps: QtQuick
 
 ### [FILE: Sidebar_Legacy.qml] [DEPRECATED]
 Role: Legacy hardcoded version of the Sidebar. Kept for reference.

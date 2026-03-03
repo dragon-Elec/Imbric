@@ -7,8 +7,8 @@ TabButton {
 
     // Compact Padding (Nemo-style)
     // Compact Padding (Nemo-style)
-    topPadding: 3
-    bottomPadding: 4
+    topPadding: 2
+    bottomPadding: 3
     leftPadding: 4
     rightPadding: 4
 
@@ -33,7 +33,7 @@ TabButton {
             color: (control.checked || control.hovered) ? sysPalette.text : Qt.alpha(sysPalette.text, 0.7)
             elide: Text.ElideRight
             Layout.fillWidth: true
-            Layout.leftMargin: 8
+            Layout.leftMargin: 4
             verticalAlignment: Text.AlignVCenter
         }
 
@@ -46,8 +46,8 @@ TabButton {
             icon.color: closeBtn.hovered ? sysPalette.highlight : sysPalette.text
             
             // Layout
-            Layout.preferredWidth: 26
-            Layout.preferredHeight: 26
+            Layout.preferredWidth: 20
+            Layout.preferredHeight: 20
             Layout.alignment: Qt.AlignVCenter
             Layout.rightMargin: 4
 

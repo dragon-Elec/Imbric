@@ -40,7 +40,7 @@ Item {
         orientation: Qt.Horizontal
         
         handle: Rectangle {
-            implicitWidth: 10
+            implicitWidth: 7
             color: sysPalette.window
             
             // Subtle Accent background for the handle area

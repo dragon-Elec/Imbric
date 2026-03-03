@@ -13,9 +13,9 @@ Index:
 ### [FILE: JustifiedView.qml] [DONE]
 Role: Main native row-based file grid supporting fast scrolling, marquee selection, and drag-and-drop.
 
-/DNA/: [Connections:rowBuilder] + [DropArea] + [ListView -> RowDelegate] + [DragHandler:marquee -> rubberBand + selectionModel]
+/DNA/: [Connections:rowBuilder] + [DropArea] + [ListView -> RowDelegate] + [DragHandler:marquee -> rubberBand + selectionModel] + [WheelHandler -> turbo:accel] + [rightClickHandler -> bridge.showContextMenu] + [GtkActionMenu -> contextMenuViewModel.executeAction]
 
-- SrcDeps: components.RowDelegate, components.SelectionModel, components.GtkScrollBar, components.RubberBand
+- SrcDeps: components.RowDelegate, components.SelectionModel, components.GtkScrollBar, components.RubberBand, components.GtkActionMenu
 - SysDeps: QtQuick, QtQuick.Controls, QtQuick.Layouts
 
 API:

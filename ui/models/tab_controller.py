@@ -3,7 +3,7 @@ from pathlib import Path
 from gi.repository import Gio
 
 # Import core components
-from core.gio_bridge.scanner import DirectoryReader
+from core.gio_bridge.scanner import FileScanner
 from ui.services.row_builder import RowBuilder
 from ui.bridges.app_bridge import AppBridge
 
@@ -22,7 +22,7 @@ class TabController(QObject):
         self._current_path = initial_path or str(Path.home())
         
         # Core Components (Per-Tab)
-        self.scanner = DirectoryReader()
+        self.scanner = FileScanner()
         self.row_builder = RowBuilder()
         self.bridge = AppBridge(main_window)
         

@@ -5,21 +5,18 @@ QMainWindow {
     background: palette(window);
 }
 
-/* 2. Toolbar - Flat and Clean */
-QToolBar {
+#HeaderBar {
     background: palette(window);
-    border: none;
-    spacing: 6px; /* Space between buttons */
-    padding: 6px; /* Space around the toolbar */
-    border-bottom: 1px solid palette(mid); /* Subtle separator */
+    border-bottom: 1px solid palette(mid);
+    padding: 0px; /* Controlled by NavigationBar layout margins */
 }
 
 /* 3. Toolbar Buttons */
 QToolButton {
     background: transparent;
     border: none;
-    border-radius: 4px; /* Modern rounded corners */
-    padding: 6px 12px; /* Comfortable click targets */
+    border-radius: 4px;
+    padding: 2px 6px; /* Aggressively thin */
     font-weight: bold;
 }
 
@@ -71,17 +68,17 @@ QToolButton:checked {
 
 /* 5. Path Bar - Modern Breadcrumb Logic */
 #PathBar {
-    padding: 6px 12px; /* Comfortable text entry */
-    border-radius: 6px; /* consistent rounding */
+    padding: 4px 8px;
+    border-radius: 5px;
     border: 1px solid palette(mid);
     background: palette(base);
     color: palette(text);
     selection-background-color: palette(highlight);
     selection-color: palette(highlightedText);
-    margin-right: 6px; /* Spacing from edge */
+    margin-right: 4px;
 }
 
 #PathBar:focus {
     border: 2px solid palette(highlight); /* Clear focus indicator */
-    padding: 5px 11px; /* Adjust padding to prevent shift width increase */
+    padding: 3px 7px; /* Compensate: +1px border → -1px padding = stable size */
 }

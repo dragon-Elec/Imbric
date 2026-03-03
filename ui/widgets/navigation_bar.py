@@ -24,7 +24,7 @@ class NavigationBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(5, 5, 5, 5)  # Slight padding
+        self.layout.setContentsMargins(4, 1, 4, 1)  # Tightened vertical space
         self.layout.setSpacing(5)
         self._setup_ui()
         

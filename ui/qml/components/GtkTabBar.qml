@@ -16,7 +16,7 @@ Item {
     signal addClicked()
     signal tabClosed(int index)
 
-    implicitHeight: 36 // Compact standard height
+    implicitHeight: 25 // Nemo-style compact height
     visible: count > 0 // Auto-hide if empty (or count > 1 per specs)
 
     // Unified Background for the whole strip (Tabs + Add Button)
@@ -56,7 +56,7 @@ Item {
                 GtkTabButton {
                     text: model.title || model.display || ("Tab " + (index + 1))
                     onCloseClicked: root.tabClosed(index)
-                    width: bar.width / Math.max(1, bar.count) // Force equal width split? 
+                    width: bar.width / Math.max(1, bar.count) // Fill available space (GTK-style)
                     // Verify: TabBar defaults to contentWidth usually. 
                     // To force equal split in QtQC2, we might need manual binding if not standard.
                     // Actually, standard TabBar just packs them. 
