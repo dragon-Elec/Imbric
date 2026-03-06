@@ -20,14 +20,14 @@ class ItemCountWorker(QObject):
         """Unpack result back to UI signal."""
         self.countReady.emit(path, count)
 
-    @Slot(str)
-    def enqueue(self, path: str) -> None:
+    @Slot(str, str)
+    def enqueue(self, uri: str, path: str) -> None:
         """Priority 0: Items counts are lightweight and should appear first."""
-        self._pool.enqueue(path, self._count, priority=0, path=path)
+        self._pool.enqueue(path, self._count, priority=0, uri=uri)
 
-    def _count(self, path: str) -> int:
+    def _count(self, uri: str) -> int:
         try:
-            gfile = Gio.File.new_for_commandline_arg(path)
+            gfile = Gio.File.new_for_commandline_arg(uri)
             # Query standard::name to get the count efficiently
             # We use synchronous enumeration since this runs in a worker thread
             enumerator = gfile.enumerate_children(
@@ -61,40 +61,43 @@ class DimensionWorker(QObject):
         self._pool = GioWorkerPool(max_concurrent=4, parent=self)
         self._pool.resultReady.connect(self._on_result)
 
-    @Slot(str)
-    def enqueue(self, path: str):
+    @Slot(str, str)
+    def enqueue(self, uri: str, path: str):
         """Priority 60: Dimensions are needed for layout, but lower priority than text."""
-        self._pool.enqueue(path, self._read_dims, priority=60, path=path)
+        # Task ID: path (since UI uses path as primary lookup key)
+        self._pool.enqueue(path, self._read_dims, priority=60, uri=uri, path=path)
 
-    def _read_dims(self, path: str):
+    def _read_dims(self, uri: str, path: str):
         try:
-            gfile = Gio.File.new_for_commandline_arg(path)
+            # We preferentially use the FUSE path if it exists for QImageReader
+            if path and path.startswith('/'):
+                reader = QImageReader(path)
+                if reader.canRead():
+                    size = reader.size()
+                    if size.width() > 0:
+                        return (size.width(), size.height())
             
-            # For non-native paths (recent://, trash://, mtp://, etc.),
-            # resolve the physical target URI before reading headers.
+            # Fallback for search/recent items (target-uri)
+            gfile = Gio.File.new_for_commandline_arg(uri)
             if not gfile.is_native():
-                info = get_file_info(path)
-                if not info or not info.target_uri:
-                    return (0, 0)
-                gfile = Gio.File.new_for_commandline_arg(info.target_uri)
-                if not gfile.is_native():
-                    return (0, 0)
-
+                # Check for target URI (Recent/Trash)
+                info = get_file_info(uri, attributes="standard::target-uri")
+                if info and info.target_uri:
+                    gfile = Gio.File.new_for_commandline_arg(info.target_uri)
+            
             local_path = gfile.get_path()
-            if not local_path:
-                return (0, 0)
-
-            reader = QImageReader(local_path)
-            if reader.canRead():
-                size = reader.size()
-                return (size.width(), size.height())
+            if local_path:
+                reader = QImageReader(local_path)
+                if reader.canRead():
+                    size = reader.size()
+                    return (size.width(), size.height())
         except Exception: pass
         return (0, 0)
 
-    def _on_result(self, path: str, res: tuple):
+    def _on_result(self, identifier: str, res: tuple):
         """Unpack result back to UI signal."""
         if res:
-            self.dimensionsReady.emit(path, res[0], res[1])
+            self.dimensionsReady.emit(identifier, res[0], res[1])
 
     @Slot()
     def clear(self):

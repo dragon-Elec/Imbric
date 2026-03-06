@@ -133,11 +133,12 @@ class ThumbnailRunnable(QRunnable):
         if thumb_path and os.path.exists(thumb_path):
             img = QImage(thumb_path)
             is_from_cache = True
-        elif gfile.is_native(): # Don't try to open remote streams as an image!
-            # FIX: Memory-efficient loading via QImageReader
-            from PySide6.QtGui import QImageReader
+        else:
+            # Fallback: Try decoding locally if we have a FUSE path
+            # This allows us to read from MTP/SMB mounts without GIO stream complexity
             local_path = gfile.get_path()
-            if local_path:
+            if local_path and os.path.exists(local_path):
+                from PySide6.QtGui import QImageReader
                 reader = QImageReader(local_path)
                 
                 # [SAFETY] Always limit decode size for raw files to prevent RAM explosion
@@ -205,7 +206,7 @@ class ThumbnailRunnable(QRunnable):
         try:
             gfile = Gio.File.new_for_path(file_path)
             info = gfile.query_info("standard::icon", Gio.FileQueryInfoFlags.NONE, None)
-            gicon = info.get_icon()
+            gicon = info.get_attribute_object("standard::icon") if info.has_attribute("standard::icon") else None
             
             if gicon:
                 # Get icon names from GIcon (ThemedIcon has get_names())

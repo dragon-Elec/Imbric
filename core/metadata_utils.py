@@ -65,7 +65,8 @@ class FileInfo:
     Unified file metadata structure.
     Superset of what FileScanner and FileProperties use.
     """
-    path: str
+    path: str       # Local/FUSE path (filesystem-compatible)
+    uri: str        # GIO native URI (canonical identifier)
     name: str
     display_name: str
     size: int = 0
@@ -166,8 +167,11 @@ def resolve_mime_icon(gfile: Gio.File, cancellable: Gio.Cancellable = None) -> s
     try:
         # We only need the icon attribute
         info = gfile.query_info("standard::icon", Gio.FileQueryInfoFlags.NONE, cancellable)
-        gicon = info.get_icon()
         
+        if info.has_attribute("standard::icon"):
+            gicon = info.get_attribute_object("standard::icon")
+        else:
+            gicon = None
         if gicon:
             # GIcon (ThemedIcon) usually holds a list of names in order of preference
             if hasattr(gicon, 'get_names'):
@@ -188,18 +192,18 @@ def resolve_mime_icon(gfile: Gio.File, cancellable: Gio.Cancellable = None) -> s
     return "application-x-generic"
 
 
-def get_file_info(path: str, attributes: str = ATTRS_FULL) -> Optional[FileInfo]:
+def get_file_info(path_or_uri: str, attributes: str = ATTRS_FULL) -> Optional[FileInfo]:
     """
-    Synchronously fetch and populate FileInfo for a path.
+    Synchronously fetch and populate FileInfo for a path or URI.
     
     Args:
-        path: Absolute path
+        path_or_uri: Absolute path or GIO URI
         attributes: Gio attribute string (default: all)
         
     Returns:
         FileInfo object or None if file doesn't exist/error.
     """
-    gfile = Gio.File.new_for_commandline_arg(path)
+    gfile = Gio.File.new_for_commandline_arg(path_or_uri)
     
     try:
         # Resolve symlinks for the main query? 
@@ -213,33 +217,41 @@ def get_file_info(path: str, attributes: str = ATTRS_FULL) -> Optional[FileInfo]
             None
         )
         
-        # 1. Basic Info
-        name = info.get_name()
-        display_name = info.get_display_name()
-        size = info.get_size()
+        # 1. Basic Info — Use generic attribute getters to avoid GLib-GIO-CRITICAL
+        # on virtual backends (recent://, trash://, mtp://) where GVfs may return
+        # incomplete GFileInfo objects with missing C-struct mask bits.
+        uri = gfile.get_uri()
+        path = gfile.get_path() or uri
         
-        file_type = info.get_file_type()
+        _raw = info.get_attribute_byte_string("standard::name")
+        name = (_raw.decode('utf-8', 'replace') if isinstance(_raw, bytes) else _raw) if _raw else ""
+        display_name = info.get_attribute_string("standard::display-name") or name
+        size = info.get_attribute_uint64("standard::size")
+        
+        type_val = info.get_attribute_uint32("standard::type")
+        file_type = type_val if type_val else Gio.FileType.REGULAR
         is_dir = (file_type == Gio.FileType.DIRECTORY)
-        is_symlink = info.get_is_symlink()
-        is_hidden = info.get_is_hidden()
+        is_symlink = info.get_attribute_boolean("standard::is-symlink")
+        is_hidden = info.get_attribute_boolean("standard::is-hidden")
         
-        symlink_target = info.get_symlink_target() if is_symlink else ""
+        symlink_target = (info.get_attribute_string("standard::symlink-target") or "") if is_symlink else ""
         
-        # 2. MIME & Icon
-        mime_type = info.get_content_type() or "application/octet-stream"
+        # 2. MIME & Icon (Safe generic access)
+        mime_type = info.get_attribute_string("standard::content-type") or "application/octet-stream"
         
-        # Extract Icon Name
+        # Extract Icon Name via attribute object (avoids info.get_icon() C assertion)
         icon_name = "application-x-generic"
-        gicon = info.get_icon()
-        if gicon and hasattr(gicon, 'get_names'):
-            names = gicon.get_names()
-            if names:
-                icon_name = names[0]
+        if info.has_attribute("standard::icon"):
+            gicon = info.get_attribute_object("standard::icon")
+            if gicon and hasattr(gicon, 'get_names'):
+                names = gicon.get_names()
+                if names:
+                    icon_name = names[0]
         
-        # 3. Timestamps
-        m_time = to_unix_timestamp(info.get_modification_date_time())
-        a_time = to_unix_timestamp(info.get_access_date_time())
-        c_time = to_unix_timestamp(info.get_creation_date_time())
+        # 3. Timestamps (shielded)
+        m_time = to_unix_timestamp(info.get_modification_date_time()) if info.has_attribute("time::modified") else 0
+        a_time = to_unix_timestamp(info.get_access_date_time()) if info.has_attribute("time::access") else 0
+        c_time = to_unix_timestamp(info.get_creation_date_time()) if info.has_attribute("time::created") else 0
         
         # 4. Permissions
         mode = info.get_attribute_uint32("unix::mode")
@@ -256,6 +268,7 @@ def get_file_info(path: str, attributes: str = ATTRS_FULL) -> Optional[FileInfo]
 
         return FileInfo(
             path=path,
+            uri=uri,
             name=name,
             display_name=display_name,
             size=size,

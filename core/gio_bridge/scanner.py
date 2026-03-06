@@ -45,42 +45,28 @@ class FileScanner(QObject):
     # Valid visual extensions (thumbnails needed)
     # VISUAL_EXTENSIONS removed in favor of MIME type detection
 
-    # Gio attributes to request
-    # Active: Used in UI immediately
-    # Passive: Fetched but not yet used (for future features)
-    QUERY_ATTRIBUTES = ",".join([
-        # Core (always needed)
+    # QUERY_ATTRIBUTES is now dynamic
+    BASE_ATTRIBUTES = [
         "standard::name",
         "standard::type",
         "standard::is-hidden",
         "standard::size",
-        
-        # Virtual Target (Active: for Recent/Trash resolution)
-        "standard::target-uri",
-        
-        # MIME type (Active: for icons and "Open With")
         "standard::content-type",
-        
-        # Symlinks (Active: for UI indicator)
         "standard::is-symlink",
         "standard::symlink-target",
-        
-        # Timestamps (Active: for sorting, display)
         "time::modified",
         "time::access",
-        
-        # Permissions (Passive: for future properties dialog)
+        "standard::thumbnail-path"
+    ]
+    
+    NATIVE_ATTRIBUTES = [
         "unix::mode",
         "unix::uid",
         "unix::gid",
-        
-        # Thumbnail info (Active: Native detection)
-        "standard::thumbnail-path",
-        
-        # Trash info (Active: for Trash view)
         "trash::orig-path",
-        "trash::deletion-date"
-    ])
+        "trash::deletion-date",
+        "standard::target-uri"
+    ]
 
     # Batch size for efficient layout updates
     BATCH_SIZE = 200
@@ -156,20 +142,25 @@ class FileScanner(QObject):
         # uses optimistic visual detection to avoid blocking C-calls.
         gfile = Gio.File.new_for_commandline_arg(path)
         self._is_native = gfile.is_native()
-        self._cancellable = Gio.Cancellable()
-        # [FIX] Generate unique session ID for cross-talk prevention
-        self._session_id = str(uuid4())
         
-        # Capture the specific token for this scan
+        query = ",".join(self.BASE_ATTRIBUTES)
+        if self._is_native or path.startswith(("trash://", "recent://")):
+            query += "," + ",".join(self.NATIVE_ATTRIBUTES)
+
+
+        self._cancellable = Gio.Cancellable()
+        self._scan_start_time = GLib.get_monotonic_time() # Store start time
+        self._session_id = str(uuid4())
         cancellable = self._cancellable
         
+        print(f"[DEBUG-GIO] Scanner: Starting async enumeration for {path} | SID: {self._session_id}")
         gfile.enumerate_children_async(
-            self.QUERY_ATTRIBUTES,
+            query,
             Gio.FileQueryInfoFlags.NONE,
             GLib.PRIORITY_DEFAULT,
             cancellable,
             self._on_enumerate_ready,
-            cancellable # Pass token as user_data
+            cancellable
         )
 
     @Slot(str)
@@ -179,16 +170,19 @@ class FileScanner(QObject):
         Used for surgical UI updates when a file is created/copied.
         """
         gfile = Gio.File.new_for_commandline_arg(path)
+        is_native = gfile.is_native()
+        query = ",".join(self.BASE_ATTRIBUTES)
+        if is_native or path.startswith(("trash://", "recent://")):
+            query += "," + ",".join(self.NATIVE_ATTRIBUTES)
         try:
             info = gfile.query_info(
-                self.QUERY_ATTRIBUTES,
+                query,
                 Gio.FileQueryInfoFlags.NONE,
                 None
             )
-            # Use the existing _process_batch logic (it expects a list of infos and parent dir)
+            # Use the existing _process_batch logic (it expects a list of infos and parent gfile)
             parent = gfile.get_parent()
-            parent_path = (parent.get_path() or parent.get_uri()) if parent else ""
-            batch = self._process_batch([info], parent_path)
+            batch = self._process_batch([info], parent)
             if batch:
                 self.singleFileScanned.emit(self._session_id, batch[0])
         except GLib.Error as e:
@@ -233,16 +227,16 @@ class FileScanner(QObject):
             self.scanError.emit("Invalid directory path")
             return
         
-        self._fetch_next_batch(enumerator, parent_path, cancellable)
+        self._fetch_next_batch(enumerator, source, cancellable)
 
-    def _fetch_next_batch(self, enumerator: Gio.FileEnumerator, parent_path: str, cancellable: Gio.Cancellable) -> None:
+    def _fetch_next_batch(self, enumerator: Gio.FileEnumerator, parent_gfile: Gio.File, cancellable: Gio.Cancellable) -> None:
         """Request the next batch of files from the enumerator."""
         enumerator.next_files_async(
             self.BATCH_SIZE,
             GLib.PRIORITY_DEFAULT,
             cancellable,
             self._on_batch_ready,
-            (enumerator, parent_path, cancellable)
+            (enumerator, parent_gfile, cancellable)
         )
 
     def _on_batch_ready(
@@ -252,7 +246,7 @@ class FileScanner(QObject):
         context: tuple
     ) -> None:
         """Callback when a batch of files is ready."""
-        stored_enumerator, parent_path, cancellable = context
+        stored_enumerator, parent_gfile, cancellable = context
         
         if cancellable.is_cancelled():
             self._close_enumerator(stored_enumerator)
@@ -274,11 +268,13 @@ class FileScanner(QObject):
         if not file_infos:
             # [FIX] Flush remaining buffer before signaling completion
             self._flush_buffer()
+            scan_duration_ms = (GLib.get_monotonic_time() - self._scan_start_time) / 1000
+            print(f"[DEBUG-GIO] Scanner: Enumeration reached EOF for SID: {self._session_id} in {scan_duration_ms:.1f}ms")
             self.scanFinished.emit(self._session_id)
             self._close_enumerator(stored_enumerator)
             return
         
-        batch = self._process_batch(file_infos, parent_path)
+        batch = self._process_batch(file_infos, parent_gfile)
         
         # [FIX] Buffer batch instead of immediate emit (reduces layout thrashing)
         if batch:
@@ -286,42 +282,35 @@ class FileScanner(QObject):
             if not self._emit_timer.isActive():
                 self._emit_timer.start()
         
-        self._fetch_next_batch(stored_enumerator, parent_path, cancellable)
+        self._fetch_next_batch(stored_enumerator, parent_gfile, cancellable)
 
-    def _process_batch(self, file_infos: list[Gio.FileInfo], parent_path: str) -> list[dict]:
+    def _process_batch(self, file_infos: list[Gio.FileInfo], parent_gfile: Gio.File) -> list[dict]:
         """
         Convert Gio.FileInfo objects to dictionaries with rich metadata.
         """
         batch = []
         
-        # Normalize parent path
-        if parent_path.endswith('/') and parent_path != '/':
-            parent_path = parent_path.rstrip('/')
-        
         for info in file_infos:
-            # Hidden filter
-            if not self._show_hidden and info.get_is_hidden():
+            # Hidden filter (Safer access to prevent GIO Criticals on MTP)
+            is_hidden = info.get_attribute_boolean("standard::is-hidden")
+            if not self._show_hidden and is_hidden:
                 continue
             
             name = info.get_name()
             if name is None:
                 continue
             
-            # Extension & Visual Check -> NATIVE THUMBNAIL LOGIC
-            # Full path (MOVED UP: Required for Native Thumbnail Logic)
-            if parent_path == '/':
-                full_path = '/' + name
-            else:
-                full_path = parent_path + '/' + name
+            # Robust child resolution (URI + Path)
+            child_gfile = parent_gfile.get_child(name)
+            full_uri = child_gfile.get_uri()
+            full_path = child_gfile.get_path() or full_uri
 
             # Type detection (MOVED UP: Required for can_thumbnail logic)
             file_type = info.get_file_type()
             is_dir = file_type == Gio.FileType.DIRECTORY
             
-            # 1. Gather MIME (Instant/Non-blocking)
-            mime_type = ""
-            if info.has_attribute("standard::content-type"):
-                mime_type = info.get_content_type() or ""
+            # 1. Gather MIME (Safe attribute access)
+            mime_type = info.get_attribute_string("standard::content-type") or ""
             
             if not mime_type:
                 # Use Gio's shared-mime-info database (same as Nemo) instead of Python's limited mimetypes
@@ -345,10 +334,9 @@ class FileScanner(QObject):
                     if self._factory is None:
                         self._factory = GnomeDesktop.DesktopThumbnailFactory.new(GnomeDesktop.DesktopThumbnailSize.LARGE)
                     
-                    uri = "file://" + urllib.parse.quote(full_path)
                     mtime = info.get_modification_date_time().to_unix() if info.get_modification_date_time() else 0
                     try:
-                        is_visual = self._factory.can_thumbnail(uri, mime_type, mtime)
+                        is_visual = self._factory.can_thumbnail(full_uri, mime_type, mtime)
                     except Exception:
                         is_visual = mime_type.startswith(("image/", "video/", "application/pdf"))
 
@@ -357,22 +345,13 @@ class FileScanner(QObject):
             # We ONLY read dims for actual images. Videos/PDFs get thumbnails but stay square.
             should_read_dimensions = mime_type.startswith("image/")
             
-            # Full path (ALREADY CALCULATED ABOVE)
-            # if parent_path == '/':
-            #     full_path = '/' + name
-            # else:
-            #     full_path = parent_path + '/' + name
-            
-            # Type detection (ALREADY CALCULATED ABOVE)
-            # file_type = info.get_file_type()
-            # is_dir = file_type == Gio.FileType.DIRECTORY
-            is_symlink = info.get_is_symlink()
+            # Symlink detection (safe attribute access for non-native mounts)
+            is_symlink = info.get_attribute_boolean("standard::is-symlink")
             
             # Symlink target (empty string if not a symlink)
             symlink_target = ""
             if is_symlink:
-                target = info.get_symlink_target()
-                symlink_target = target if target else ""
+                symlink_target = info.get_attribute_byte_string("standard::symlink-target") or ""
             
             # Size
             size = info.get_size()
@@ -380,9 +359,11 @@ class FileScanner(QObject):
             # MIME type (e.g., "image/jpeg", "inode/directory")
             # Already fetched above for is_visual check
             
-            # Timestamps
-            date_modified = self._get_timestamp(info.get_modification_date_time())
-            date_accessed = self._get_timestamp(info.get_access_date_time())
+            # Timestamps (Safer access)
+            modified_dt = info.get_modification_date_time()
+            access_dt = info.get_access_date_time()
+            date_modified = self._get_timestamp(modified_dt)
+            date_accessed = self._get_timestamp(access_dt)
             
             # Permissions (Passive - stored for future use)
             # unix::mode returns octal like 0o755
@@ -396,7 +377,7 @@ class FileScanner(QObject):
             
             # Queue directory for async counting
             if is_dir and not is_symlink:
-                self._count_worker.enqueue(full_path)
+                self._count_worker.enqueue(full_uri, full_path)
 
             
             # Determine icon name for non-visual files (used by QML image://theme/)
@@ -408,7 +389,8 @@ class FileScanner(QObject):
             batch.append({
                 # Core
                 "name": name,
-                "path": full_path,
+                "path": full_path, # Local/FUSE path for UI/Search
+                "uri": full_uri,   # Canonical GIO URI
                 "iconName": icon_name,  # For QML image://theme/ (non-visual only)
                 "isDir": is_dir,
                 "size": size,
@@ -439,16 +421,19 @@ class FileScanner(QObject):
                 
                 # Trash specific (Active)
                 "trashOrigPath": info.get_attribute_byte_string("trash::orig-path") or "",
-                "trashDeletionDate": info.get_attribute_string("trash::deletion-date") or "",
+                "trashDeletionDate": info.get_attribute_string("trash::deletion-date") if info.has_attribute("trash::deletion-date") else "",
                 
                 # Target Path (For Recent/Search)
-                "targetUri": info.get_attribute_string("standard::target-uri") or ""
+                "targetUri": info.get_attribute_string("standard::target-uri") if info.has_attribute("standard::target-uri") else ""
             })
             
             # [NEW] Queue dimension reading (Async)
             # Only for supported image types (videos/PDFs stay square)
-            if should_read_dimensions:
-                self._dimension_worker.enqueue(full_path)
+            # [CRITICAL MTP FIX] ONLY enqueue dimensions if the mount is local/native!
+            # MTP is strictly single-threaded. Enqueuing 5k QImageReader hits to FUSE freezes the daemon.
+            if should_read_dimensions and self._is_native:
+                # Pass both to dimension worker so it can use GIO for identifier but FUSE for header read
+                self._dimension_worker.enqueue(full_uri, full_path)
             
             # width/height default to 0 initially (see lines 341-342)
         
