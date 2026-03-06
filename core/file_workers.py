@@ -90,6 +90,9 @@ class FileOperationSignals(QObject):
     # Trash Specific Signals (Consolidated here)
     itemListed = Signal(object)             # TrashItem (for list operation)
     trashNotSupported = Signal(str, str)    # (path, error_message)
+    
+    # Pre-Flight
+    batchAssessmentReady = Signal(str, list, list) # (tid, valid_items, conflicts)
 
 class FileOperationRunnable(QRunnable):
     """Base class for file operation runnables."""

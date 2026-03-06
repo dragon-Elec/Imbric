@@ -49,6 +49,7 @@ class TransactionManager(QObject):
         super().__init__(parent)
         self._active_transactions: Dict[str, Transaction] = {}
         self._pending_conflicts: Dict[str, object] = {} # job_id -> conflict_data
+        self._batch_resolvers: Dict[str, Callable] = {} # tid -> conflict_resolver callback
         
         # References to subsystems (injected)
         self._file_ops = None
@@ -159,18 +160,9 @@ class TransactionManager(QObject):
         """
         Execute a batch file transfer (paste or drag-drop).
 
-        This replaces the synchronous loop that was previously in FileManager.
-        Core now owns the iteration logic, same-folder detection, and conflict
-        resolution orchestration.
-
-        Args:
-            sources: List of source paths/URIs.
-            dest_dir: Destination directory path/URI.
-            mode: "copy", "move", or "auto".
-            conflict_resolver: Optional callback(src, dest) -> (action, final_dest).
-                               Returns a tuple of (action_string, final_dest).
-                               action_string is one of: "cancel", "skip", "overwrite", "rename".
-                               If None, auto-rename is used for conflicts.
+        [NEW Phase 5 Pre-Flight]
+        Sends the batch to FileOperations for background assessment.
+        Conflicts are resolved on the main thread via onBatchAssessmentReady.
         """
         if not self._file_ops:
             print("[TM] CRITICAL: FileOperations not injected.")
@@ -180,38 +172,10 @@ class TransactionManager(QObject):
         op_name = "Move" if is_move else ("Copy" if mode == "copy" else "Transfer")
         tid = self.startTransaction(f"{op_name} {len(sources)} items")
 
-        for src in sources:
-            if not self._file_ops.check_exists(src):
-                continue
+        if conflict_resolver:
+            self._batch_resolvers[tid] = conflict_resolver
 
-            # Let FileOperations build the actual dest path.
-            # We only need to know same-folder for the skip/duplicate decision.
-            dest = self._file_ops.build_dest_path(src, dest_dir)
-
-            # Same-folder detection
-            if self._file_ops.is_same_file(src, dest):
-                if mode == "copy":
-                    # Same-folder copy = Duplicate with auto-rename
-                    self._file_ops.copy(src, dest, transaction_id=tid, auto_rename=True)
-                else:
-                    # mode == "move" or "auto"
-                    # Auto on same folder implies move (same device), so it's a no-op
-                    continue
-                continue
-
-            # Conflict resolution
-            if conflict_resolver:
-                action, final_dest = conflict_resolver(src, dest)
-
-                if action == "cancel":
-                    break
-                if action == "skip":
-                    continue
-                dest = final_dest
-
-            self._file_ops.transfer(src, dest, mode=mode, transaction_id=tid)
-
-        self.commitTransaction(tid)
+        self._file_ops.assessBatch(tid, sources, dest_dir, mode)
 
     # -------------------------------------------------------------------------
     # DEPENDENCY INJECTION
@@ -225,6 +189,7 @@ class TransactionManager(QObject):
             self._file_ops.operationFinished.connect(self.onOperationFinished)
             self._file_ops.operationProgress.connect(self.onOperationProgress)
             self._file_ops.operationError.connect(self.onOperationError)
+            self._file_ops.batchAssessmentReady.connect(self.onBatchAssessmentReady)
         
     def setTrashManager(self, trash_manager):
         # Legacy stub: TrashManager is now merged into FileOperations
@@ -238,6 +203,52 @@ class TransactionManager(QObject):
     # SIGNAL HANDLERS
     # -------------------------------------------------------------------------
     
+    @Slot(str, list, list)
+    def onBatchAssessmentReady(self, tid: str, valid_items: list, conflicts: list):
+        if tid not in self._active_transactions:
+            return
+
+        resolver = self._batch_resolvers.pop(tid, None)
+
+        # 1. Dispatch valid (non-conflicting) items
+        for item in valid_items:
+            self._file_ops.transfer(
+                item["src"], 
+                item["dest"], 
+                mode=item["mode"], 
+                transaction_id=tid, 
+                auto_rename=item.get("auto_rename", False)
+            )
+
+        # 2. Synchronously prompt for conflicts (safe since QDialog exec uses nested loop)
+        for item in conflicts:
+            src = item["src"]
+            dest = item["dest"]
+            mode = item["mode"]
+            
+            if resolver:
+                action, final_dest = resolver(src, dest)
+                
+                if action == "cancel":
+                    break
+                if action == "skip":
+                    continue
+                    
+                dest = final_dest
+                self._file_ops.transfer(
+                    src, 
+                    dest, 
+                    mode=mode, 
+                    transaction_id=tid, 
+                    overwrite=(action == "overwrite"),
+                    auto_rename=(action == "rename" and not final_dest) # Fallback if rename string is empty
+                )
+            else:
+                # Default resolve strategy
+                self._file_ops.transfer(src, dest, mode=mode, transaction_id=tid, auto_rename=True)
+
+        self.commitTransaction(tid)
+
     @Slot(str, str, str)
     def onOperationStarted(self, job_id, op_type, path):
         # Find which transaction this belongs to

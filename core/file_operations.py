@@ -3,7 +3,7 @@
 from uuid import uuid4
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import QObject, Signal, Slot, QThreadPool, QMutex, QMutexLocker, Qt
+from PySide6.QtCore import QObject, Signal, Slot, QThreadPool, QMutex, QMutexLocker, Qt, QRunnable
 
 from core.file_workers import (
     FileJob, FileOperationSignals, _make_gfile, _gfile_path, _split_name_ext,
@@ -32,6 +32,9 @@ class FileOperations(QObject):
     itemListed = Signal(object)             # TrashItem
     trashNotSupported = Signal(str, str)    # (path, error)
     
+    # Pre-Flight
+    batchAssessmentReady = Signal(str, list, list) # (tid, valid_items, conflicts)
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         
@@ -51,6 +54,7 @@ class FileOperations(QObject):
         # Trash Specific Internal Signals
         self._signals.itemListed.connect(self.itemListed)
         self._signals.trashNotSupported.connect(self.trashNotSupported)
+        self._signals.batchAssessmentReady.connect(self.batchAssessmentReady)
 
     # -------------------------------------------------------------------------
     # SIGNAL HANDLERS
@@ -124,6 +128,10 @@ class FileOperations(QObject):
         job = self._create_job(op_type, source_path, dest_path, transaction_id, overwrite)
         job.auto_rename = auto_rename
         return self._submit(job, TransferRunnable)
+
+    def assessBatch(self, tid: str, sources: list, dest_dir: str, mode: str):
+        runnable = BatchAssessmentRunnable(tid, sources, dest_dir, mode, self, self._signals)
+        self._pool.start(runnable)
 
     @Slot(str, str, str, result=str)
     def rename(self, path: str, new_name: str, transaction_id: str = "") -> str:
@@ -265,3 +273,55 @@ class FileOperations(QObject):
     def shutdown(self):
         self.cancelAll()
         self._pool.waitForDone(3000)
+
+class BatchAssessmentRunnable(QRunnable):
+    """
+    Runs asynchronous pre-flight checks for batch operations.
+    Validates exists, computes destinations, checks for same-folder and existence conflicts.
+    Runs in background thread to avoid freezing UI (especially on MTP).
+    """
+    def __init__(self, tid, sources, dest_dir, mode, file_ops, signals):
+        super().__init__()
+        self.tid = tid
+        self.sources = sources
+        self.dest_dir = dest_dir
+        self.mode = mode
+        self.file_ops = file_ops
+        self.signals = signals
+        self.setAutoDelete(True)
+        
+    def run(self):
+        valid_items = []
+        conflicts = []
+        
+        from core.file_workers import build_conflict_payload
+        
+        for src in self.sources:
+            if not self.file_ops.check_exists(src):
+                continue
+                
+            dest = self.file_ops.build_dest_path(src, self.dest_dir)
+            
+            if self.file_ops.is_same_file(src, dest):
+                if self.mode == "copy":
+                    valid_items.append({"src": src, "dest": dest, "mode": "copy", "auto_rename": True})
+                continue
+                
+            if self.file_ops.check_exists(dest):
+                conflict_data = build_conflict_payload(src, dest)
+                conflicts.append({
+                    "src": src,
+                    "dest": dest,
+                    "mode": self.mode,
+                    "auto_rename": False,
+                    "conflict_data": conflict_data
+                })
+            else:
+                valid_items.append({
+                    "src": src, 
+                    "dest": dest, 
+                    "mode": self.mode, 
+                    "auto_rename": False
+                })
+                
+        self.signals.batchAssessmentReady.emit(self.tid, valid_items, conflicts)
