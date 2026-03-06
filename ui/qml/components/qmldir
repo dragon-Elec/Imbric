@@ -13,3 +13,6 @@ SidebarHeader 1.0 SidebarHeader.qml
 GtkMenu 1.0 GtkMenu.qml
 GtkActionMenu 1.0 GtkActionMenu.qml
 GtkMenuSeparator 1.0 GtkMenuSeparator.qml
+AddressInput 1.0 AddressInput.qml
+BreadcrumbAddressBar 1.0 BreadcrumbAddressBar.qml
+Crumb 1.0 Crumb.qml

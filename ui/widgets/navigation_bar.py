@@ -6,9 +6,6 @@ from PySide6.QtGui import QIcon, QKeySequence, QAction
 from PySide6.QtCore import Qt, Slot, Signal, QTimer
 from PySide6.QtWidgets import QToolTip
 
-
-from gi.repository import Gio
-
 class NavigationBar(QWidget):
     """
     Unified Navigation Bar containing:
@@ -20,6 +17,7 @@ class NavigationBar(QWidget):
     # Signals to communicate with MainWindow/Controller
     navigateRequested = Signal(str)  # Path
     zoomChanged = Signal(int)        # Delta (+1/-1)
+    upRequested = Signal()           # "Up" arrow clicked
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -87,7 +85,7 @@ class NavigationBar(QWidget):
         
     @Slot()
     def _on_path_submitted(self):
-        path = self.path_edit.text().strip()
+        path = self.path_edit.text().lstrip()
         
         if not path:
             return
@@ -111,21 +109,7 @@ class NavigationBar(QWidget):
         
         QTimer.singleShot(1500, lambda: self.path_edit.setStyleSheet(original_style))
         
-    @Slot()
+    upRequested = Signal()           # "Up" arrow clicked
+
     def _on_up_clicked(self):
-        # We need the current path to calculate 'Up'
-        # But this component doesn't know 'current path' unless we store it.
-        # Better: emit a signal "upRequested" or just handle "navigate" logic in parent?
-        # Let's emit a signal specific to 'Up' or handle logic here?
-        # To be purely dumb, it should emit 'upRequested'.
-        # But we can calculate parent of text in path bar?
-        current = self.path_edit.text()
-        if current:
-            try:
-                gfile = Gio.File.parse_name(current)
-                parent = gfile.get_parent()
-                if parent:
-                    parent_path = parent.get_path() or parent.get_uri()
-                    self.navigateRequested.emit(parent_path)
-            except Exception:
-                pass
+        self.upRequested.emit()
