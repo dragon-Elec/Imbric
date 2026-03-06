@@ -18,32 +18,32 @@ class ViewManager(QObject):
 
     @Slot()
     def zoom_in(self):
-        if tab := self.mw.tab_manager.current_tab:
+        if tab := self.mw.shell_manager.current_pane:
             tab.change_zoom(1)
             # Emit new height for status bar or other listeners
             self.zoomChanged.emit(tab.row_builder.getRowHeight())
         
     @Slot()
     def zoom_out(self):
-        if tab := self.mw.tab_manager.current_tab:
+        if tab := self.mw.shell_manager.current_pane:
             tab.change_zoom(-1)
             self.zoomChanged.emit(tab.row_builder.getRowHeight())
 
     @Slot()
     def reset_zoom(self):
-        if tab := self.mw.tab_manager.current_tab:
+        if tab := self.mw.shell_manager.current_pane:
             tab.row_builder.setRowHeight(tab.row_builder.DEFAULT_ROW_HEIGHT) # Default
             self.zoomChanged.emit(tab.row_builder.DEFAULT_ROW_HEIGHT)
         
     @Slot()
     def select_all(self):
         # Trigger QML selectAll
-        if tab := self.mw.tab_manager.current_tab:
+        if tab := self.mw.shell_manager.current_pane:
              tab.selectAllRequested.emit()
 
     @Slot()
     def toggle_hidden(self):
-        if tab := self.mw.tab_manager.current_tab:
+        if tab := self.mw.shell_manager.current_pane:
             current = tab.scanner.showHidden()
             tab.scanner.setShowHidden(not current)
             # Refresh to Apply

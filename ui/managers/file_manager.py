@@ -36,7 +36,7 @@ class FileManager(QObject):
     # --- Context Helper ---
     
     def _current_tab(self):
-        return self.mw.tab_manager.current_tab
+        return self.mw.shell_manager.current_pane
         
     def _get_selection(self) -> List[str]:
         if tab := self._current_tab():

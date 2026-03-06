@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 from ui.models.tab_model import TabListModel
-from ui.models.tab_controller import TabController
+from ui.models.pane_context import PaneContext
 from ui.models.sidebar_model import SidebarModel
 from core.gio_bridge.desktop import QuickAccessBridge
 from core.gio_bridge.volumes import VolumesBridge
@@ -22,6 +22,7 @@ class ShellManager(QObject):
     
     # Shell Actions signals
     navigationRequested = Signal(str)
+    focusAddressBarRequested = Signal()
     
     @Property(QObject, constant=True)
     def quickAccess(self):
@@ -58,7 +59,6 @@ class ShellManager(QObject):
         # 4. Context Properties
         ctx = self.qml_view.engine().rootContext()
         ctx.setContextProperty("shellManager", self) # Self-reference
-        ctx.setContextProperty("tabManager", self)   # Alias for compatibility
         ctx.setContextProperty("tabModel", self._model)
         
         # Instantiate and bind SidebarModel
@@ -114,8 +114,10 @@ class ShellManager(QObject):
         # Pass main_window as parent for the window container
         self.container = QWidget.createWindowContainer(self.qml_view, main_window)
         self.container.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.container.setMouseTracking(True)
         
         # 10. Signal Connections
+        self.navigationRequested.connect(self._on_navigation_requested)
         self.currentIndexChanged.connect(self._on_current_changed)
 
     # --- QML Data Sync ---
@@ -138,12 +140,13 @@ class ShellManager(QObject):
 
     @Slot(str)
     def _on_navigation_requested(self, path):
-        # Forward to main window handler or handle directly?
-        # Let's handle it by navigating the CURRENT tab
-        if self.current_tab:
+        if path == "FOCUS":
+            self.focusAddressBarRequested.emit()
+            return
+            
+        if self.current_pane:
             self.navigate_to(path)
         else:
-            # If no tabs, open one?
             self.add_tab(path)
 
     # --- TabManager Logic (Copied/Adapted) ---
@@ -159,11 +162,11 @@ class ShellManager(QObject):
             self.currentIndexChanged.emit(val)
 
     @Slot(str, result=QObject)
-    def add_tab(self, path: str | None = None) -> TabController:
-        tab = self._model.add_tab(path)
+    def add_tab(self, path: str | None = None) -> PaneContext:
+        pane = self._model.add_tab(path)
         new_index = self._model.rowCount() - 1
         self.currentIndex = new_index
-        return tab
+        return pane
 
     @Slot(int)
     def close_tab(self, index: int):
@@ -186,40 +189,49 @@ class ShellManager(QObject):
     def close_current_tab(self):
         self.close_tab(self.currentIndex)
 
+    @Slot(str)
     def navigate_to(self, path: str):
-        if tab := self.current_tab:
-            tab.navigate_to(path)
+        if pane := self.current_pane:
+            pane.navigate_to(path)
 
-    @property
-    def current_tab(self) -> TabController | None:
+    @Property(QObject, notify=currentIndexChanged)
+    def current_pane(self) -> PaneContext | None:
         return self._model.get_tab(self.currentIndex)
     
     @Slot()
     def go_back(self):
-        if tab := self.current_tab: tab.go_back()
+        if pane := self.current_pane: pane.go_back()
     
     @Slot()
     def go_forward(self):
-        if tab := self.current_tab: tab.go_forward()
+        if pane := self.current_pane: pane.go_forward()
             
     @Slot()
     def go_home(self):
-        if tab := self.current_tab: tab.go_home()
+        if pane := self.current_pane: pane.navigate_to(str(Path.home()))
+
+    @Slot()
+    def go_up(self):
+        if pane := self.current_pane:
+            pane.go_up()
 
     def _on_current_changed(self, index):
         # 0. Disconnect previous connection if any
-        if hasattr(self, '_connected_tab') and self._connected_tab:
-            try: self._connected_tab.pathChanged.disconnect(self.currentPathChanged)
+        if hasattr(self, '_connected_pane') and self._connected_pane:
+            try: self._connected_pane.pathChanged.disconnect(self.currentPathChanged)
             except: pass
-            self._connected_tab = None
+            self._connected_pane = None
 
-        if tab := self.current_tab:
+        if pane := self.current_pane:
             # 1. Emit current path immediately
-            self.currentPathChanged.emit(tab.current_path)
+            self.currentPathChanged.emit(pane.current_path)
             
             # 2. Connect new tab
-            tab.pathChanged.connect(self.currentPathChanged)
-            self._connected_tab = tab
+            pane.pathChanged.connect(self.currentPathChanged)
+            self._connected_pane = pane
             
-            # Also sync sidebar selection to this tab
-            # (Handled in QML via Connections { target: tabManager ... })
+            # 3. Force UI Reset (Close Address Bar on tab switch)
+            if self.qml_view.rootObject():
+                address_bar = self.qml_view.rootObject().findChild(QObject, "addressBar")
+                if address_bar:
+                    address_bar.setProperty("isEditing", False)

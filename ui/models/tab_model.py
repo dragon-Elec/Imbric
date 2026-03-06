@@ -1,12 +1,12 @@
 from PySide6.QtCore import QAbstractListModel, Qt, QModelIndex, QByteArray
 from gi.repository import Gio
 
-from ui.models.tab_controller import TabController
+from ui.models.pane_context import PaneContext
 
 
 class TabListModel(QAbstractListModel):
     """
-    A QAbstractListModel that exposes a list of TabController objects to QML.
+    A QAbstractListModel that exposes a list of PaneContext objects to QML.
     """
     TitleRole = Qt.ItemDataRole.UserRole + 1
     PathRole = Qt.ItemDataRole.UserRole + 2
@@ -15,7 +15,7 @@ class TabListModel(QAbstractListModel):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.mw = main_window
-        self._tabs: list[TabController] = []
+        self._tabs: list[PaneContext] = []
     
     def rowCount(self, parent=QModelIndex()):
         return len(self._tabs)
@@ -27,8 +27,8 @@ class TabListModel(QAbstractListModel):
         tab = self._tabs[index.row()]
         
         if role == self.TitleRole or role == Qt.ItemDataRole.DisplayRole:
-            gfile = Gio.File.parse_name(tab.current_path)
-            return gfile.get_basename() or "Home"
+            segments = tab.pathSegments
+            return segments[-1]["name"] if segments else "Home"
         elif role == self.PathRole:
             return tab.current_path
         elif role == self.ControllerRole:
@@ -40,15 +40,16 @@ class TabListModel(QAbstractListModel):
         return {
             self.TitleRole: QByteArray(b"title"),
             self.PathRole: QByteArray(b"path"),
-            self.ControllerRole: QByteArray(b"controller")
+            self.ControllerRole: QByteArray(b"paneContext")
         }
     
-    def add_tab(self, path: str | None = None) -> TabController:
+    def add_tab(self, path: str | None = None) -> PaneContext:
         self.beginInsertRows(QModelIndex(), len(self._tabs), len(self._tabs))
-        tab = TabController(self.mw, path)
+        tab = PaneContext(self.mw, path)
         
         # Connect to path changed to update title in List
         tab.pathChanged.connect(self._on_tab_path_changed)
+        tab.pathSegmentsChanged.connect(self._on_tab_path_changed)
         
         self._tabs.append(tab)
         self.endInsertRows()
@@ -64,12 +65,12 @@ class TabListModel(QAbstractListModel):
             tab.cleanup()
             self.endRemoveRows()
             
-    def get_tab(self, index: int) -> TabController | None:
+    def get_tab(self, index: int) -> PaneContext | None:
         if 0 <= index < len(self._tabs):
             return self._tabs[index]
         return None
     
-    def _on_tab_path_changed(self, path):
+    def _on_tab_path_changed(self, path=None):
         # Find which tab sent this
         sender = self.sender()
         if sender in self._tabs:

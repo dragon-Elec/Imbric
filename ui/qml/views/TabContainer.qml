@@ -9,7 +9,7 @@ Item {
     
     // Dependencies injected from Python
     // property var tabModel (Implicitly available via context property "tabModel")
-    // property var tabManager (Implicitly available via context property "tabManager")
+    // property var shellManager (Implicitly available via context property "shellManager")
 
     // Access System Palette
     SystemPalette { id: sysPalette; colorGroup: SystemPalette.Active }
@@ -30,20 +30,20 @@ Item {
             z: 1 // Ensure TabBar is above content for mask effects
             
             model: tabModel
-            currentIndex: tabManager ? tabManager.currentIndex : 0
+            currentIndex: shellManager ? shellManager.currentIndex : 0
             
-            onAddClicked: if (tabManager) tabManager.add_tab("")
-            onTabClosed: (index) => { if (tabManager) tabManager.close_tab(index) }
+            onAddClicked: if (shellManager) shellManager.add_tab("")
+            onTabClosed: (index) => { if (shellManager) shellManager.close_tab(index) }
             
             // Two-way binding for current index
             onCurrentIndexChanged: {
-                if (tabManager && tabManager.currentIndex !== currentIndex) {
-                    tabManager.currentIndex = currentIndex
+                if (shellManager && shellManager.currentIndex !== currentIndex) {
+                    shellManager.currentIndex = currentIndex
                 }
             }
         }
         
-        // 2. Content Stack
+        // 3. Content Stack
         StackLayout {
             id: contentStack
             Layout.fillWidth: true
@@ -60,8 +60,8 @@ Item {
                 Item {
                     id: tabWrapper
                     
-                    // "controller" role from TabListModel
-                    property var tabController: model.controller 
+                    // "paneContext" role from TabListModel
+                    property var paneContext: model.paneContext 
                     
                     // Provide the view
                     JustifiedView {
@@ -69,14 +69,14 @@ Item {
                         
                         // Dependency Injection:
                         // Pass the per-tab objects to the view
-                        tabController: tabWrapper.tabController
-                        rowBuilder: tabWrapper.tabController.rowBuilder
-                        fileScanner: tabWrapper.tabController.fileScanner
-                        bridge: tabWrapper.tabController.appBridge
+                        paneContext: tabWrapper.paneContext
+                        rowBuilder: tabWrapper.paneContext.rowBuilder
+                        fileScanner: tabWrapper.paneContext.fileScanner
+                        bridge: tabWrapper.paneContext.appBridge
                         
                         // Listen for selection requests from backend (e.g. after paste)
                         Connections {
-                            target: tabWrapper.tabController
+                            target: tabWrapper.paneContext
                             function onSelectPathsRequested(paths) {
                                 selectPaths(paths)
                             }
