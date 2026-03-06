@@ -8,7 +8,7 @@ def _fetch_usage_task(path: str) -> dict | None:
     """Synchronous usage query to be run in background."""
     if not path: return None
     try:
-        f = Gio.File.new_for_path(path)
+        f = Gio.File.new_for_commandline_arg(path)
         info = f.query_filesystem_info(
             f"{Gio.FILE_ATTRIBUTE_FILESYSTEM_SIZE},{Gio.FILE_ATTRIBUTE_FILESYSTEM_FREE}",
             None
@@ -17,7 +17,8 @@ def _fetch_usage_task(path: str) -> dict | None:
         free = info.get_attribute_uint64(Gio.FILE_ATTRIBUTE_FILESYSTEM_FREE)
         if size > 0:
             return {"total": size, "free": free, "used": size - free}
-    except Exception: pass
+    except Exception as e:
+        print(f"[g.bridge.volumes] Failed to query usage for {path}: {e}")
     return None
 
 class VolumesBridge(QObject):
@@ -26,30 +27,117 @@ class VolumesBridge(QObject):
     mountSuccess = Signal(str)
     mountError = Signal(str)
     
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.monitor = Gio.VolumeMonitor.get()
-        self._usage_cache = {}
-        self._pending_usage = set()
-        self._pool = GioWorkerPool(max_concurrent=2, parent=self)
-        self._pool.resultReady.connect(self._on_usage_ready)
-        
-        # Connect monitor signals
-        for sig in ["mount-added", "mount-removed", "volume-added", "volume-removed", 
-                    "drive-connected", "drive-disconnected"]:
-            self.monitor.connect(sig, lambda *a: self.volumesChanged.emit())
-
     @Property(str, constant=True)
     def title(self): return "Devices"
 
     @Property(str, constant=True)
     def icon(self): return "hard_drive"
 
-    def _on_usage_ready(self, path, stats):
-        self._pending_usage.discard(path)
-        if stats:
-            self._usage_cache[path] = stats
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.monitor = Gio.VolumeMonitor.get()
+        self._usage_cache = {}
+        self._pending_usage = set()
+        
+        # New: Background result caching
+        self._cached_volumes = []
+        self._is_rebuilding = False
+        
+        self._pool = GioWorkerPool(max_concurrent=3, parent=self)
+        self._pool.resultReady.connect(self._on_worker_result)
+        
+        # Connect monitor signals to async rebuild
+        for sig in ["mount-added", "mount-removed", "volume-added", "volume-removed", 
+                    "drive-connected", "drive-disconnected"]:
+            self.monitor.connect(sig, lambda *a: self._rebuild_cache_async())
+            
+        # Initial scan
+        self._rebuild_cache_async()
+
+    def _on_worker_result(self, task_id, result):
+        if task_id == "volumes_rebuild":
+            self._cached_volumes = result
+            self._is_rebuilding = False
             self.volumesChanged.emit()
+            print(f"[DEBUG-GIO] VolumesBridge: Cache rebuilt with {len(result)} items")
+        else:
+            # Handle usage stats ready
+            path = task_id
+            self._pending_usage.discard(path)
+            if result:
+                self._usage_cache[path] = result
+                self.volumesChanged.emit()
+
+    def _rebuild_cache_async(self):
+        """Enqueue a background task to rebuild the volume list."""
+        if self._is_rebuilding:
+            return
+            
+        self._is_rebuilding = True
+        self._pool.enqueue(
+            "volumes_rebuild", 
+            self._build_volume_list_task, 
+            priority=20
+        )
+
+    @staticmethod
+    def _build_volume_list_task():
+        """
+        Background Worker: Iterates GIO volume monitor state safely.
+        This contains the expensive synchronous calls (get_parse_name, get_name, get_icon).
+        """
+        items = []
+        seen_uuids, seen_paths = set(), set()
+        monitor = Gio.VolumeMonitor.get()
+        mounts = {m.get_uuid(): m for m in monitor.get_mounts() if m.get_uuid()}
+        
+        def get_icon_name(gicon):
+            if not gicon: return "drive-harddisk"
+            if isinstance(gicon, Gio.ThemedIcon):
+                names = gicon.get_names()
+                return names[0] if names else gicon.to_string()
+            return gicon.to_string()
+        
+        # 1. Process Volumes
+        for vol in monitor.get_volumes():
+            uuid = vol.get_uuid() or vol.get_identifier("unix-device")
+            if not uuid or uuid in seen_uuids: continue
+            seen_uuids.add(uuid)
+            
+            mount = vol.get_mount() or mounts.get(uuid)
+            is_mounted = mount is not None
+            path = mount.get_root().get_parse_name() if is_mounted else ""
+            if path: seen_paths.add(path)
+            
+            items.append({
+                "identifier": uuid,
+                "name": vol.get_name(),
+                "path": path,
+                "icon": "root" if path == "/" else get_icon_name(vol.get_icon()),
+                "isMounted": is_mounted,
+                "canMount": vol.can_mount(),
+                "canUnmount": mount.can_unmount() if is_mounted else False,
+                "type": "volume"
+            })
+            
+        # 2. Process Remaining Mounts
+        for mount in monitor.get_mounts():
+            root = mount.get_root()
+            path = root.get_parse_name()
+            uuid = mount.get_uuid() or root.get_uri()
+            if uuid in seen_uuids or path in seen_paths: continue
+            
+            items.append({
+                "identifier": uuid,
+                "name": mount.get_name(),
+                "path": path,
+                "icon": get_icon_name(mount.get_icon()),
+                "isMounted": True,
+                "canMount": False,
+                "canUnmount": mount.can_unmount(),
+                "type": "mount"
+            })
+        return items
 
     def _get_usage(self, path):
         """Return cached usage or enqueue background fetch."""
@@ -62,60 +150,19 @@ class VolumesBridge(QObject):
             self._pool.enqueue(path, _fetch_usage_task, priority=100, path=path)
         return None
 
-    def _get_icon_name(self, gicon):
-        if not gicon: return "drive-harddisk"
-        if isinstance(gicon, Gio.ThemedIcon):
-            names = gicon.get_names()
-            return names[0] if names else gicon.to_string()
-        return gicon.to_string()
-
     @Slot(result=list)
     def get_volumes(self):
-        items = []
-        seen_uuids, seen_paths = set(), set()
-        mounts = {m.get_uuid(): m for m in self.monitor.get_mounts() if m.get_uuid()}
-        
-        # 1. Process Volumes
-        for vol in self.monitor.get_volumes():
-            uuid = vol.get_uuid() or vol.get_identifier("unix-device")
-            if not uuid or uuid in seen_uuids: continue
-            seen_uuids.add(uuid)
-            
-            mount = vol.get_mount() or mounts.get(uuid)
-            is_mounted = mount is not None
-            path = mount.get_root().get_path() if is_mounted else ""
-            if path: seen_paths.add(path)
-            
-            items.append({
-                "identifier": uuid,
-                "name": vol.get_name(),
-                "path": path,
-                "icon": "root" if path == "/" else self._get_icon_name(vol.get_icon()),
-                "isMounted": is_mounted,
-                "usage": self._get_usage(path) if is_mounted else None,
-                "canMount": vol.can_mount(),
-                "canUnmount": mount.can_unmount() if is_mounted else False,
-                "type": "volume"
-            })
-            
-        # 2. Process Remaining Mounts
-        for mount in self.monitor.get_mounts():
-            root = mount.get_root()
-            path, uuid = root.get_path(), mount.get_uuid() or root.get_uri()
-            if uuid in seen_uuids or path in seen_paths: continue
-            
-            items.append({
-                "identifier": uuid,
-                "name": mount.get_name(),
-                "path": path,
-                "icon": self._get_icon_name(mount.get_icon()),
-                "isMounted": True,
-                "usage": self._get_usage(path),
-                "canMount": False,
-                "canUnmount": mount.can_unmount(),
-                "type": "mount"
-            })
-        return items
+        """Instant result from cache."""
+        # Inject usage stats into the cached volume list
+        for item in self._cached_volumes:
+            if item["isMounted"]:
+                # Always check the cache; don't 'lock' it if it returns None (pending)
+                usage = self._get_usage(item["path"])
+                if usage:
+                    item["usage"] = usage
+                elif "usage" not in item:
+                    item["usage"] = None
+        return self._cached_volumes
 
     @Slot(str)
     def mount_volume(self, identifier):
