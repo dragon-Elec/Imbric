@@ -101,6 +101,11 @@ ScrollBar {
         control.flickable.contentY = newY
         
         snapBackTimer.restart()
+        control.flash()
+    }
+
+    // Public API to reveal the scrollbar from external events
+    function flash() {
         activityTimer.restart()
     }
 

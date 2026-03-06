@@ -8,6 +8,7 @@ _BASE_MODULE_COUNT = len(sys.modules)
 import signal
 import os
 import argparse
+import traceback
 from pathlib import Path
 
 # Switch to QApplication for Widgets support
@@ -28,6 +29,25 @@ def parse_args():
 
 def main():
     signal.signal(signal.SIGINT, signal.SIG_DFL)
+    
+    # [DIAGNOSTICS] GLib Critical Interceptor — prints Python traceback on GIO errors
+    # This identifies WHICH Python file triggered the C-level critical.
+    import gi
+    gi.require_version('GLib', '2.0')
+    from gi.repository import GLib
+    
+    def _gio_critical_handler(log_domain, log_level, message):
+        # Print the GLib message
+        print(f"\n[GIO-TRACE] {log_domain}: {message}")
+        # Print the Python call stack that led here
+        traceback.print_stack(limit=8)
+        print()
+    
+    GLib.log_set_handler(
+        "GLib-GIO",
+        GLib.LogLevelFlags.LEVEL_CRITICAL,
+        _gio_critical_handler
+    )
     
     args = parse_args()
     
@@ -85,10 +105,9 @@ def main():
 
     QQuickStyle.setStyle("Material")
 
-    # 2. Force Fusion Style for Widgets (The Shell)
-    # This serves as the base for our QSS patches.
-    # [DISABLED] We disable this to allow QML SystemPalette to inherit the native (GTK) colors,
-    # matching the experiment's look.
+    # 2. Native Style Integration
+    # We allow the app to inherit the system theme (e.g. GTK/Adwaita) for the top-level shell.
+    # Event tracking is now stabilized in MainLayout.qml, making 'Fusion' unnecessary.
     # app.setStyle("Fusion")
 
     # 3. Apply Modern QSS Patches
