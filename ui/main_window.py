@@ -17,8 +17,6 @@ from ui.managers.file_manager import FileManager
 from ui.managers.view_manager import ViewManager
 from ui.models.shortcuts import Shortcuts
 
-# UI Components
-from ui.widgets.navigation_bar import NavigationBar
 from ui.widgets.status_bar import StatusBar
 from ui.widgets.progress_overlay import ProgressOverlay
 
@@ -75,29 +73,23 @@ class MainWindow(QMainWindow):
         self.action_manager = ActionManager(self)
         
         # Setup Actions
-        # Note: action_manager expects 'tab_manager', we pass 'shell_manager' as it mimics the API
         self.action_manager.setup_actions(
             window=self,
             shortcuts=self.shortcuts,
             file_manager=self.file_manager,
             view_manager=self.view_manager,
-            nav_bar=self.nav_bar,
-            tab_manager=self.shell_manager,
+            shell_manager=self.shell_manager,
             undo_manager=self.undo_manager
         )
         
-        # Connect Components to Managers
-        self.nav_bar.zoomChanged.connect(self.change_zoom)
+        # [NEW] Expose ActionManager to QML for dynamic icon resolution
+        self.shell_manager.qml_view.engine().rootContext().setContextProperty("actionManager", self.action_manager)
         
         # 5. Start
         initial_path = start_path if start_path else QDir.homePath()
         self.shell_manager.add_tab(initial_path)
 
     def _setup_ui(self):
-        # Navigation Bar (Top)
-        self.nav_bar = NavigationBar()
-        # self.addToolBar(self.nav_bar) # REMOVED: We are now CSD
-        
         # Status Bar (Bottom)
         self.status_bar = StatusBar()
         self.setStatusBar(self.status_bar)
@@ -108,19 +100,8 @@ class MainWindow(QMainWindow):
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.setSpacing(0)
         
-        if self.use_csd:
-            # CSD Header (Top)
-            from ui.widgets.custom_header import CustomHeader
-            self.header = CustomHeader(self.nav_bar, self)
-            central_layout.addWidget(self.header)
-        else:
-            # Directly add NavigationBar to central layout to avoid QToolBar height constraints.
-            # This allows the elements below (Tabs/Grid) to lift up.
-            self.nav_bar.setObjectName("HeaderBar")
-            # Height determined naturally by content + QSS padding
-            central_layout.insertWidget(0, self.nav_bar)
-
-        # UNIFIED SHELL (Replaces Splitter/Sidebar/Tabs)
+        # UNIFIED SHELL (Replaces Splitter/Sidebar/Tabs/TopBar)
+        # Note: The CSD logic and Address Bar are now part of the QML Shell Manager
         central_layout.addWidget(self.shell_manager.container, 1)
         
         # Progress Overlay
@@ -142,9 +123,6 @@ class MainWindow(QMainWindow):
         
         self.setCentralWidget(central_widget)
         
-        # Connect Components
-        self.nav_bar.navigateRequested.connect(self.navigate_to)
-        
         # Connect Shell Signals
         self.shell_manager.currentPathChanged.connect(self._on_tab_path_changed)
 
@@ -162,49 +140,35 @@ class MainWindow(QMainWindow):
 
     def navigate_to(self, path):
         path = str(path)
-        
         self.shell_manager.navigate_to(path)
-        
-        # Syncing sidebar to path is now handled internally by Shell or via signals if needed
-        # self.sidebar.sync_to_path(path) 
 
     def go_up(self):
-        tab = self.shell_manager.current_tab
-        if tab:
-            from gi.repository import Gio
-            gfile = Gio.File.parse_name(tab.current_path)
-            parent = gfile.get_parent()
-            if parent:
-                parent_path = parent.get_path() or parent.get_uri()
-                self.navigate_to(parent_path)
+        self.shell_manager.go_up()
 
     def _on_tab_path_changed(self, path):
         """Sync UI components when tab path changes."""
         print(f"[DEBUG-SURGICAL] MainWindow._on_tab_path_changed: {path}")
-        self.nav_bar.set_path(path)
         self.status_bar.resetCounts()
         
         # Ensure the FileMonitor is actually watching the current path
         self.file_monitor.watch(path)
         
         # Re-connect status bar
-        tab = self.shell_manager.current_tab
-        if tab:
+        pane = self.shell_manager.current_pane
+        if pane:
             # Disconnect previous scanner if it exists
             if hasattr(self, '_active_scanner') and self._active_scanner:
                 try:
                     self._active_scanner.filesFound.disconnect(self.status_bar.updateItemCount)
                     # Also disconnect attribute updates
                     self._active_scanner.fileAttributeUpdated.disconnect(self.status_bar.updateAttribute)
-                    self._active_scanner.scanError.disconnect(self.nav_bar.showError)
                 except Exception:
                     pass
             
             # Connect new scanner and store reference
-            self._active_scanner = tab.scanner
+            self._active_scanner = pane.scanner
             self._active_scanner.filesFound.connect(self.status_bar.updateItemCount)
             self._active_scanner.fileAttributeUpdated.connect(self.status_bar.updateAttribute)
-            self._active_scanner.scanError.connect(self.nav_bar.showError)
 
     def _on_directory_changed(self):
         # [FIX] Intentional no-op. Full reloads disabled in favor of surgical row_builder updates.
@@ -219,22 +183,17 @@ class MainWindow(QMainWindow):
         else:
             self.view_manager.zoom_out()
 
-    @property
-    def tab_manager(self):
-        """Backward compatibility alias for Managers that expect 'tab_manager'."""
-        return self.shell_manager
-
     @Slot(str, str, str)
     def _on_op_completed(self, op_type, path, result_data):
-        tab = self.shell_manager.current_tab
-        if not tab or not tab.bridge: return
+        pane = self.shell_manager.current_pane
+        if not pane or not pane.bridge: return
             
         if op_type == "rename":
-            tab.bridge.selectPath(result_data)
+            pane.bridge.selectPath(result_data)
         elif op_type == "createFolder":
-            if tab.bridge._pending_rename_path == path:
-                tab.bridge._pending_rename_path = None
-                QTimer.singleShot(100, lambda: tab.bridge.renameRequested.emit(path))
+            if pane.bridge._pending_rename_path == path:
+                pane.bridge._pending_rename_path = None
+                QTimer.singleShot(100, lambda: pane.bridge.renameRequested.emit(path))
     
     @Slot(str, str, str)
     def _show_error_dialog(self, op_type: str, path: str, message: str):
@@ -278,11 +237,11 @@ class MainWindow(QMainWindow):
     
     @property
     def current_path(self):
-        return self.shell_manager.current_tab.current_path if self.shell_manager.current_tab else QDir.homePath()
+        return self.shell_manager.current_pane.current_path if self.shell_manager.current_pane else QDir.homePath()
 
     @property
     def bridge(self):
-        return self.shell_manager.current_tab.bridge if self.shell_manager.current_tab else None
+        return self.shell_manager.current_pane.bridge if self.shell_manager.current_pane else None
     
     @property
     def qml_view(self):
