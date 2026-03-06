@@ -19,7 +19,7 @@ Item {
     // 1. DATA BINDING FROM PYTHON
     // =========================================================================
     required property var rowBuilder
-    required property var tabController
+    required property var paneContext
     property var rows: []
     
     Connections {
@@ -38,12 +38,7 @@ Item {
         }
     }
 
-    property int rowHeight: 120
-    
-    Connections {
-        target: rowBuilder
-        function onRowHeightChanged(h) { root.rowHeight = h }
-    }
+    property int rowHeight: rowBuilder ? rowBuilder.rowHeight : 0
     
     // =========================================================================
     // 2. SERVICES
@@ -92,8 +87,8 @@ Item {
         
         onSelectionChanged: {
             // Push selection update to backend
-            if (tabController) {
-                tabController.updateSelection(selection)
+            if (paneContext) {
+                paneContext.updateSelection(selection)
             }
         }
     }
@@ -146,6 +141,7 @@ Item {
             onTapped: {
                 selectionModel.clear()
                 root.forceActiveFocus()
+                verticalScrollBar.flash()
             }
         }
         TapHandler {
@@ -154,10 +150,30 @@ Item {
             gesturePolicy: TapHandler.WithinBounds
             onTapped: {
                 if (root.bridge) root.bridge.showBackgroundContextMenu()
+                verticalScrollBar.flash()
             }
         }
 
-        // 4. Keyboard Shortcuts for Context Menu
+        // 4. GNOME-style Interaction Observer
+        // This wakes up the scrollbar on movement (>3px delta) within the view area, 
+        // mirroring the GTK/Adwaita "Reveal on Motion" behavior.
+        HoverHandler {
+            blocking: false
+            property real lastX: 0
+            property real lastY: 0
+            onPointChanged: {
+                let dx = Math.abs(point.position.x - lastX)
+                let dy = Math.abs(point.position.y - lastY)
+                if (dx > 3 || dy > 3) {
+                    verticalScrollBar.flash()
+                    lastX = point.position.x
+                    lastY = point.position.y
+                }
+            }
+            onHoveredChanged: if (hovered) verticalScrollBar.flash()
+        }
+
+        // 5. Keyboard Shortcuts for Context Menu
         Shortcut {
             sequences: [StandardKey.ContextMenu, "Shift+F10"]
             onActivated: {
@@ -204,10 +220,10 @@ Item {
             id: rowListView
             anchors.fill: parent
             // PADDING: Use internal margins instead of anchors to avoid clipping scrollbars/dead zones
-            leftMargin: 12
-            rightMargin: 18
-            topMargin: 18
-            bottomMargin: 12
+            leftMargin: rowBuilder ? rowBuilder.spacing : 0
+            rightMargin: rowBuilder ? rowBuilder.spacing : 0
+            topMargin: rowBuilder ? rowBuilder.spacing : 0
+            bottomMargin: rowBuilder ? rowBuilder.spacing : 0
             
             clip: true
             
@@ -250,10 +266,10 @@ Item {
             }
             
             model: root.rows
-            spacing: 10
+            spacing: rowBuilder ? rowBuilder.spacing : 0
             
-            header: Item { height: 10 }
-            footer: Item { height: 10 }
+            header: Item { height: rowBuilder ? rowBuilder.spacing : 0 }
+            footer: Item { height: rowBuilder ? rowBuilder.spacing : 0 }
             
             delegate: Components.RowDelegate {
                 bridge: root.bridge

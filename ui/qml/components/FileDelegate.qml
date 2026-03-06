@@ -12,7 +12,7 @@ Item {
     id: delegateRoot
 
     Component.onCompleted: {
-        // console.log("[FileDelegate] Created for:", path, "Width:", width, "Height:", imageHeight)
+        console.log("[FileDelegate] Created for:", path, "Width:", width, "Height:", imageHeight)
     }
 
 
@@ -31,8 +31,8 @@ Item {
     // =========================================================================
     // 2. VIEW LAYOUT CONTRACT (Must be passed explicitly from parent)
     // =========================================================================
-    required property int imageHeight  // Fixed height from JustifiedView/RowDelegate
-    property real columnWidth: 200     // Width calculated from aspect ratio
+    property int imageHeight  // Fixed height from JustifiedView/RowDelegate
+    property real columnWidth // Width calculated from aspect ratio
     property int thumbnailMaxWidth: 0   // 0 = no cap (icons/vectors can scale)
     property int thumbnailMaxHeight: 0  // Actual thumbnail cache dimensions
     property string thumbnailUrl: ""    // Pre-computed by RowBuilder (no Python calls during scroll)
@@ -68,7 +68,7 @@ Item {
     readonly property bool isBeingRenamed: renamingPath === path
 
     // Fixed height from parent (no dynamic calculation)
-    readonly property int footerHeight: 36
+    readonly property int footerHeight: rowBuilder ? rowBuilder.footerHeight : 0
     height: imageHeight + footerHeight
     
     // Expose containsDrag for parent to use in selection logic if needed

@@ -4,15 +4,15 @@ import QtQuick.Layouts
 
 Row {
     id: rowDelegateRoot
-    spacing: 10
+    spacing: rowBuilder ? rowBuilder.spacing : 0
     
     // Model data passed from ListView
     property var rowData: modelData
     
     // Constants (Bound to RowBuilder if possible, or passed via context)
-    property int imageHeight: 200 
+    property int imageHeight
     
-    readonly property int footerHeight: 36
+    readonly property int footerHeight: rowBuilder ? rowBuilder.footerHeight : 0
     height: imageHeight + footerHeight
 
     // Services (Injected from JustifiedView)

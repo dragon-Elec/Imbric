@@ -29,8 +29,8 @@ class RowBuilder(QObject):
     SPACING = 10
     
     # Layout Constants
-    DEFAULT_ROW_HEIGHT = 120
-    MIN_ROW_HEIGHT = 80
+    DEFAULT_ROW_HEIGHT = 100
+    MIN_ROW_HEIGHT = 60
     MAX_ROW_HEIGHT = 400
     ZOOM_STEP = 20
     
@@ -41,6 +41,7 @@ class RowBuilder(QObject):
         self._sorted_items = [] # All items (sorted)
         self._rows = []         # List of rows (list of list of dicts)
         self._available_width = 1000 # Default fallback
+        print(f"[DEBUG-LAYOUT] RowBuilder initialized with height: {self._image_height}")
         
         # [FIX] Streaming mode flag
         self._is_loading = False
@@ -78,14 +79,33 @@ class RowBuilder(QObject):
         height = max(self.MIN_ROW_HEIGHT, min(self.MAX_ROW_HEIGHT, height))
         
         if height != self._image_height:
+            print(f"[DEBUG-LAYOUT] setRowHeight({height}) from {self._image_height}")
             self._image_height = height
             self._trigger_layout_update()
             # self.rowsChanged.emit() # Handled by timer
+            self.rowHeightChanged.emit(height)
             self.rowHeightChanged.emit(height)
 
     @Slot(result=int)
     def getRowHeight(self) -> int:
         return self._image_height
+
+    @Property(int, notify=rowHeightChanged)
+    def rowHeight(self) -> int:
+        """Native QML property for declarative two-way bindings."""
+        return self._image_height
+        
+    @rowHeight.setter
+    def rowHeight(self, val: int) -> None:
+        self.setRowHeight(val)
+
+    @Property(int, constant=True)
+    def footerHeight(self) -> int:
+        return self.FOOTER_HEIGHT
+
+    @Property(int, constant=True)
+    def spacing(self) -> int:
+        return self.SPACING
 
     @Slot(int, result=int)
     def calculate_next_zoom_height(self, direction: int) -> int:
@@ -164,7 +184,7 @@ class RowBuilder(QObject):
     _THUMB_CACHE_DIR = Path(GLib.get_user_cache_dir()) / "thumbnails/large"
 
     @staticmethod
-    def _resolve_thumbnail_url(path: str, target_uri: str = "") -> str:
+    def _resolve_thumbnail_url(item: dict) -> str:
         """
         Pre-compute the thumbnail URL for a visual item.
         
@@ -172,9 +192,16 @@ class RowBuilder(QObject):
         Returns a direct file:// URL if cached, else falls back to the async
         image://thumbnail/ provider.
         """
+        uri = item.get("uri")
+        path = item.get("path")
+        target_uri = item.get("targetUri")
+        
+        if not uri or not path:
+            return ""
+
         try:
             # Use the physical URI for hashing if available (critical for Recent/Trash)
-            resolved_uri = target_uri if target_uri else "file://" + urllib.parse.quote(path)
+            resolved_uri = target_uri if target_uri else uri
             
             md5_hash = hashlib.md5(resolved_uri.encode('utf-8')).hexdigest()
             thumb_path = RowBuilder._THUMB_CACHE_DIR / f"{md5_hash}.png"
@@ -205,8 +232,8 @@ class RowBuilder(QObject):
             self._calculate_thumbnail_cap(item)
             
             # [PERF] Pre-compute thumbnail URL
-            if item.get("isVisual") and path:
-                item["thumbnailUrl"] = self._resolve_thumbnail_url(path, item.get("targetUri", ""))
+            if item.get("isVisual"):
+                item["thumbnailUrl"] = self._resolve_thumbnail_url(item)
             else:
                 item["thumbnailUrl"] = ""
         
@@ -280,7 +307,7 @@ class RowBuilder(QObject):
             
         self._calculate_thumbnail_cap(item)
         if item.get("isVisual"):
-            item["thumbnailUrl"] = self._resolve_thumbnail_url(path, item.get("targetUri", ""))
+            item["thumbnailUrl"] = self._resolve_thumbnail_url(item)
         else:
             item["thumbnailUrl"] = ""
             
