@@ -3,10 +3,10 @@ Central views that assemble components into primary layouts (Main Layout, Tabs, 
 
 Rules:
 - Views should assemble smaller components rather than implementing granular UI details directly.
-- Use explicit bindings where possible, but rely on per-tab controllers or implicit context properties (like `tabManager`, `bridge`) where data varies by context.
+- Use explicit bindings where possible, but rely on per-tab Pane Contexts (logical engines) or implicit context properties (like `shellManager`, `bridge`) where data varies by context.
 
 Atomic Notes:
-!Pattern: [Controller Injection] - Reason: TabContainer dynamically instantiates views from `tabModel` and injects per-tab controllers to instance views cleanly without global singletons.
+!Pattern: [Context Injection] - Reason: TabContainer dynamically instantiates views from `tabModel` and injects the dedicated Pane Context (Engine) to each instance for clean state isolation.
 
 Index:
 
@@ -40,13 +40,13 @@ API:
 !Caveat: Assumes `sidebarModel` (QAbstractListModel) is provided directly to instance or via ShellManager context property.
 
 ### [FILE: TabContainer.qml] [DONE]
-Role: Wraps the tab bar and content stack to swap active views and inject per-tab controllers.
+Role: Wraps the tab bar and content stack to swap active views and inject the associated logical Pane Context.
 
-/DNA/: [ColumnLayout] -> [{GtkTabBar} + {StackLayout:Repeater(tabModel) -> tabController -> JustifiedView}]
+/DNA/: [ColumnLayout] -> [{GtkTabBar} + {StackLayout:Repeater(tabModel) -> paneContext (Engine) -> JustifiedView}]
 
 - SrcDeps: components.GtkTabBar, JustifiedView
 - SysDeps: QtQuick, QtQuick.Controls, QtQuick.Layouts
 
 API:
   - TabContainer(Item):
-!Caveat: Heavily relies on context properties `tabModel` and `tabManager` implicitly provided by the Python runtime context.
+!Caveat: Heavily relies on context properties `tabModel` and `shellManager` implicitly provided by the Python runtime context.

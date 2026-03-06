@@ -13,6 +13,7 @@ Usage:
 from PySide6.QtCore import QThread, Signal, Slot, QMutex, QMutexLocker
 from typing import List, Optional
 import os
+from gi.repository import Gio
 
 from core.search import get_search_engine, SearchEngine
 
@@ -81,23 +82,40 @@ class SearchWorker(QThread):
         self._engine.stop()
     
     def run(self):
-        """Thread main loop — performs the search."""
+        """Thread main loop performed in background."""
         with QMutexLocker(self._mutex):
-            directory = self._directory
+            search_uri = self._directory
             pattern = self._pattern
             recursive = self._recursive
         
-        if not directory or not os.path.isdir(directory):
-            self.searchError.emit(f"Invalid directory: {directory}")
+        # Resolve URI to local FUSE path for the search engine (fd/scandir)
+        # NOTE: GIO will automatically return the native URI for FUSE paths, 
+        # but here we need the POSIX-compatible FUSE path for external tools.
+        gfile = Gio.File.new_for_commandline_arg(search_uri)
+        if not gfile.query_exists():
+            self.searchError.emit(f"Invalid location: {search_uri}")
+            return
+            
+        local_search_path = gfile.get_path()
+        
+        # If gfile.get_path() is None, it means GIO hasn't mounted this as FUSE,
+        # or it's a protocol (like trash://) that doesn't host FUSE entries.
+        if not local_search_path or not os.path.isdir(local_search_path):
+            error_msg = f"Search is not supported on this location ('{search_uri}'). "
+            if not local_search_path:
+                error_msg += "Try opening this folder in the view first to trigger a FUSE mount."
+            self.searchError.emit(error_msg)
             return
         
-        self.searchStarted.emit(directory)
+        self.searchStarted.emit(search_uri)
         
+        # We search the local path but we will emit the results as local paths.
+        # PaneContext/GIO will handle converting them to native URIs on-the-fly.
         batch: List[str] = []
         total_count = 0
         
         try:
-            for path in self._engine.search(directory, pattern, recursive):
+            for path in self._engine.search(local_search_path, pattern, recursive):
                 if self._is_cancelled():
                     break
                 

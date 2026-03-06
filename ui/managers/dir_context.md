@@ -56,9 +56,9 @@ API:
   - FileManager(QObject):
     - copy_selection() -> None: Sets clipboard for copy.
     - cut_selection() -> None: Sets clipboard for cut.
-    - paste_to_current() -> None: Triggers paste in current tab.
+    - paste_to_current() -> None: Triggers paste in the active Pane Context (tab engine).
     - trash_selection() -> None: Sends selected items to trash via TransactionManager.
-    - rename_selection() -> None: Emits renameRequested signal on active tab's bridge.
+    - rename_selection() -> None: Emits renameRequested signal on active Pane Context's bridge.
     - create_new_folder() -> None: Creates "Untitled Folder" via file_ops with auto_rename.
     - duplicate_selection() -> None: Copies selected items to same folder with (Copy) suffix.
     - get_clipboard_files() -> List[str]: Reads paths from sys clipboard.
@@ -86,13 +86,13 @@ API:
     - forward() -> None: Navigates forward.
 
 ### [FILE: shell_manager.py] [DONE]
-Role: Central QML coordinator managing the unified shell (Sidebar + Tabs), injecting context-responsive ViewModels for Gtk-mimic menus.
+Role: Central QML coordinator managing the unified shell (Sidebar + Panes), injecting context-responsive ViewModels for Gtk-mimic menus.
 
-/DNA/: [init -> setup(QQuickView) -> ctx.setContextProperty(shell|tab|sidebar|contextMenuViewModel)] + [bridges.em:changed -> call:_rebuild_sidebar_model -> sidebar_model.update] + [QML.em:navigationRequested -> call:navigate_to] + [tab routing: add/close/next/prev -> TabListModel]
+/DNA/: [init -> setup(QQuickView) -> ctx.setContextProperty(shellManager|tabModel|sidebarModel|contextMenuViewModel)] + [bridges.em:changed -> call:_rebuild_sidebar_model -> sidebar_model.update] + [QML.em:navigationRequested -> call:navigate_to] + [pane routing: add/close/next/prev -> TabListModel]
 
 - SrcDeps:
   - ui.models.tab_model.TabListModel
-  - ui.models.tab_controller.TabController
+  - ui.models.pane_context.PaneContext
   - ui.models.sidebar_model.SidebarModel
   - ui.models.context_menu_model.ContextMenuViewModel
   - core.gio_bridge.desktop.QuickAccessBridge
@@ -109,19 +109,19 @@ API:
     - currentIndex [Property(int)]: Active tab index with QML notification.
     - quickAccess [Property(QObject)]: Exposes QuickAccessBridge.
     - volumes [Property(QObject)]: Exposes VolumesBridge.
-    - add_tab(path) -> TabController: Appends tab to model and sets currentIndex to new tab.
+    - add_tab(path) -> PaneContext: Appends tab to model and sets currentIndex to new tab.
     - close_tab(index) -> None: Removes tab from model and resets currentIndex if out of bounds.
-    - next_tab() / prev_tab() -> None: Cycles active tab index with wrap-around.
-    - close_current_tab() -> None: Closes active tab.
-    - navigate_to(path) -> None: Navigates active tab to path.
-    - current_tab -> TabController: Returns active TabController instance.
-    - go_back() / go_forward() / go_home() -> None: Delegates history navigation to active tab.
+    - next_tab() / prev_tab() -> None: Cycles active Pane Context index with wrap-around.
+    - close_current_tab() -> None: Closes active tab and its associated engine.
+    - navigate_to(path) -> None: Navigates the active Pane Context to path.
+    - current_pane -> PaneContext: Returns the active logical engine instance.
+    - go_back() / go_forward() / go_home() -> None: Delegates history navigation to the active Pane Context.
     - _rebuild_sidebar_model() -> None: Syncs bridge data to SidebarModel.
     - _on_section_toggled(title, collapsed) -> None: Persists sidebar section collapse state.
 !Caveat: Decoupled from `QWidget` inheritance; use `container` property for embedding in `QMainWindow`.
 
 ### [FILE: view_manager.py] [DONE]
-Role: Global controller for view adjustments (zoom level, toggling hidden files) that acts on the active tab.
+Role: Global controller for view adjustments (zoom level, toggling hidden files) that acts on the active Pane Context.
 
 /DNA/: [call:zoom_in() -> tab.change_zoom() -> em:zoomChanged(height)]
 

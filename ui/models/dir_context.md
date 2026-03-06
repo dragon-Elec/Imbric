@@ -6,8 +6,8 @@ Rules:
 - Ensure bridging interactions remain asynchronous to prevent UI freezing.
 
 Atomic Notes:
-- `!Pattern: [Surgical Updates > Full Refresh] - Reason: TabControllers listen to the global FileMonitor to surgically update their RowBuilder (add/remove single rows) instead of triggering expensive full re-scans.`
-- `!Rule: [Isolated Tabs] - Reason: Every TabController spawns its own Scanner, RowBuilder, and AppBridge, isolating state and preventing cross-tab data corruption.`
+- `!Pattern: [Surgical Updates > Full Refresh] - Reason: PaneContexts listen to the global FileMonitor to surgically update their RowBuilder (add/remove single rows) instead of triggering expensive full re-scans.`
+- `!Rule: [Isolated Panes] - Reason: Every PaneContext spawns its own Scanner, RowBuilder, and AppBridge, isolating state and preventing cross-pane data corruption.`
 
 Index: None
 
@@ -55,8 +55,8 @@ API:
 
 ---
 
-### [FILE: tab_controller.py] [DONE]
-Role: State engine for a single tab, holding its dedicated Scanner, RowBuilder, and Bridge.
+### [FILE: pane_context.py] [DONE]
+Role: State engine for a single view context (Pane), holding its dedicated Scanner, RowBuilder, and Bridge.
 
 /DNA/: [call:navigate_to -> call:scanner.scan_directory -> em:filesFound] + [em:file_monitor.fileCreated -> if(current_path) -> call:scanner.scan_single_file] + [em:scanFinished -> bridge.selectPendingPaths] => [update:row_builder]
 
@@ -70,11 +70,13 @@ Role: State engine for a single tab, holding its dedicated Scanner, RowBuilder, 
   - gi.repository.Gio
 
 API:
-  - TabController(QObject):
-    - currentPath [Property(str)]: The path this tab currently displays.
-    - selection [Property(list)]: Paths currently selected by QML in this tab.
-    - navigate_to(path) -> None: Triggers directory scan and updates navigation stacks.
-    - go_back(), go_forward(), go_home() -> None: Modifies history stack and triggers navigation.
+  - PaneContext(QObject):
+    - currentPath [Property(str)]: The path this pane currently displays.
+    - pathSegments [Property(QVariantList)]: Dynamic breadcrumb models mapping segments to path resolution logic with virtual future path retention.
+    - selection [Property(list)]: Paths currently selected by QML in this pane.
+    - canGoBack, canGoForward, canGoUp [Property(bool)]: Exposes navigation stack states to QML bindings.
+    - navigate_to(path) -> None: Triggers directory scan and updates navigation stacks. If path is invalid, emits `pathRejected`.
+    - go_back(), go_forward(), go_home() -> None: Modifies history stack and triggers navigation logic, maintaining Nemo-style virtual path retention.
     - updateSelection(paths) -> None: Receives selected paths from QML view.
     - selectPathsRequested(list) [Signal]: Emitted to force QML selection (e.g. after refresh).
     - change_zoom(direction) -> None: Modifies RowBuilder's height settings.
@@ -83,21 +85,21 @@ API:
 ---
 
 ### [FILE: tab_model.py] [DONE]
-Role: QAbstractListModel managing the collection of open TabControllers for the tab bar.
+Role: QAbstractListModel managing the collection of open PaneContexts for the tab bar.
 
-/DNA/: [call:add_tab] -> beginInsertRows -> instantiate:TabController -> connect:pathChanged -> endInsertRows
+/DNA/: [call:add_tab] -> beginInsertRows -> instantiate:PaneContext -> connect:pathChanged -> endInsertRows
 
 - SrcDeps:
-  - ui.models.tab_controller.TabController
+  - ui.models.pane_context.PaneContext
 - SysDeps:
   - PySide6.QtCore.QAbstractListModel, Qt, QModelIndex, QByteArray
   - gi.repository.Gio
 
 API:
   - TabListModel(QAbstractListModel):
-    - add_tab(path) -> TabController: Instantiates a new tab and starts navigation.
-    - remove_tab(index) -> None: Disposes of tab and its resources.
-    - get_tab(index) -> TabController: Retrieves instance for programmatic access.
+    - add_tab(path) -> PaneContext: Instantiates a new pane context and starts navigation.
+    - remove_tab(index) -> None: Disposes of pane context and its resources.
+    - get_tab(index) -> PaneContext: Retrieves instance for programmatic access.
 
 ---
 

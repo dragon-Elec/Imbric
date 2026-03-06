@@ -6,17 +6,18 @@ Rules:
 - Avoid placing blocking or heavy business logic inside widget classes.
 
 Atomic Notes:
-- `!Pattern: [Dumb Widgets] - Reason: Widgets like NavigationBar only emit requests (e.g. navigateRequested) and let the TabController handle the actual traversal and history.`
-- `!Rule: [Non-blocking UX] - Reason: Long-running operations use ProgressOverlay instead of modal dialogs to prevent locking the main UI thread during background copies.`
+!Pattern: [Dumb Widgets] - Reason: NavigationBar only emits requests (e.g. navigateRequested) and lets handlers coordinate traversal.
+!Pattern: [Layout Injection] - Reason: NavigationBar is initialized by MainWindow and injected into either CustomHeader (CSD) or the central layout (Standard).
+!Rule: [Non-blocking UX] - Reason: Long-running operations use ProgressOverlay instead of modal dialogs to prevent locking the UI thread.
 
 Index: None
 
 ---
 
 ### [FILE: custom_header.py] [DONE]
-Role: Experimental Client-Side Decoration (CSD) header providing custom window controls and dragging.
+Role: Alternative CSD header used as a container for NavigationBar when experimental flags are active.
 
-/DNA/: [instantiate] -> wrap(NavigationBar) + wrap(WindowControls) -> [em:mousePress] -> call:windowHandle.startSystemMove()
+/DNA/: [receive:nav_bar] -> wrap(nav_bar) + wrap(WindowControls) -> [em:mousePress] -> call:windowHandle.startSystemMove()
 
 - SrcDeps:
   - None (Takes NavigationBar as injected dependency)
@@ -49,7 +50,7 @@ API:
 ---
  
 ### [FILE: navigation_bar.py] [DONE]
-Role: Unified navigation controls including Up button, Path entry, and Zoom controls.
+Role: Primary navigation entry and controls initialized by MainWindow and placed in the top-level layout.
 
 /DNA/: [wait:user_input] -> em:navigateRequested(path) | em:zoomChanged(delta)
 
