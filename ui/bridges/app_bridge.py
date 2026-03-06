@@ -4,6 +4,7 @@ from ui.widgets.drag_helper import start_drag_session
 from ui.services.conflict_resolver import ConflictResolver
 from ui.dialogs.conflicts import ConflictAction
 from core.search_worker import SearchWorker
+from core.utils.gio_qtoast import GioWorkerPool
 
 
 class AppBridge(QObject):
@@ -32,6 +33,10 @@ class AppBridge(QObject):
         self._search_worker.resultsFound.connect(self.searchResultsFound)
         self._search_worker.searchFinished.connect(self.searchFinished)
         self._search_worker.searchError.connect(self.searchError)
+        
+        # Async Rename Assessment
+        self._rename_pool = GioWorkerPool(max_concurrent=1, parent=self)
+        self._rename_pool.resultReady.connect(self._on_rename_assessed)
         
         # Connect to clipboard changes
         self.mw.clipboard.clipboardChanged.connect(self._on_clipboard_changed)
@@ -117,25 +122,61 @@ class AppBridge(QObject):
     def renameFile(self, old_path, new_name):
         """
         Renames a file. Called from QML after user finishes editing.
+        Defers synchronous path parsing to the background.
         """
         if not old_path or not new_name:
             return
             
+        print(f"[AppBridge] Enqueueing rename assessment for '{old_path}' -> '{new_name}'")
+        self._rename_pool.enqueue(
+            f"rename_{old_path}", 
+            self._assess_rename_task, 
+            priority=10, 
+            old_path=old_path, 
+            new_name=new_name
+        )
+
+    @staticmethod
+    def _assess_rename_task(old_path: str, new_name: str) -> dict | None:
+        """Background worker: Parses paths and tests bounds without freezing the UI."""
         from gi.repository import Gio
-        gfile = Gio.File.parse_name(old_path)
-        parent = gfile.get_parent()
-        if not parent:
+        try:
+            gfile = Gio.File.parse_name(old_path)
+            parent = gfile.get_parent()
+            if not parent:
+                return None
+                
+            new_gfile = parent.get_child(new_name)
+            new_path = new_gfile.get_path() or new_gfile.get_uri()
+            
+            # Check if name actually changed
+            if old_path == new_path:
+                return {"skip": True}
+                
+            return {
+                "skip": False,
+                "old_path": old_path,
+                "new_path": new_path,
+                "new_name": new_name
+            }
+        except Exception as e:
+            print(f"[AppBridge] Background rename assessment failed: {e}")
+            return None
+
+    def _on_rename_assessed(self, task_id: str, result: dict | None):
+        """Main thread callback to continue rename after background parsed paths."""
+        if not task_id.startswith("rename_") or not result:
             return
             
-        new_gfile = parent.get_child(new_name)
-        new_path = new_gfile.get_path() or new_gfile.get_uri()
-        
-        # Check if name actually changed
-        if old_path == new_path:
+        if result.get("skip"):
             return
             
-        print(f"[AppBridge] Renaming '{old_path}' -> '{new_name}'")
+        old_path = result["old_path"]
+        new_path = result["new_path"]
+        new_name = result["new_name"]
         
+        # [Phase 7 Fix] The ConflictResolver still hits check_exists, 
+        # but the main heavy parsing is offloaded.
         # Creates a single-use resolver for this rename op
         resolver = ConflictResolver(self.mw)
         action, final_dest = resolver.resolve_rename(old_path, new_path)
@@ -143,7 +184,8 @@ class AppBridge(QObject):
         if action == ConflictAction.CANCEL or action == ConflictAction.SKIP:
             return
             
-        # Overwrite or Rename logic
+        # Dispatch to Background Worker to handle the actual GIO rename IO
+        from gi.repository import Gio
         final_gfile = Gio.File.parse_name(final_dest)
         final_name = final_gfile.get_basename()
         self.mw.file_ops.rename(old_path, final_name)
