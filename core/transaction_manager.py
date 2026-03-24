@@ -12,45 +12,51 @@ Responsibilities:
 """
 
 from PySide6.QtCore import QObject, Signal, Slot
-from typing import Dict, List, Optional, Callable, Tuple
+from typing import Callable
 from uuid import uuid4
 
 from core.transaction import Transaction, TransactionOperation, TransactionStatus
+from core.utils.path_ops import build_renamed_dest
+
 
 class TransactionManager(QObject):
     # Signals
     # Emitted when a batch starts/ends
-    transactionStarted = Signal(str, str)     # (tid, description)
-    transactionFinished = Signal(str, str)    # (tid, status_string)
-    
+    transactionStarted = Signal(str, str)  # (tid, description)
+    transactionFinished = Signal(str, str)  # (tid, status_string)
+
     # Emitted when progress changes (0-100)
-    transactionProgress = Signal(str, int)    # (tid, percent)
-    
+    transactionProgress = Signal(str, int)  # (tid, percent)
+
     # Emitted to update UndoManager
-    historyCommitted = Signal(object)         # (Transaction object)
-    
+    historyCommitted = Signal(object)  # (Transaction object)
+
     # Emitted when a conflict occurs, pausing the transaction
-    conflictDetected = Signal(str, object)    # (job_id, conflict_data_dict)
-    
+    conflictDetected = Signal(str, object)  # (job_id, conflict_data_dict)
+
     # Emitted when a conflict is resolved
-    conflictResolved = Signal(str, str)       # (job_id, resolution_type)
-    
+    conflictResolved = Signal(str, str)  # (job_id, resolution_type)
+
     # NEW: UI-friendly batch update (description + counts)
-    transactionUpdate = Signal(str, str, int, int)  # (tid, description, completed, total)
-    
+    transactionUpdate = Signal(
+        str, str, int, int
+    )  # (tid, description, completed, total)
+
     # Granular job completion for UI reactions (select file, enter rename mode)
     # This replaces the legacy operationCompleted signal from FileOperations
     jobCompleted = Signal(str, str, str)  # (op_type, result_path, message)
 
     # General operation failure for UI dialogs
-    operationFailed = Signal(str, str, str) # (op_type, path, message)
+    operationFailed = Signal(str, str, str)  # (op_type, path, message)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._active_transactions: Dict[str, Transaction] = {}
-        self._pending_conflicts: Dict[str, object] = {} # job_id -> conflict_data
-        self._batch_resolvers: Dict[str, Callable] = {} # tid -> conflict_resolver callback
-        
+        self._active_transactions: dict[str, Transaction] = {}
+        self._pending_conflicts: dict[str, object] = {}  # job_id -> conflict_data
+        self._batch_resolvers: dict[
+            str, Callable
+        ] = {}  # tid -> conflict_resolver callback
+
         # References to subsystems (injected)
         self._file_ops = None
         self._trash_manager = None
@@ -69,22 +75,24 @@ class TransactionManager(QObject):
         tid = str(uuid4())
         tx = Transaction(id=tid, description=description)
         tx.status = TransactionStatus.RUNNING
-        
+
         self._active_transactions[tid] = tx
-        
+
         # Notify UI a new "Job" has started
         self.transactionStarted.emit(tid, description)
         return tid
 
     @Slot(str, str, str, str, str)
-    def addOperation(self, tid: str, op_type: str, src: str, dest: str = "", job_id: str = ""):
+    def addOperation(
+        self, tid: str, op_type: str, src: str, dest: str = "", job_id: str = ""
+    ):
         """
         Register intent to perform an operation within a transaction.
         Call this BEFORE calling file_ops.
         """
         if tid not in self._active_transactions:
             return
-            
+
         tx = self._active_transactions[tid]
         op = TransactionOperation(op_type=op_type, src=src, dest=dest, job_id=job_id)
         tx.add_operation(op)
@@ -93,7 +101,7 @@ class TransactionManager(QObject):
     def resolveConflict(self, job_id: str, resolution: str, new_name: str = ""):
         """
         Resolve a pending conflict.
-        
+
         Args:
             job_id: ID of the paused job.
             resolution: "overwrite", "rename", "skip", "cancel"
@@ -106,45 +114,53 @@ class TransactionManager(QObject):
         if job_id not in self._pending_conflicts:
             print(f"[TM] Warning: No pending conflict for job {job_id}")
             return
-            
+
         conflict_data = self._pending_conflicts.pop(job_id)
         print(f"[TM] Resolving conflict {job_id} with {resolution}")
-        
+
         self.conflictResolved.emit(job_id, resolution)
-        
+
         stored_ctx = conflict_data.get("_context", {})
         op_type = stored_ctx.get("op_type")
         src = stored_ctx.get("src")
         dest = stored_ctx.get("dest")
-        
+
         if not op_type or not src:
             print(f"[TM] Error: Missing context for conflict {job_id}")
             return
 
         tid = stored_ctx.get("tid")
         if not tid:
-             print(f"[TM] Warning: No TID found in conflict context for {job_id}")
+            print(f"[TM] Warning: No TID found in conflict context for {job_id}")
 
         # Execute Resolution
-        if resolution == "overwrite":
-            if op_type == "restore":
-                self._file_ops.restore(src, transaction_id=tid, overwrite=True)
-            elif op_type == "copy":
-                print(f"[TM] Resolving COPY conflict with overwrite=True")
-                self._file_ops.copy(src, dest, transaction_id=tid, overwrite=True)
-            elif op_type == "move":
-                print(f"[TM] Resolving MOVE conflict with overwrite=True")
-                self._file_ops.move(src, dest, transaction_id=tid, overwrite=True)
-                 
-        elif resolution == "rename":
-            new_dest = self._file_ops.build_renamed_dest(dest, new_name) if dest else dest
-            
-            if op_type == "restore":
-                self._file_ops.restore(src, transaction_id=tid, rename_to=new_name)
-            elif op_type == "copy":
-                self._file_ops.copy(src, new_dest, transaction_id=tid)
-            elif op_type == "move":
-                self._file_ops.move(src, new_dest, transaction_id=tid)
+        match resolution:
+            case "overwrite":
+                match op_type:
+                    case "restore":
+                        self._file_ops.restore(src, transaction_id=tid, overwrite=True)
+                    case "copy":
+                        print(f"[TM] Resolving COPY conflict with overwrite=True")
+                        self._file_ops.copy(
+                            src, dest, transaction_id=tid, overwrite=True
+                        )
+                    case "move":
+                        print(f"[TM] Resolving MOVE conflict with overwrite=True")
+                        self._file_ops.move(
+                            src, dest, transaction_id=tid, overwrite=True
+                        )
+
+            case "rename":
+                new_dest = build_renamed_dest(dest, new_name) if dest else dest
+                match op_type:
+                    case "restore":
+                        self._file_ops.restore(
+                            src, transaction_id=tid, rename_to=new_name
+                        )
+                    case "copy":
+                        self._file_ops.copy(src, new_dest, transaction_id=tid)
+                    case "move":
+                        self._file_ops.move(src, new_dest, transaction_id=tid)
 
     # -------------------------------------------------------------------------
     # BATCH OPERATIONS (Replaces UI-Layer Loops)
@@ -152,10 +168,10 @@ class TransactionManager(QObject):
 
     def batchTransfer(
         self,
-        sources: List[str],
+        sources: list[str],
         dest_dir: str,
         mode: str = "auto",
-        conflict_resolver: Optional[Callable] = None,
+        conflict_resolver: Callable | None = None,
     ):
         """
         Execute a batch file transfer (paste or drag-drop).
@@ -180,7 +196,7 @@ class TransactionManager(QObject):
     # -------------------------------------------------------------------------
     # DEPENDENCY INJECTION
     # -------------------------------------------------------------------------
-    
+
     def setFileOperations(self, file_ops):
         self._file_ops = file_ops
         # Connect signals
@@ -190,7 +206,7 @@ class TransactionManager(QObject):
             self._file_ops.operationProgress.connect(self.onOperationProgress)
             self._file_ops.operationError.connect(self.onOperationError)
             self._file_ops.batchAssessmentReady.connect(self.onBatchAssessmentReady)
-        
+
     def setTrashManager(self, trash_manager):
         # Legacy stub: TrashManager is now merged into FileOperations
         pass
@@ -202,7 +218,7 @@ class TransactionManager(QObject):
     # -------------------------------------------------------------------------
     # SIGNAL HANDLERS
     # -------------------------------------------------------------------------
-    
+
     @Slot(str, list, list)
     def onBatchAssessmentReady(self, tid: str, valid_items: list, conflicts: list):
         if tid not in self._active_transactions:
@@ -210,14 +226,26 @@ class TransactionManager(QObject):
 
         resolver = self._batch_resolvers.pop(tid, None)
 
+        batch_items = []
+
         # 1. Dispatch valid (non-conflicting) items
         for item in valid_items:
-            self._file_ops.transfer(
-                item["src"], 
-                item["dest"], 
-                mode=item["mode"], 
-                transaction_id=tid, 
-                auto_rename=item.get("auto_rename", False)
+            job_id = str(uuid4())
+            src = item["src"]
+            dest = item["dest"]
+            mode = item["mode"]
+            op_type = mode if mode != "auto" else "move"
+
+            self.addOperation(tid, op_type, src, dest, job_id=job_id)
+            batch_items.append(
+                {
+                    "job_id": job_id,
+                    "src": src,
+                    "dest": dest,
+                    "op_type": op_type,
+                    "auto_rename": item.get("auto_rename", False),
+                    "overwrite": False,
+                }
             )
 
         # 2. Synchronously prompt for conflicts (safe since QDialog exec uses nested loop)
@@ -225,27 +253,48 @@ class TransactionManager(QObject):
             src = item["src"]
             dest = item["dest"]
             mode = item["mode"]
-            
+            op_type = mode if mode != "auto" else "move"
+
             if resolver:
                 action, final_dest = resolver(src, dest)
-                
+
                 if action == "cancel":
                     break
                 if action == "skip":
                     continue
-                    
+
                 dest = final_dest
-                self._file_ops.transfer(
-                    src, 
-                    dest, 
-                    mode=mode, 
-                    transaction_id=tid, 
-                    overwrite=(action == "overwrite"),
-                    auto_rename=(action == "rename" and not final_dest) # Fallback if rename string is empty
+                job_id = str(uuid4())
+                self.addOperation(tid, op_type, src, dest, job_id=job_id)
+                batch_items.append(
+                    {
+                        "job_id": job_id,
+                        "src": src,
+                        "dest": dest,
+                        "op_type": op_type,
+                        "overwrite": (action == "overwrite"),
+                        "auto_rename": (action == "rename" and not final_dest),
+                    }
                 )
             else:
                 # Default resolve strategy
-                self._file_ops.transfer(src, dest, mode=mode, transaction_id=tid, auto_rename=True)
+                job_id = str(uuid4())
+                self.addOperation(tid, op_type, src, dest, job_id=job_id)
+                batch_items.append(
+                    {
+                        "job_id": job_id,
+                        "src": src,
+                        "dest": dest,
+                        "op_type": op_type,
+                        "overwrite": False,
+                        "auto_rename": True,
+                    }
+                )
+
+        if batch_items:
+            self._file_ops.transfer_batch(
+                tid, batch_items, ui_refresh_rate_ms=100, halt_on_error=False
+            )
 
         self.commitTransaction(tid)
 
@@ -255,18 +304,20 @@ class TransactionManager(QObject):
         for tid, tx in self._active_transactions.items():
             # 1. Try exact match (if manually assigned)
             op = tx.find_operation(job_id)
-            
+
             # 2. If not found, look for a matching PENDING operation
             if not op:
                 for pending_op in tx.ops:
                     # Match if pending AND op_type matches AND source matches
-                    if (pending_op.status == TransactionStatus.PENDING and 
-                        pending_op.op_type == op_type and 
-                        pending_op.src == path):
+                    if (
+                        pending_op.status == TransactionStatus.PENDING
+                        and pending_op.op_type == op_type
+                        and pending_op.src == path
+                    ):
                         op = pending_op
-                        op.job_id = job_id # Link them!
+                        op.job_id = job_id  # Link them!
                         break
-            
+
             if op:
                 tx.update_status(job_id, TransactionStatus.RUNNING)
                 return
@@ -286,54 +337,64 @@ class TransactionManager(QObject):
 
     @Slot(str, str, str, str, bool, str)
     def onOperationFinished(self, tid, job_id, op_type, result_path, success, message):
+        print(f"[TM] opFinished: tid={tid[:8]}, jid={job_id[:8]}, success={success}")
         # [FIX] Always emit jobCompleted for UI, even for orphan jobs (no transaction)
         # This provides granular feedback for Smart UI behaviors (select after rename, etc.)
         if success:
             self.jobCompleted.emit(op_type, result_path, message)
-        
+
         if tid not in self._active_transactions:
             return
 
         tx = self._active_transactions[tid]
         op = tx.find_operation(job_id)
-        
+
         # [STRICT MODE] No fuzzy matching - ID must be correct
         if not op:
-            print(f"[TM] WARNING: Job {job_id} not found in transaction {tid}. Possible linkage error.")
+            print(
+                f"[TM] WARNING: Job {job_id} not found in transaction {tid}. Possible linkage error."
+            )
 
         if op:
-            status = TransactionStatus.COMPLETED if success else TransactionStatus.FAILED
+            status = (
+                TransactionStatus.COMPLETED if success else TransactionStatus.FAILED
+            )
             tx.update_status(job_id, status, error=message if not success else "")
-            
+
             if success:
                 # [CRITICAL] Data Integrity for Undo
                 # For Copy/Move/Rename: result_path is the final destination (e.g. "file (2).txt")
                 # For Trash: result_path is the source (item trashed) - handled by default logic
-                op.dest = result_path 
+                op.dest = result_path
                 op.result_path = result_path
                 print(f"[TM] ✓ {op_type.upper()}: {op.src} -> {result_path}")
-                
+
                 # [NEW] Fire async post-condition validation
                 if self._validator:
                     self._validator.validate(job_id, op_type, op.src, result_path, True)
             else:
-                 op.error = message
-                 print(f"[TM] ✗ {op_type.upper()} Failed: {op.src} (Error: {message})")
-        
+                op.error = message
+                print(f"[TM] ✗ {op_type.upper()} Failed: {op.src} (Error: {message})")
+
         # Always increment completed_ops count regardless of success
         # This prevents "hanging" transactions if one item fails
         tx.completed_ops += 1
-        
+
         # [NEW] Emit aggregated progress for UI
-        percent = int((tx.completed_ops / tx.total_ops) * 100) if tx.total_ops > 0 else 100
+        percent = (
+            int((tx.completed_ops / tx.total_ops) * 100) if tx.total_ops > 0 else 100
+        )
         self.transactionProgress.emit(tid, percent)
         self.transactionUpdate.emit(tid, tx.description, tx.completed_ops, tx.total_ops)
 
         # Check if entire batch is done AND committed
         if tx.is_committed and tx.completed_ops >= tx.total_ops:
+            print(f"[TM] Closing tid={tid[:8]} - all ops done")
             tx.status = TransactionStatus.COMPLETED
             self.transactionFinished.emit(tid, "Success")
-            print(f"[TM] Transaction Completed: {tx.description} ({tx.completed_ops} ops)")
+            print(
+                f"[TM] Transaction Completed: {tx.description} ({tx.completed_ops} ops)"
+            )
             self.historyCommitted.emit(tx)
             del self._active_transactions[tid]
 
@@ -343,54 +404,74 @@ class TransactionManager(QObject):
         Marks a transaction as fully populated.
         If all ops are already finished (or 0 ops were added), it closes the transaction.
         """
+        print(f"[TM] Commit: tid={tid[:8]}")
         if tid not in self._active_transactions:
+            print(
+                f"[TM] Error: tid={tid[:8]} not in active transactions: {list(self._active_transactions.keys())}"
+            )
             return
-            
+
         tx = self._active_transactions[tid]
         tx.is_committed = True
-        
+
         # Immediate close if empty or already finished
         if tx.completed_ops >= tx.total_ops:
             tx.status = TransactionStatus.COMPLETED
-            self.transactionFinished.emit(tid, "Success" if tx.total_ops > 0 else "Skipped")
-            print(f"[TM] Transaction Committed & Completed: {tx.description} ({tx.completed_ops} ops)")
+            self.transactionFinished.emit(
+                tid, "Success" if tx.total_ops > 0 else "Skipped"
+            )
+            print(
+                f"[TM] Transaction Committed & Completed: {tx.description} ({tx.completed_ops} ops)"
+            )
             if tx.total_ops > 0:
                 self.historyCommitted.emit(tx)
             del self._active_transactions[tid]
 
     @Slot(str, str, str, str, str, object)
-    def onOperationError(self, tid: str, job_id: str, op_type: str, path: str, message: str, conflict_data: object):
+    def onOperationError(
+        self,
+        tid: str,
+        job_id: str,
+        op_type: str,
+        path: str,
+        message: str,
+        conflict_data: object,
+    ):
         """
         Handle errors and conflicts.
         """
         print(f"[TM] Error/Conflict op={op_type} path={path}: {message}")
-        
+
         # Check if it is a conflict
-        if conflict_data and isinstance(conflict_data, dict) and conflict_data.get("error") == "exists":
+        if (
+            conflict_data
+            and isinstance(conflict_data, dict)
+            and conflict_data.get("error") == "exists"
+        ):
             # It is a conflict!
             # Store context so we know how to retry
             conflict_data["_context"] = {
                 "op_type": op_type,
-                "src": path, 
-                "dest": message, # Fallback, likely unused if conflict_data has paths
-                "tid": tid
+                "src": path,
+                "dest": message,  # Fallback, likely unused if conflict_data has paths
+                "tid": tid,
             }
-            
+
             # Try to get paths from conflict_data directly (preferred)
             src = conflict_data.get("src_path")
             dest = conflict_data.get("dest_path")
-            
+
             # Use 'path' (from signal) as source fallback if not provided in data
             if not src:
                 src = path
-            
+
             # [CRITICAL] Do NOT assume 'dest' = 'path' for Copy/Move operations
             # If dest is missing, we must rely on what we have or fail gracefully.
             # Restore is special: source is treated as the item to restore.
-            
+
             conflict_data["_context"]["src"] = src
             conflict_data["_context"]["dest"] = dest
-            
+
             self._pending_conflicts[job_id] = conflict_data
             self.conflictDetected.emit(job_id, conflict_data)
         else:
