@@ -13,50 +13,55 @@ Algorithm:
 """
 
 from PySide6.QtCore import QObject, Slot, Signal, Property, QTimer
-from core.sorter import Sorter
+from core.services.sorter import Sorter
 import hashlib
 import urllib.parse
 from pathlib import Path
+
 
 class RowBuilder(QObject):
     rowsChanged = Signal()
     sortChanged = Signal()
     rowHeightChanged = Signal(int)
     selectAllRequested = Signal()
-    
+
     # Constants for Phase 1
     FOOTER_HEIGHT = 36
     SPACING = 10
-    
+
     # Layout Constants
     DEFAULT_ROW_HEIGHT = 100
     MIN_ROW_HEIGHT = 60
     MAX_ROW_HEIGHT = 400
     ZOOM_STEP = 20
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._image_height = self.DEFAULT_ROW_HEIGHT # Default
-        self._items = []        # All items (raw)
-        self._sorted_items = [] # All items (sorted)
-        self._rows = []         # List of rows (list of list of dicts)
-        self._available_width = 1000 # Default fallback
-        print(f"[DEBUG-LAYOUT] RowBuilder initialized with height: {self._image_height}")
-        
+        self._image_height = self.DEFAULT_ROW_HEIGHT  # Default
+        self._items = []  # All items (raw)
+        self._sorted_items = []  # All items (sorted)
+        self._rows = []  # List of rows (list of list of dicts)
+        self._available_width = 1000  # Default fallback
+        print(
+            f"[DEBUG-LAYOUT] RowBuilder initialized with height: {self._image_height}"
+        )
+
         # [FIX] Streaming mode flag
         self._is_loading = False
-        
+
         # [FIX] Pending dimensions cache (race condition fix)
         # Dimensions may arrive before filesFound due to debouncing
-        self._pending_dimensions: dict[str, tuple[int, int]] = {}  # path -> (width, height)
-        
+        self._pending_dimensions: dict[
+            str, tuple[int, int]
+        ] = {}  # path -> (width, height)
+
         self._sorter = Sorter(self)
         self._sorter.sortChanged.connect(self._on_sort_changed)
-        
+
         # [FIX] Layout Debouncer
         self._layout_timer = QTimer(self)
         self._layout_timer.setSingleShot(True)
-        self._layout_timer.setInterval(50) # 50ms debounce
+        self._layout_timer.setInterval(50)  # 50ms debounce
         self._layout_timer.timeout.connect(self._perform_layout_update)
 
     def _trigger_layout_update(self):
@@ -77,7 +82,7 @@ class RowBuilder(QObject):
         """Set the target image height for rows."""
         # Clamp to reasonable values
         height = max(self.MIN_ROW_HEIGHT, min(self.MAX_ROW_HEIGHT, height))
-        
+
         if height != self._image_height:
             print(f"[DEBUG-LAYOUT] setRowHeight({height}) from {self._image_height}")
             self._image_height = height
@@ -94,7 +99,7 @@ class RowBuilder(QObject):
     def rowHeight(self) -> int:
         """Native QML property for declarative two-way bindings."""
         return self._image_height
-        
+
     @rowHeight.setter
     def rowHeight(self, val: int) -> None:
         self.setRowHeight(val)
@@ -116,47 +121,49 @@ class RowBuilder(QObject):
         """
         if self._available_width <= 0:
             return self._image_height + (direction * self.ZOOM_STEP)
-            
+
         width = self._available_width
         spacing = self.SPACING
         h = self._image_height
-        
+
         # Current capacity (N items of size h)
         # W = N*H + (N-1)*S  =>  N = (W + S) / (H + S)
         current_cols = int((width + spacing) / (h + spacing))
-        if current_cols < 1: current_cols = 1
-        
+        if current_cols < 1:
+            current_cols = 1
+
         target_cols = current_cols
         new_h = h
-        
+
         # Loop until we find a height change >= 15px (or hit limits)
         while True:
-            target_cols = target_cols - direction # In (+1) -> Fewer Cols, Out (-1) -> More Cols
-            
-            if target_cols < 1: 
+            target_cols = (
+                target_cols - direction
+            )  # In (+1) -> Fewer Cols, Out (-1) -> More Cols
+
+            if target_cols < 1:
                 # Can't have 0 cols, cap at Max Height
                 return self.MAX_ROW_HEIGHT
-            
+
             # Calc Height for this count: H = (W - (N-1)*S) / N
             calculated_h = (width - (target_cols - 1) * spacing) / target_cols
-            
+
             # Check difference
             if abs(calculated_h - h) >= 15:
                 # Found a good step
                 new_h = int(calculated_h)
                 break
-                
+
             # Safety break to prevent infinite loops at extremes
-            if calculated_h < self.MIN_ROW_HEIGHT and direction == -1: 
+            if calculated_h < self.MIN_ROW_HEIGHT and direction == -1:
                 new_h = self.MIN_ROW_HEIGHT
                 break
             if calculated_h > self.MAX_ROW_HEIGHT and direction == 1:
                 new_h = self.MAX_ROW_HEIGHT
                 break
-                
+
         # Final Clamp
         return max(self.MIN_ROW_HEIGHT, min(self.MAX_ROW_HEIGHT, new_h))
-
 
     @Slot(int)
     def setAvailableWidth(self, width: int) -> None:
@@ -175,19 +182,20 @@ class RowBuilder(QObject):
         self._is_loading = True
         self._pending_dimensions.clear()  # [FIX] Clear stale dimensions from previous folder
         # Don't emit yet, waiting for finishLoading
-        
+
     # GNOME Thumbnail Cache Size (LARGE = 256px longest edge)
     THUMBNAIL_CACHE_SIZE = 256
-    
+
     # GNOME/XDG thumbnail cache directory (resolved dynamically for correct XDG paths)
     from gi.repository import GLib
+
     _THUMB_CACHE_DIR = Path(GLib.get_user_cache_dir()) / "thumbnails/large"
 
     @staticmethod
     def _resolve_thumbnail_url(item: dict) -> str:
         """
         Pre-compute the thumbnail URL for a visual item.
-        
+
         Checks the GNOME thumbnail cache (MD5 of URI -> ~/.cache/thumbnails/large/).
         Returns a direct file:// URL if cached, else falls back to the async
         image://thumbnail/ provider.
@@ -195,17 +203,17 @@ class RowBuilder(QObject):
         uri = item.get("uri")
         path = item.get("path")
         target_uri = item.get("targetUri")
-        
+
         if not uri or not path:
             return ""
 
         try:
             # Use the physical URI for hashing if available (critical for Recent/Trash)
             resolved_uri = target_uri if target_uri else uri
-            
-            md5_hash = hashlib.md5(resolved_uri.encode('utf-8')).hexdigest()
+
+            md5_hash = hashlib.md5(resolved_uri.encode("utf-8")).hexdigest()
             thumb_path = RowBuilder._THUMB_CACHE_DIR / f"{md5_hash}.png"
-            
+
             if thumb_path.exists():
                 return f"file://{thumb_path}"
         except Exception:
@@ -217,7 +225,7 @@ class RowBuilder(QObject):
         """Append files (streaming mode)."""
         if not new_files:
             return
-        
+
         # [FIX] Apply any pending dimensions that arrived before this batch
         dimensions_applied = False
         for item in new_files:
@@ -227,25 +235,25 @@ class RowBuilder(QObject):
                 item["width"] = w
                 item["height"] = h
                 dimensions_applied = True
-            
+
             # Calculate thumbnail cap dimensions
             self._calculate_thumbnail_cap(item)
-            
+
             # [PERF] Pre-compute thumbnail URL
             if item.get("isVisual"):
                 item["thumbnailUrl"] = self._resolve_thumbnail_url(item)
             else:
                 item["thumbnailUrl"] = ""
-        
+
         self._items.extend(new_files)
         self._sorted_items.extend(new_files)
         self._build_rows()
         self.rowsChanged.emit()
-    
+
     def _calculate_thumbnail_cap(self, item: dict) -> None:
         """
         Calculate the maximum display size for a thumbnail.
-        
+
         For visuals (photos), this is the GNOME LARGE cache size (256px longest edge).
         For non-visuals (icons/vectors), this is 0 (no cap - can scale infinitely).
         """
@@ -254,11 +262,11 @@ class RowBuilder(QObject):
             item["thumbnailWidth"] = 0
             item["thumbnailHeight"] = 0
             return
-        
+
         # Visuals: cap at cache size, preserving aspect ratio
         w = item.get("width", 0)
         h = item.get("height", 0)
-        
+
         if w > 0 and h > 0:
             # Scale to fit within cache size, longest edge = THUMBNAIL_CACHE_SIZE
             if w >= h:
@@ -291,47 +299,55 @@ class RowBuilder(QObject):
         """Surgically insert a single file without forcing a full scan reload."""
         path = item.get("path")
         print(f"[DEBUG-SURGICAL] RowBuilder: addSingleItem called for {path}")
-        if not path: return
-        
+        if not path:
+            return
+
         # Check if already exists (debounce protection)
         for existing in self._items:
             if existing.get("path") == path:
-                print(f"[DEBUG-SURGICAL] RowBuilder: Item already exists, ignoring {path}")
+                print(
+                    f"[DEBUG-SURGICAL] RowBuilder: Item already exists, ignoring {path}"
+                )
                 return
-                
+
         # Apply pending dimensions
         if path in self._pending_dimensions:
             w, h = self._pending_dimensions.pop(path)
             item["width"] = w
             item["height"] = h
-            
+
         self._calculate_thumbnail_cap(item)
         if item.get("isVisual"):
             item["thumbnailUrl"] = self._resolve_thumbnail_url(item)
         else:
             item["thumbnailUrl"] = ""
-            
+
         self._items.append(item)
         self._reapply_sort_and_layout()
-        print(f"[DEBUG-SURGICAL] RowBuilder: Item added. Total items: {len(self._items)}")
-        
+        print(
+            f"[DEBUG-SURGICAL] RowBuilder: Item added. Total items: {len(self._items)}"
+        )
+
     @Slot(str)
     def removeSingleItem(self, path: str) -> None:
         """Surgically remove a single file."""
         print(f"[DEBUG-SURGICAL] RowBuilder: removeSingleItem called for {path}")
-        if not path: return
+        if not path:
+            return
         for i, item in enumerate(self._items):
             if item.get("path") == path:
                 self._items.pop(i)
                 self._reapply_sort_and_layout()
-                print(f"[DEBUG-SURGICAL] RowBuilder: Item {path} removed. Total items: {len(self._items)}")
+                print(
+                    f"[DEBUG-SURGICAL] RowBuilder: Item {path} removed. Total items: {len(self._items)}"
+                )
                 break
 
-    @Slot(result="QVariant") # type: ignore # Returns list of lists
+    @Slot(result="QVariant")  # type: ignore # Returns list of lists
     def getRows(self):
         return self._rows
-        
-    @Slot(result="QObject*") # type: ignore
+
+    @Slot(result="QObject*")  # type: ignore
     def getSorter(self) -> Sorter:
         return self._sorter
 
@@ -356,29 +372,31 @@ class RowBuilder(QObject):
         rows = []
         current_row = []
         current_width = 0
-        
+
         # Max width for content (subtract padding if needed)
         max_width = self._available_width
-        
+
         for item in self._sorted_items:
             # Calculate width when scaled to target height
-            w = item.get('width', 0)
-            h = item.get('height', 0)
-            
+            w = item.get("width", 0)
+            h = item.get("height", 0)
+
             # Default aspect ratio 1.0 if missing dimensions
             if w > 0 and h > 0:
                 aspect = w / h
             else:
                 aspect = 1.0
-                
+
             item_width = aspect * self._image_height
-            
+
             # [FIX] Cap item_width at thumbnail's capability for row packing
             # This ensures more items fit per row at high zoom levels
-            thumb_cap = max(item.get('thumbnailWidth', 0), item.get('thumbnailHeight', 0))
+            thumb_cap = max(
+                item.get("thumbnailWidth", 0), item.get("thumbnailHeight", 0)
+            )
             if thumb_cap > 0:
                 item_width = min(item_width, thumb_cap)
-            
+
             # Does it fit?
             # If current_row is empty, we must add it (even if it's wider than screen)
             if current_width + item_width > max_width and current_row:
@@ -386,14 +404,14 @@ class RowBuilder(QObject):
                 rows.append(current_row)
                 current_row = []
                 current_width = 0
-            
+
             current_row.append(item)
             current_width += item_width + self.SPACING
-        
+
         # Don't forget the last row
         if current_row:
             rows.append(current_row)
-            
+
         self._rows = rows
 
     # --- Selection Logic ---
@@ -405,35 +423,39 @@ class RowBuilder(QObject):
         Used by RubberBand selection.
         """
         selected_paths = []
-        
+
         if not self._rows:
             return []
 
         # Clamp indices
-        if start_row_idx < 0: start_row_idx = 0
-        if end_row_idx >= len(self._rows): end_row_idx = len(self._rows) - 1
-        
+        if start_row_idx < 0:
+            start_row_idx = 0
+        if end_row_idx >= len(self._rows):
+            end_row_idx = len(self._rows) - 1
+
         if start_row_idx > end_row_idx:
             return []
-            
+
         for i in range(start_row_idx, end_row_idx + 1):
             row = self._rows[i]
             for item in row:
-                selected_paths.append(item.get('path'))
-                
+                selected_paths.append(item.get("path"))
+
         return selected_paths
 
     @Slot(int, int, int, int, result=list)
-    def getItemsInRect(self, rect_x: int, rect_y: int, rect_w: int, rect_h: int) -> list:
+    def getItemsInRect(
+        self, rect_x: int, rect_y: int, rect_w: int, rect_h: int
+    ) -> list:
         """
         Returns a list of item PATHS that intersect with the given rectangle.
-        
+
         Coordinate System:
         - rect_x, rect_y: Content Coordinates (Already mapped from QML Viewport)
         - Helper: Checks if item box (x, y, w, h) overlaps rect (x, y, w, h)
         """
         selected_paths = []
-        
+
         if not self._rows:
             return []
 
@@ -442,66 +464,70 @@ class RowBuilder(QObject):
         # Height of one row block = image_height + footer + spacing (approx/exact?)
         # Justified Layout is constant height per row? Yes: _image_height.
         # But wait, RowDelegate has height = imageHeight + footerHeight.
-        # Let's verify constant. 
+        # Let's verify constant.
         # RowDelegate.qml: height: imageHeight + footerHeight
         # AND spacing: 10 (in ListView)
-        
+
         # NOTE: ListView spacing is handled by the ListView, not the RowBuilder's data structure.
         # But logically, the Y position of row N is:
         # Y = N * (ROW_HEIGHT + FOOTER_HEIGHT + LISTVIEW_SPACING)
-        
+
         row_content_height = self._image_height + self.FOOTER_HEIGHT
         row_stride = row_content_height + self.SPACING
-        
+
         # Calculate row index range
         start_row_idx = max(0, int(rect_y // row_stride))
-        end_row_idx =  int((rect_y + rect_h) // row_stride)
-        
+        end_row_idx = int((rect_y + rect_h) // row_stride)
+
         # Clamp
         end_row_idx = min(len(self._rows) - 1, end_row_idx)
-        
+
         if start_row_idx > end_row_idx:
             return []
-            
+
         # Iterate relevant rows
         for i in range(start_row_idx, end_row_idx + 1):
             row = self._rows[i]
-            
+
             # Row Y start
             row_y = i * row_stride
-            
+
             # Horizontal Scan
             current_x = 0
             for item in row:
                 # Calculate Item Width (Visual)
-                w = item.get('width', 0)
-                h = item.get('height', 0)
-                
+                w = item.get("width", 0)
+                h = item.get("height", 0)
+
                 # Aspect
                 aspect = (w / h) if (w > 0 and h > 0) else 1.0
                 item_width = aspect * self._image_height
 
                 # Thumbnail Cap check
-                thumb_cap = max(item.get('thumbnailWidth', 0), item.get('thumbnailHeight', 0))
+                thumb_cap = max(
+                    item.get("thumbnailWidth", 0), item.get("thumbnailHeight", 0)
+                )
                 if thumb_cap > 0:
                     item_width = min(item_width, thumb_cap)
-                    
+
                 # Calculate Item Height (Visual Image Only, excluding footer)
                 # If we want to strictly select only when touching the image:
                 item_height = self._image_height
-                
+
                 # FULL BOX INTERSECTION CHECK
                 # Item Box: [current_x, row_y, item_width, item_height]
-                
+
                 # X Overlap: (ItemLeft < RectRight) AND (ItemRight > RectLeft)
-                x_overlap = (current_x < rect_x + rect_w) and (current_x + item_width > rect_x)
-                
+                x_overlap = (current_x < rect_x + rect_w) and (
+                    current_x + item_width > rect_x
+                )
+
                 # Y Overlap: (ItemTop < RectBottom) AND (ItemBottom > RectTop)
                 y_overlap = (row_y < rect_y + rect_h) and (row_y + item_height > rect_y)
-                
+
                 if x_overlap and y_overlap:
-                    selected_paths.append(item.get('path'))
-                
+                    selected_paths.append(item.get("path"))
+
                 # Advance X
                 current_x += item_width + self.SPACING
 
@@ -510,16 +536,16 @@ class RowBuilder(QObject):
     @Slot(result=list)
     def getAllItems(self) -> list:
         return self._sorted_items
-        
+
     @Slot(str, str, object)
     def updateItem(self, path: str, attr: str, value) -> None:
         """Update a single item's attribute (e.g. childCount, width, height, dimensions)."""
-        
+
         # [FIX] Consolidated dimensions update
         if attr == "dimensions":
             w = value.get("width", 0)
             h = value.get("height", 0)
-            
+
             # 1. Update active item
             found = False
             for item in self._items:
@@ -531,7 +557,7 @@ class RowBuilder(QObject):
                     found = True
                     self._trigger_layout_update()
                     break
-            
+
             # 2. Cache pending (if item hasn't arrived from scanner yet)
             if not found:
                 self._pending_dimensions[path] = (w, h)
@@ -542,4 +568,3 @@ class RowBuilder(QObject):
             if item.get("path") == path:
                 item[attr] = value
                 break
-

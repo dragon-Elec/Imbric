@@ -11,15 +11,17 @@ from PySide6.QtCore import QObject, Signal, Slot, QMimeData, QUrl
 from PySide6.QtGui import QClipboard, QGuiApplication
 from ui.services.conflict_resolver import ConflictResolver
 from ui.dialogs.conflicts import ConflictAction
-from core.metadata_utils import ensure_uri
-from core.gio_bridge.desktop import create_desktop_mime_data
+from core.backends.gio.helpers import ensure_uri
+from core.backends.gio.desktop import create_desktop_mime_data
+from core.utils.path_ops import build_dest_path
 
 from typing import List, Optional
+
 
 class FileManager(QObject):
     clipboardChanged = Signal()
     cutPathsChanged = Signal()
-    
+
     # MIME types
     GNOME_COPIED_FILES = "x-special/gnome-copied-files"
     URI_LIST = "text/uri-list"
@@ -29,15 +31,15 @@ class FileManager(QObject):
         self.mw = main_window
         self._clipboard = QGuiApplication.clipboard()
         self._clipboard.dataChanged.connect(self._on_clipboard_and_emit)
-        
+
         # State
         self._is_cut = False
 
     # --- Context Helper ---
-    
+
     def _current_tab(self):
         return self.mw.shell_manager.current_pane
-        
+
     def _get_selection(self) -> List[str]:
         if tab := self._current_tab():
             return tab.selection
@@ -61,30 +63,32 @@ class FileManager(QObject):
     def paste_to_current(self):
         """Pastes clipboard contents to current tab's folder."""
         tab = self._current_tab()
-        if not tab: return
-        
+        if not tab:
+            return
+
         target_dir = tab.current_path
         self._execute_paste(target_dir)
 
     @Slot()
     def trash_selection(self):
         paths = self._get_selection()
-        if not paths: return
-        
+        if not paths:
+            return
+
         tid = self.mw.transaction_manager.startTransaction(f"Trash {len(paths)} items")
         for p in paths:
             self.mw.file_ops.trash(p, transaction_id=tid)
-            
+
         self.mw.transaction_manager.commitTransaction(tid)
 
     @Slot()
     def rename_selection(self):
-        # Rename is typically single-item. 
+        # Rename is typically single-item.
         # If Action is single-item specific, we check selection len
         paths = self._get_selection()
         if len(paths) == 1:
             # Tell the Tab/Bridge to enter rename mode?
-            # Or emit a signal? 
+            # Or emit a signal?
             # AppBridge currently has 'renameRequested' signal which QML listens to.
             # We can route this via AppBridge for now.
             if tab := self._current_tab():
@@ -100,20 +104,25 @@ class FileManager(QObject):
     @Slot()
     def duplicate_selection(self):
         paths = self._get_selection()
-        if not paths: return
-        
+        if not paths:
+            return
+
         tab = self._current_tab()
-        if not tab: return
-        
-        tid = self.mw.transaction_manager.startTransaction(f"Duplicate {len(paths)} items")
-        
+        if not tab:
+            return
+
+        tid = self.mw.transaction_manager.startTransaction(
+            f"Duplicate {len(paths)} items"
+        )
+
         for p in paths:
-            if not self.mw.file_ops.check_exists(p): continue
-            
+            if not self.mw.file_ops.check_exists(p):
+                continue
+
             # Target is same folder, so we just use the original path as dest key
             # and let auto_rename handle the (Copy) suffix generation
             self.mw.file_ops.copy(p, p, transaction_id=tid, auto_rename=True)
-            
+
         self.mw.transaction_manager.commitTransaction(tid)
 
     # --- Clipboard Logic (Ex-ClipboardManager) ---
@@ -130,17 +139,19 @@ class FileManager(QObject):
 
     def get_clipboard_files(self) -> List[str]:
         mime = self._clipboard.mimeData()
-        if not mime or not mime.hasUrls(): return []
+        if not mime or not mime.hasUrls():
+            return []
         return [u.toLocalFile() for u in mime.urls() if u.isLocalFile()]
 
     def is_cut_mode(self) -> bool:
         mime = self._clipboard.mimeData()
-        if not mime: return False
+        if not mime:
+            return False
         if mime.hasFormat(self.GNOME_COPIED_FILES):
-            data = bytes(mime.data(self.GNOME_COPIED_FILES)).decode('utf-8')
+            data = bytes(mime.data(self.GNOME_COPIED_FILES)).decode("utf-8")
             return data.startswith("cut")
         return False
-        
+
     def get_cut_paths(self) -> List[str]:
         if self.is_cut_mode():
             return self.get_clipboard_files()
@@ -150,11 +161,12 @@ class FileManager(QObject):
 
     def _execute_paste(self, target_dir: str):
         files = self.get_clipboard_files()
-        if not files: return
-        
+        if not files:
+            return
+
         is_cut = self.is_cut_mode()
         self._run_transfer(files, target_dir, is_move=is_cut)
-        
+
         if is_cut:
             self._clipboard.clear()
 
@@ -162,7 +174,7 @@ class FileManager(QObject):
         # Atomic creation via Core.
         # UI only guesses a name for better UX, but Core ensures uniqueness.
         base_name = "Untitled Folder"
-        folder_path = self.mw.file_ops.build_dest_path(base_name, current_path)
+        folder_path = build_dest_path(base_name, current_path)
         self.mw.file_ops.createFolder(folder_path, auto_rename=True)
 
     def _run_transfer(self, sources: List[str], dest_dir: str, is_move: bool):
@@ -187,8 +199,10 @@ class FileManager(QObject):
         )
 
     # --- Drag & Drop ---
-    
-    def handle_drop(self, urls: List[str], dest_dir: Optional[str] = None, mode: str = "auto"):
+
+    def handle_drop(
+        self, urls: List[str], dest_dir: Optional[str] = None, mode: str = "auto"
+    ):
         """Called by AppBridge when QML drops files."""
         if not dest_dir:
             if tab := self._current_tab():
@@ -207,6 +221,4 @@ class FileManager(QObject):
 
         if real_paths:
             # Delegate to Core — mode specifies if it's explicitly a copy/move or left up to Core ("auto")
-            self.mw.transaction_manager.batchTransfer(
-                real_paths, dest_dir, mode=mode
-            )
+            self.mw.transaction_manager.batchTransfer(real_paths, dest_dir, mode=mode)

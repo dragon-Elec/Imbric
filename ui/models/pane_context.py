@@ -3,34 +3,45 @@ from pathlib import Path
 from gi.repository import Gio, GLib
 
 # Import core components
-from core.utils.gio_qtoast import GioWorkerPool
-from core.gio_bridge.desktop import resolve_identity, enrich_breadcrumbs, get_breadcrumb_segments
-from core.gio_bridge.scanner import FileScanner
+from core.threading.worker_pool import GioWorkerPool
+from core.backends.gio.desktop import (
+    resolve_identity,
+    enrich_breadcrumbs,
+    get_breadcrumb_segments,
+)
+from core.backends.gio.scanner import FileScanner
+from core.backends.gio.metadata_workers import ItemCountWorker, DimensionWorker
 from ui.services.row_builder import RowBuilder
 from ui.bridges.app_bridge import AppBridge
+
 
 class PaneContext(QObject):
     """
     Represents the full logic and state of a single view context.
     Formerly known as TabController. This drives the Scanner, Builder, and Breadcrumbs.
     """
+
     pathChanged = Signal(str)
-    pathRejected = Signal() # Triggers address bar shake animation
+    pathRejected = Signal()  # Triggers address bar shake animation
     selectPathsRequested = Signal(list)
     selectAllRequested = Signal()
-    pathSegmentsChanged = Signal() # [NEW] Emitted when async workers yield breadcrumbs
+    pathSegmentsChanged = Signal()  # [NEW] Emitted when async workers yield breadcrumbs
 
-    
     def __init__(self, main_window, initial_path: str | None = None):
         super().__init__()
         self.mw = main_window
         self._current_path = initial_path or str(Path.home())
-        
+
         # Core Components (Per-Tab)
         self.scanner = FileScanner()
         self.row_builder = RowBuilder()
         self.bridge = AppBridge(main_window)
-        
+
+        # Background workers for scanner
+        self._count_worker = ItemCountWorker()
+        self._dimension_worker = DimensionWorker()
+        self.scanner.set_workers(self._count_worker, self._dimension_worker)
+
         # Wire up components
         # 1. Scanner -> RowBuilder
         self.scanner.filesFound.connect(self._on_files_found)
@@ -38,27 +49,31 @@ class PaneContext(QObject):
         self.scanner.fileAttributeUpdated.connect(self.row_builder.updateItem)
         self.scanner.singleFileScanned.connect(self._on_single_file_scanned)
         self.selectAllRequested.connect(self.row_builder.selectAllRequested)
-        
+
         # 1.5. FileMonitor -> Surgical Updates
         self.mw.file_monitor.fileCreated.connect(self._on_file_created)
         self.mw.file_monitor.fileDeleted.connect(self._on_file_deleted)
         self.mw.file_monitor.fileRenamed.connect(self._on_file_renamed)
-        
+
         # 2. Bridge reference
         # Duck-type the bridge's tab reference
-        self.bridge._tab = self 
-        
+        self.bridge._tab = self
+
         # Navigation History & Virtual Retention
         self.history_stack = []
         self.future_stack = []
-        self._virtual_path = self._current_path # Nemo-style future path retention
+        self._virtual_path = self._current_path  # Nemo-style future path retention
         self._is_history_nav = False
         self._current_session_id = ""
         self._selection = []
-        
+
         # [NEW] Pre-parsed GFile for surgical updates. Zero-IO constructor.
-        self._current_gfile = Gio.File.new_for_commandline_arg(self._current_path) if self._current_path else None
-        
+        self._current_gfile = (
+            Gio.File.new_for_commandline_arg(self._current_path)
+            if self._current_path
+            else None
+        )
+
         # Background worker pool for resolving mounts/links without freezing UI
         self._nav_pool = GioWorkerPool(max_concurrent=2, parent=self)
         self._nav_pool.resultReady.connect(self._on_nav_worker_result)
@@ -73,11 +88,15 @@ class PaneContext(QObject):
                 self.pathSegmentsChanged.emit()
         elif task_id.startswith("ident_"):
             # Update silently if Identity Worker found canonical resolution
-            if result and task_id == f"ident_{self._current_path}" and result != self._current_path:
-                 self.current_path = result
-                 self._virtual_path = result
-                 self._cached_segments = []
-                 self.pathChanged.emit(self._current_path)
+            if (
+                result
+                and task_id == f"ident_{self._current_path}"
+                and result != self._current_path
+            ):
+                self.current_path = result
+                self._virtual_path = result
+                self._cached_segments = []
+                self.pathChanged.emit(self._current_path)
 
     @property
     def selection(self):
@@ -88,7 +107,6 @@ class PaneContext(QObject):
     def updateSelection(self, paths):
         """Receive selection updates from QML."""
         self._selection = paths
-
 
     @Property(str, notify=pathChanged)
     def currentPath(self):
@@ -118,15 +136,15 @@ class PaneContext(QObject):
             self._current_gfile = Gio.File.new_for_commandline_arg(val) if val else None
             self.pathChanged.emit(val)
 
-    @Property('QVariantList', notify=pathSegmentsChanged)
+    @Property("QVariantList", notify=pathSegmentsChanged)
     def pathSegments(self):
         """Generates dynamic breadcrumb models using a two-phase Async Pattern."""
         if not self._virtual_path:
             return []
-            
+
         if not self._cached_segments:
             self._build_fast_segments()
-            
+
         return self._cached_segments
 
     def _build_fast_segments(self):
@@ -138,19 +156,22 @@ class PaneContext(QObject):
 
         # Use unified logic from desktop.py (Fast Mode)
         self._cached_segments = get_breadcrumb_segments(
-            path, 
-            self._current_path, 
-            fast_mode=True
+            path, self._current_path, fast_mode=True
         )
-        
+
         crumbs_str = " / ".join([s.get("name", "") for s in self._cached_segments])
         print(f"[DEBUG-BREADCRUMB] Fast Mode: {crumbs_str}")
         self.pathSegmentsChanged.emit()
-        
+
         # Phase B: Fire Enrichment Worker for Full GIO mounts & icons
         # The worker correctly evaluates the identical desktop.py logic safely
-        self._nav_pool.clear() # cancel pending enrichments
-        self._nav_pool.enqueue(f"enrich_{path}", enrich_breadcrumbs, virtual_path=path, active_path=self._current_path)
+        self._nav_pool.clear()  # cancel pending enrichments
+        self._nav_pool.enqueue(
+            f"enrich_{path}",
+            enrich_breadcrumbs,
+            virtual_path=path,
+            active_path=self._current_path,
+        )
 
     @Property(bool, notify=pathChanged)
     def canGoBack(self):
@@ -171,17 +192,21 @@ class PaneContext(QObject):
         path = path.lstrip()
         if not path:
             return
-            
+
         # Strip trailing slashes (but not for root "/")
         if path != "/" and path.endswith("/"):
             path = path.rstrip("/")
 
         # Assume raw path/string is accurate to update UI instantly without synchronous GIO Calls
         canonical_path = path
-        
+
         # Nemo-style virtual path retention (keeps 'future' breadcrumbs active when digging back down)
-        if self._virtual_path.startswith(canonical_path) and (len(canonical_path) == 1 or len(self._virtual_path) == len(canonical_path) or self._virtual_path[len(canonical_path)] == '/'):
-            pass # Keep virtual path as-is
+        if self._virtual_path.startswith(canonical_path) and (
+            len(canonical_path) == 1
+            or len(self._virtual_path) == len(canonical_path)
+            or self._virtual_path[len(canonical_path)] == "/"
+        ):
+            pass  # Keep virtual path as-is
         else:
             self._virtual_path = canonical_path
 
@@ -189,12 +214,12 @@ class PaneContext(QObject):
             if self._current_path:
                 self.history_stack.append(self._current_path)
             self.future_stack.clear()
-        
+
         # Always update and emit even if same path (to ensure UI snaps shut)
         self.current_path = canonical_path
         self._cached_segments = []
-        self._build_fast_segments() # Pre-build segments and emit
-        
+        self._build_fast_segments()  # Pre-build segments and emit
+
         self.scan_current()
         self._is_history_nav = False
 
@@ -206,16 +231,21 @@ class PaneContext(QObject):
         # Async-safe string manipulation fallback for speedy UI, exact Identity Worker runs on navigation implicitly
         path = self._current_path
         if "://" in path:
-            gfile = Gio.File.new_for_uri(path) if "://" in path else Gio.File.new_for_path(path)
+            gfile = (
+                Gio.File.new_for_uri(path)
+                if "://" in path
+                else Gio.File.new_for_path(path)
+            )
             parent = gfile.get_parent()
             if parent:
-                 self.navigate_to(parent.get_uri())
+                self.navigate_to(parent.get_uri())
         else:
             # Use PurePosixPath string approach for instant up level (fixes laggy Up Button)
             from pathlib import PurePosixPath
+
             parent_path = str(PurePosixPath(path).parent)
             if parent_path:
-                 self.navigate_to(parent_path)
+                self.navigate_to(parent_path)
 
     def scan_current(self):
         """Re-scans the current directory."""
@@ -228,13 +258,17 @@ class PaneContext(QObject):
         if self.history_stack:
             prev = self.history_stack.pop()
             self.future_stack.append(self._current_path)
-            
+
             # Virtual logic: going back retains the deeper virtual path so breadcrumbs stick around
-            if self._virtual_path.startswith(prev) and (len(prev) == 1 or len(self._virtual_path) == len(prev) or self._virtual_path[len(prev)] == '/'):
+            if self._virtual_path.startswith(prev) and (
+                len(prev) == 1
+                or len(self._virtual_path) == len(prev)
+                or self._virtual_path[len(prev)] == "/"
+            ):
                 pass
             else:
                 self._virtual_path = prev
-                
+
             self._is_history_nav = True
             self.navigate_to(prev)
 
@@ -242,15 +276,19 @@ class PaneContext(QObject):
         if self.future_stack:
             next_path = self.future_stack.pop()
             self.history_stack.append(self._current_path)
-            
-            if self._virtual_path.startswith(next_path) and (len(next_path) == 1 or len(self._virtual_path) == len(next_path) or self._virtual_path[len(next_path)] == '/'):
+
+            if self._virtual_path.startswith(next_path) and (
+                len(next_path) == 1
+                or len(self._virtual_path) == len(next_path)
+                or self._virtual_path[len(next_path)] == "/"
+            ):
                 pass
             else:
                 self._virtual_path = next_path
-                
+
             self._is_history_nav = True
             self.navigate_to(next_path)
-    
+
     def go_home(self):
         self.navigate_to(str(Path.home()))
 
@@ -258,26 +296,34 @@ class PaneContext(QObject):
         if session_id != self._current_session_id:
             return
         self.row_builder.appendFiles(batch)
-    
+
     def _on_single_file_scanned(self, session_id: str, item: dict):
         if session_id != self._current_session_id:
             return
-        print(f"[DEBUG-SURGICAL] PaneContext: Received single file scan for {item.get('path')}")
+        print(
+            f"[DEBUG-SURGICAL] PaneContext: Received single file scan for {item.get('path')}"
+        )
         self.row_builder.addSingleItem(item)
 
     def _is_in_current_dir(self, path: str) -> bool:
         """Robust, non-blocking check if a path belongs to the current directory."""
         if not self._current_gfile or not path:
             return False
-            
+
         # Fast-path: String prefix (99% of cases). No GIO overhead.
-        if (parent := path.rsplit("/", 1)[0] if "/" in path else "") == self._current_path:
+        if (
+            parent := path.rsplit("/", 1)[0] if "/" in path else ""
+        ) == self._current_path:
             return True
-            
+
         # Zero-IO Slow-path: GIO Equality (handles URI encoding/aliasing)
         # Using new_for_commandline_arg ensures it never touches the filesystem.
         try:
-            return (g := Gio.File.new_for_commandline_arg(path)).get_parent().equal(self._current_gfile)
+            return (
+                (g := Gio.File.new_for_commandline_arg(path))
+                .get_parent()
+                .equal(self._current_gfile)
+            )
         except Exception:
             return False
 
@@ -298,7 +344,7 @@ class PaneContext(QObject):
         # Handle removal from current view
         if self._is_in_current_dir(old_path):
             self.row_builder.removeSingleItem(old_path)
-            
+
         # Handle insertion/refresh in current view
         if self._is_in_current_dir(new_path):
             print(f"[DEBUG-SURGICAL] PaneContext: Renamed/Moved-in {new_path}")
@@ -308,7 +354,7 @@ class PaneContext(QObject):
         if session_id != self._current_session_id:
             return
         self.row_builder.finishLoading()
-        
+
         # Pending paths selection logic
         pending = self.bridge.selectPendingPaths()
         if pending:
@@ -317,18 +363,25 @@ class PaneContext(QObject):
     def cleanup(self):
         """Cleanup resources when tab is closed."""
         self.scanner.cancel()
-        
+
         # Disconnect surgical updates
-        try: self.mw.file_monitor.fileCreated.disconnect(self._on_file_created)
-        except: pass
-        try: self.mw.file_monitor.fileDeleted.disconnect(self._on_file_deleted)
-        except: pass
-        try: self.mw.file_monitor.fileRenamed.disconnect(self._on_file_renamed)
-        except: pass
-            
+        try:
+            self.mw.file_monitor.fileCreated.disconnect(self._on_file_created)
+        except:
+            pass
+        try:
+            self.mw.file_monitor.fileDeleted.disconnect(self._on_file_deleted)
+        except:
+            pass
+        try:
+            self.mw.file_monitor.fileRenamed.disconnect(self._on_file_renamed)
+        except:
+            pass
+
         try:
             self.scanner.filesFound.disconnect()
-        except: pass
+        except:
+            pass
 
     # --- View Actions ---
     def change_zoom(self, direction: int):
@@ -338,6 +391,6 @@ class PaneContext(QObject):
         """
         current_h = self.row_builder.getRowHeight()
         new_h = self.row_builder.calculate_next_zoom_height(direction)
-        
+
         if new_h != current_h:
             self.row_builder.setRowHeight(new_h)

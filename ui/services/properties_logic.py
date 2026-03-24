@@ -8,17 +8,18 @@ Consolidates:
 """
 
 from PySide6.QtCore import QObject, Signal, Slot
-from core.gio_bridge.metadata import PropertiesWorker
-from core.metadata_utils import format_size
+from core.backends.gio.metadata_workers import PropertiesWorker
+from core.utils.formatting import format_size
 
 
 class PropertiesLogic(QObject):
     """
     Reads detailed file properties asynchronously.
-    
+
     Uses PropertiesWorker (QThreadPool) to avoid blocking the UI
     on network drives (FTP, SMB, MTP).
     """
+
     propertiesReady = Signal(str, dict)  # (path, properties_dict)
 
     def __init__(self, parent=None):

@@ -7,9 +7,9 @@ from PySide6.QtCore import QCoreApplication
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from core.transaction_manager import TransactionManager
-from core.file_operations import FileOperations
-from core.undo_manager import UndoManager
+from core.managers import TransactionManager
+from core.managers import FileOperations
+from core.managers import UndoManager
 
 def verify_transaction_logic():
     print("--- Verifying Transaction System ---")

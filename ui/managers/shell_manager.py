@@ -7,127 +7,129 @@ from pathlib import Path
 from ui.models.tab_model import TabListModel
 from ui.models.pane_context import PaneContext
 from ui.models.sidebar_model import SidebarModel
-from core.gio_bridge.desktop import QuickAccessBridge
-from core.gio_bridge.volumes import VolumesBridge
+from core.backends.gio.desktop import QuickAccessBridge
+from core.backends.gio.volumes import VolumesBridge
+
 
 class ShellManager(QObject):
     """
     Manages the unified QML Shell (Sidebar + Tabs).
     Decoupled from QtWidgets inheritance.
     """
-    
+
     # Signals for Main Window integration
     currentPathChanged = Signal(str)
     currentIndexChanged = Signal(int)
-    
+
     # Shell Actions signals
     navigationRequested = Signal(str)
     focusAddressBarRequested = Signal()
-    
+
     @Property(QObject, constant=True)
     def quickAccess(self):
         return self.quick_access
 
     @Property(QObject, constant=True)
     def volumes(self):
-        return self.volumes_bridge # Renaming self.volumes to self.volumes_bridge to avoid name clash with property
+        return self.volumes_bridge  # Renaming self.volumes to self.volumes_bridge to avoid name clash with property
 
     def __init__(self, main_window):
         super().__init__(main_window)
         self.mw = main_window
-        
+
         # 1. Initialize Bridges
         self.quick_access = QuickAccessBridge(self)
         self.volumes_bridge = VolumesBridge(self)
-        
+
         # Internal State for UI persistence
         self._section_states = {
             "Quick Access": False,
             "Devices": False,
-            "Network": True
+            "Network": True,
         }
-        
+
         # 2. Data Model (Tabs)
         self._model = TabListModel(main_window, self)
         self._current_index = -1
-        
+
         # 3. QML Engine Setup
         self.qml_view = QQuickView()
         self.qml_view.setResizeMode(QQuickView.ResizeMode.SizeRootObjectToView)
         self.qml_view.setColor(Qt.GlobalColor.transparent)
-        
+
         # 4. Context Properties
         ctx = self.qml_view.engine().rootContext()
-        ctx.setContextProperty("shellManager", self) # Self-reference
+        ctx.setContextProperty("shellManager", self)  # Self-reference
         ctx.setContextProperty("tabModel", self._model)
-        
+
         # Instantiate and bind SidebarModel
         self.sidebar_model = SidebarModel(self)
         ctx.setContextProperty("sidebarModel", self.sidebar_model)
-        
+
         # Instantiate ViewModel for Context Menu
         from ui.models.context_menu_model import ContextMenuViewModel
+
         self.context_menu_model = ContextMenuViewModel(main_window)
         ctx.setContextProperty("contextMenuViewModel", self.context_menu_model)
-        
+
         # 5. Image Providers
-        from core.image_providers.thumbnail_provider import ThumbnailProvider
-        from core.image_providers.theme_provider import ThemeImageProvider
-        
+        from core.backends.gnome_thumbnailer.provider import ThumbnailProvider
+        from core.backends.gnome_thumbnailer.theme_icons import ThemeImageProvider
+
         self._thumbnail_provider = ThumbnailProvider()
         self._theme_provider = ThemeImageProvider()
-        
+
         self.qml_view.engine().addImageProvider("thumbnail", self._thumbnail_provider)
         self.qml_view.engine().addImageProvider("theme", self._theme_provider)
-        
+
         # 6. Import Paths
         qml_dir = Path(__file__).parent.parent / "qml"
         self.qml_view.engine().addImportPath(str(qml_dir))
-        
+
         # 7. Load Source (The Unified Layout)
         qml_path = qml_dir / "views" / "MainLayout.qml"
         self.qml_view.setSource(QUrl.fromLocalFile(str(qml_path)))
-        
+
         # 8. Connect Shell Logic (Bridges -> QML)
         self.quick_access.itemsChanged.connect(self._rebuild_sidebar_model)
         self.volumes_bridge.volumesChanged.connect(self._rebuild_sidebar_model)
-        
+
         if self.qml_view.rootObject():
             root = self.qml_view.rootObject()
-            
+
             # Connect QML Signals -> Python Slots
             root.navigationRequested.connect(self._on_navigation_requested)
             root.mountRequested.connect(self.volumes_bridge.mount_volume)
             root.unmountRequested.connect(self.volumes_bridge.unmount_volume)
-            # Handle section collapse toggles if you add a signal for it, 
+            # Handle section collapse toggles if you add a signal for it,
             # or we can rely on local state if we don't need persistence across restarts.
             # For now, we rebuild model using self._section_states.
-            
+
             # If MainLayout emits a signal for section toggling (optional improvement):
             if hasattr(root, "sectionToggled"):
                 root.sectionToggled.connect(self._on_section_toggled)
-        
+
         # Initial Load
         self._rebuild_sidebar_model()
-        
+
         # 9. Container (The actual widget for MainWindow)
         # Pass main_window as parent for the window container
         self.container = QWidget.createWindowContainer(self.qml_view, main_window)
         self.container.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.container.setMouseTracking(True)
-        
+
         # 10. Signal Connections
         self.navigationRequested.connect(self._on_navigation_requested)
         self.currentIndexChanged.connect(self._on_current_changed)
 
     # --- QML Data Sync ---
-    
+
     def _rebuild_sidebar_model(self):
         """Updates the inner models of the SidebarModel."""
         # 1. Quick Access Section
         qa_items = self.quick_access.get_items()
         self.sidebar_model.update_section_items("Quick Access", qa_items)
-        
+
         # 2. Volumes Section
         vol_items = self.volumes_bridge.get_volumes()
         self.sidebar_model.update_section_items("Devices", vol_items)
@@ -143,7 +145,7 @@ class ShellManager(QObject):
         if path == "FOCUS":
             self.focusAddressBarRequested.emit()
             return
-            
+
         if self.current_pane:
             self.navigate_to(path)
         else:
@@ -170,7 +172,8 @@ class ShellManager(QObject):
 
     @Slot(int)
     def close_tab(self, index: int):
-        if self._model.rowCount() <= 1: return
+        if self._model.rowCount() <= 1:
+            return
         self._model.remove_tab(index)
         if self._current_index >= self._model.rowCount():
             self.currentIndex = self._model.rowCount() - 1
@@ -178,13 +181,15 @@ class ShellManager(QObject):
     @Slot()
     def next_tab(self):
         count = self._model.rowCount()
-        if count > 1: self.currentIndex = (self.currentIndex + 1) % count
+        if count > 1:
+            self.currentIndex = (self.currentIndex + 1) % count
 
     @Slot()
     def prev_tab(self):
         count = self._model.rowCount()
-        if count > 1: self.currentIndex = (self.currentIndex - 1) % count
-        
+        if count > 1:
+            self.currentIndex = (self.currentIndex - 1) % count
+
     @Slot()
     def close_current_tab(self):
         self.close_tab(self.currentIndex)
@@ -197,18 +202,21 @@ class ShellManager(QObject):
     @Property(QObject, notify=currentIndexChanged)
     def current_pane(self) -> PaneContext | None:
         return self._model.get_tab(self.currentIndex)
-    
+
     @Slot()
     def go_back(self):
-        if pane := self.current_pane: pane.go_back()
-    
+        if pane := self.current_pane:
+            pane.go_back()
+
     @Slot()
     def go_forward(self):
-        if pane := self.current_pane: pane.go_forward()
-            
+        if pane := self.current_pane:
+            pane.go_forward()
+
     @Slot()
     def go_home(self):
-        if pane := self.current_pane: pane.navigate_to(str(Path.home()))
+        if pane := self.current_pane:
+            pane.navigate_to(str(Path.home()))
 
     @Slot()
     def go_up(self):
@@ -217,21 +225,25 @@ class ShellManager(QObject):
 
     def _on_current_changed(self, index):
         # 0. Disconnect previous connection if any
-        if hasattr(self, '_connected_pane') and self._connected_pane:
-            try: self._connected_pane.pathChanged.disconnect(self.currentPathChanged)
-            except: pass
+        if hasattr(self, "_connected_pane") and self._connected_pane:
+            try:
+                self._connected_pane.pathChanged.disconnect(self.currentPathChanged)
+            except:
+                pass
             self._connected_pane = None
 
         if pane := self.current_pane:
             # 1. Emit current path immediately
             self.currentPathChanged.emit(pane.current_path)
-            
+
             # 2. Connect new tab
             pane.pathChanged.connect(self.currentPathChanged)
             self._connected_pane = pane
-            
+
             # 3. Force UI Reset (Close Address Bar on tab switch)
             if self.qml_view.rootObject():
-                address_bar = self.qml_view.rootObject().findChild(QObject, "addressBar")
+                address_bar = self.qml_view.rootObject().findChild(
+                    QObject, "addressBar"
+                )
                 if address_bar:
                     address_bar.setProperty("isEditing", False)
