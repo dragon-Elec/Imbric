@@ -160,12 +160,30 @@ class GioWorkerPool(QObject):
                     self._batch_events[batch_id].set()
                     del self._batch_events[batch_id]
 
-                self._queue = [(p, c, d) for p, c, d in self._queue if d[2] != batch_id]
+                # Count and filter tasks in one pass
+                remaining = []
+                removed_count = 0
+                for item in self._queue:
+                    if item[2][2] == batch_id:
+                        removed_count += 1
+                    else:
+                        remaining.append(item)
+                self._queue = remaining
                 heapq.heapify(self._queue)
+
+                # Account for removed queued tasks in _pending_batches
+                emit_done = False
                 if batch_id in self._pending_batches:
-                    del self._pending_batches[batch_id]
-                    if batch_id in self._batch_stats:
-                        del self._batch_stats[batch_id]
+                    self._pending_batches[batch_id] -= removed_count
+                    if self._pending_batches[batch_id] <= 0:
+                        del self._pending_batches[batch_id]
+                        emit_done = True
+
+                if batch_id in self._batch_stats:
+                    del self._batch_stats[batch_id]
+
+                if emit_done:
+                    self.allTasksDone.emit(batch_id)
             else:
                 self._queue.clear()
                 self._pending_batches.clear()
