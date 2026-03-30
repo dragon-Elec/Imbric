@@ -191,7 +191,7 @@ class TransactionManager(QObject):
         if conflict_resolver:
             self._batch_resolvers[tid] = conflict_resolver
 
-        self._file_ops.assessBatch(tid, sources, dest_dir, mode)
+        self._file_ops.assessBatch(tid, sources, dest_dir, mode, resolver=conflict_resolver)
 
     # -------------------------------------------------------------------------
     # DEPENDENCY INJECTION
