@@ -16,6 +16,7 @@ from PySide6.QtCore import (
 
 from core.models import FileJob, FileOperationSignals, TrashItem
 from core.registry import BackendRegistry
+from core.backends.gio.metadata_workers import UniqueNameWorker, ExistenceWorker
 
 _MAX_RENAME_ATTEMPTS = 1000
 
@@ -44,6 +45,9 @@ class FileOperations(QObject):
     batchProgress = Signal(str, int, int, str)
     batchFinished = Signal(str, list, list)
 
+    uniqueNameReady = Signal(str, str)  # (task_id, unique_path)
+    existenceReady = Signal(str, bool)  # (task_id, exists)
+
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent=parent)
 
@@ -55,6 +59,12 @@ class FileOperations(QObject):
         self._registry: BackendRegistry | None = None
 
         self._signals: FileOperationSignals | None = None
+
+        self._unique_name_worker = UniqueNameWorker(self)
+        self._unique_name_worker.uniqueNameReady.connect(self.uniqueNameReady)
+
+        self._existence_worker = ExistenceWorker(self)
+        self._existence_worker.existenceReady.connect(self.existenceReady)
 
     def _setup_signals(self):
         """Connect internal signals to public signals. Called after _signals is set."""
@@ -267,9 +277,9 @@ class FileOperations(QObject):
         backend = self._registry.get_io(first_source)
         return self._submit(job, backend.batch_transfer)
 
-    def assessBatch(self, tid: str, sources: list, dest_dir: str, mode: str):
+    def assessBatch(self, tid: str, sources: list, dest_dir: str, mode: str, resolver=None):
         runnable = BatchAssessmentRunnable(
-            tid, sources, dest_dir, mode, self, self._signals
+            tid, sources, dest_dir, mode, self, self._signals, resolver=resolver
         )
         self._pool.start(runnable)
 
@@ -400,7 +410,10 @@ class FileOperations(QObject):
         return backend.is_same_file(path_a, path_b)
 
     def generate_unique_name(self, dest_path: str, style: str = "copy") -> str:
-        """Find a conflict-free path by appending suffixes."""
+        """
+        Find a conflict-free path by appending suffixes.
+        WARNING: Synchronous. Use get_unique_name_async from UI.
+        """
         from core.utils.path_ops import generate_candidate_path
 
         for counter in range(1, _MAX_RENAME_ATTEMPTS + 1):
@@ -410,6 +423,16 @@ class FileOperations(QObject):
         raise RuntimeError(
             f"Auto-rename limit ({_MAX_RENAME_ATTEMPTS}) for: {dest_path}"
         )
+
+    @Slot(str, str, str)
+    def get_unique_name_async(self, task_id: str, dest_path: str, style: str = "copy"):
+        """Asynchronously find a unique name."""
+        self._unique_name_worker.enqueue(task_id, dest_path, style)
+
+    @Slot(str, str)
+    def check_exists_async(self, task_id: str, path: str):
+        """Asynchronously check if a file exists."""
+        self._existence_worker.enqueue(task_id, path)
 
     # -------------------------------------------------------------------------
     # UTILS
@@ -456,7 +479,7 @@ class BatchAssessmentRunnable(QRunnable):
     Runs in background thread to avoid freezing UI (especially on MTP).
     """
 
-    def __init__(self, tid, sources, dest_dir, mode, file_ops, signals):
+    def __init__(self, tid, sources, dest_dir, mode, file_ops, signals, resolver=None):
         super().__init__()
         self.tid = tid
         self.sources = sources
@@ -464,14 +487,15 @@ class BatchAssessmentRunnable(QRunnable):
         self.mode = mode
         self.file_ops = file_ops
         self.signals = signals
+        self.resolver = resolver
         self.setAutoDelete(True)
 
     def run(self):
         valid_items = []
         conflicts = []
 
-        # NOTE: Pre-flight assessment should ideally be a backend capability.
-        # For now, we keep the logic here but use the backend for checks.
+        # NOTE: Pre-flight assessment is performed in background.
+        # If a resolver is provided, it is called from this thread (blocking it, but not UI).
 
         for src in self.sources:
             if not self.file_ops.check_exists(src):
@@ -489,19 +513,42 @@ class BatchAssessmentRunnable(QRunnable):
                 continue
 
             if self.file_ops.check_exists(dest):
-                from core.utils.path_ops import build_conflict_payload
+                if self.resolver:
+                    # RESOLVE IN BACKGROUND
+                    # This calls ConflictResolver which handles thread-safe dialog execution.
+                    action, final_dest = self.resolver(src, dest)
+                    
+                    # Convert Enum to string if necessary (resolver might return ConflictAction enum)
+                    action_val = action.value if hasattr(action, "value") else action
+                    
+                    if action_val == "cancel":
+                        break
+                    if action_val == "skip":
+                        continue
+                    
+                    valid_items.append(
+                        {
+                            "src": src, 
+                            "dest": final_dest or dest, 
+                            "mode": self.mode, 
+                            "overwrite": (action_val == "overwrite"),
+                            "auto_rename": (action_val == "rename" and not final_dest)
+                        }
+                    )
+                else:
+                    from core.utils.path_ops import build_conflict_payload
 
-                # TODO: Retrieve real size/mtime from backend for better conflict resolution
-                conflict_data = build_conflict_payload(src_path=src, dest_path=dest)
-                conflicts.append(
-                    {
-                        "src": src,
-                        "dest": dest,
-                        "mode": self.mode,
-                        "auto_rename": False,
-                        "conflict_data": conflict_data,
-                    }
-                )
+                    # Fallback to emitting conflict for UI handling if no resolver
+                    conflict_data = build_conflict_payload(src_path=src, dest_path=dest)
+                    conflicts.append(
+                        {
+                            "src": src,
+                            "dest": dest,
+                            "mode": self.mode,
+                            "auto_rename": False,
+                            "conflict_data": conflict_data,
+                        }
+                    )
             else:
                 valid_items.append(
                     {"src": src, "dest": dest, "mode": self.mode, "auto_rename": False}
