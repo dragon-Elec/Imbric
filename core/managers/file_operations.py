@@ -28,8 +28,8 @@ class FileOperations(QObject):
     operationStarted = Signal(str, str, str)  # (job_id, op_type, path)
     operationProgress = Signal(str, int, int)  # (job_id, current, total)
     operationFinished = Signal(
-        str, str, str, str, bool, str
-    )  # (tid, job_id, op_type, result_path, success, message)
+        str, str, str, str, bool, str, object
+    )  # (tid, job_id, op_type, result_path, success, message, inverse_payload)
     operationError = Signal(
         str, str, str, str, str, object
     )  # (tid, job_id, op_type, path, message, conflict_data)
@@ -120,11 +120,14 @@ class FileOperations(QObject):
         message: str,
     ):
         print(f"[FO] _on_finished: tid={tid[:8]}, jid={job_id[:8]}")
+        inv_payload = None
         with QMutexLocker(self._mutex):
             if job_id in self._jobs:
+                job = self._jobs[job_id]
+                inv_payload = getattr(job, "inverse_payload", None)
                 del self._jobs[job_id]
 
-        self.operationFinished.emit(tid, job_id, op_type, result_path, success, message)
+        self.operationFinished.emit(tid, job_id, op_type, result_path, success, message, inv_payload)
 
     @Slot(str, str, str, str, str, object)
     def _on_error(
@@ -183,6 +186,8 @@ class FileOperations(QObject):
     def _submit(self, job: FileJob, backend_method) -> str:
         with QMutexLocker(self._mutex):
             self._jobs[job.id] = job
+        if self._registry:
+            job.backend_id = self._registry.get_io_id(job.source)
         return backend_method(job)
 
     @Slot(str, str, str, bool, bool, result=str)
@@ -394,6 +399,23 @@ class FileOperations(QObject):
         job = self._create_job("empty", "")
         backend = self._registry.get_io("trash:///")
         return self._submit(job, backend.empty_trash)
+
+    @Slot(dict, result=str)
+    def execute_inverse_payload(self, payload: dict) -> str:
+        """Executes an opaque inverse payload bypassing manual transaction math."""
+        action = payload.get("action")
+        tid = payload.get("tid", "")
+        if action == "trash":
+            return self.trash(payload["target"], transaction_id=tid)
+        elif action == "restore":
+            return self.restore(payload["target"], transaction_id=tid, rename_to=payload.get("rename_to", ""))
+        elif action == "rename":
+            return self.rename(payload["target"], payload["new_name"], transaction_id=tid)
+        elif action == "move":
+            from core.utils.vfs_path import vfs_dirname
+            dest_dir = vfs_dirname(payload["dest"])
+            return self.move(payload["target"], dest_dir, transaction_id=tid)
+        return ""
 
     # -------------------------------------------------------------------------
     # VFS HELPERS (delegates to Gio workers)

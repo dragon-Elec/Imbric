@@ -9,6 +9,7 @@ class TransactionStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    PARTIAL = "partial"  # For batch operations with mixed success
     # PARTIAL? If we want to support partial successes
 
 
@@ -21,6 +22,8 @@ class TransactionOperation:
     dest: str = ""  # Final destination path (if applicable)
     result_path: str = ""  # Specifically for rename/copy (e.g., "file (2).txt")
     job_id: str = ""  # The low-level job ID from FileOperations
+    backend_id: str = ""  # The backend that executed this operation
+    inverse_payload: dict | None = None  # Built by backend to instruct UndoManager
     status: TransactionStatus = TransactionStatus.PENDING
     error: str = ""
 

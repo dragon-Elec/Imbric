@@ -5,6 +5,7 @@ No GIO/Qt dependencies in the dataclass definition - those are injected in the r
 
 from dataclasses import dataclass, field
 from PySide6.QtCore import QObject, Signal
+from core.interfaces.cancellation import CancellationToken
 
 
 @dataclass(slots=True)
@@ -16,9 +17,10 @@ class FileJob:
     source: str
     dest: str = ""  # Destination path (or new name for rename)
     transaction_id: str = ""  # Links this job to a larger transaction (batch)
-    cancellable: object = field(
+    cancellable: CancellationToken | None = field(
         default=None, repr=False
-    )  # Gio.Cancellable - injected by executor
+    )  # Injected by executor
+    inverse_payload: dict | None = None  # Built by the backend upon success
     auto_rename: bool = (
         False  # If True, automatically find a free name (For New Folder / Duplicate)
     )
@@ -26,6 +28,7 @@ class FileJob:
     overwrite: bool = False  # If True, overwrite existing files without prompt
     rename_to: str = ""  # Specific for Restore: if set, restore with this filename
     status: str = "pending"  # Lifecycle: pending → running → done/error/cancelled
+    backend_id: str = ""  # The backend executing this job
 
     # --- True Batch Specific Fields ---
     items: list[dict] = field(
@@ -44,8 +47,8 @@ class FileOperationSignals(QObject):
     started = Signal(str, str, str)  # (job_id, op_type, source_path)
     progress = Signal(str, int, int)  # (job_id, current_bytes, total_bytes)
     finished = Signal(
-        str, str, str, str, bool, str
-    )  # (tid, job_id, op_type, result_path, success, message)
+        str, str, str, str, bool, str, object
+    )  # (tid, job_id, op_type, result_path, success, message, inverse_payload)
     operationError = Signal(
         str, str, str, str, str, object
     )  # (tid, job_id, op_type, path, message, conflict_data)

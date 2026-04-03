@@ -52,6 +52,7 @@ class GIOOperationRunnable(QRunnable):
             else (self.job.dest if self.job.dest else self.job.source)
         )
 
+        inv_payload = getattr(self.job, "inverse_payload", None)
         self.signals.finished.emit(
             self.job.transaction_id,
             self.job.id,
@@ -59,6 +60,7 @@ class GIOOperationRunnable(QRunnable):
             result_path,
             success,
             message,
+            inv_payload,
         )
 
     def _progress_callback(self, current_bytes, total_bytes, user_data):
@@ -382,6 +384,7 @@ class TransferRunnable(GIOOperationRunnable):
                                     self._progress_callback,
                                     None,
                                 )
+                                self.job.inverse_payload = {"action": "move", "target": final_dest, "dest": self.job.source}
                                 self.emit_finished(
                                     True, "Success", result_override=final_dest
                                 )
@@ -401,6 +404,7 @@ class TransferRunnable(GIOOperationRunnable):
                                             if self.job.skipped_files
                                             else "Success"
                                         )
+                                        self.job.inverse_payload = {"action": "move", "target": final_dest, "dest": self.job.source}
                                         self.emit_finished(
                                             True, msg, result_override=final_dest
                                         )
@@ -414,6 +418,7 @@ class TransferRunnable(GIOOperationRunnable):
                                 if self.job.skipped_files
                                 else "Success"
                             )
+                            self.job.inverse_payload = {"action": "trash", "target": final_dest}
                             self.emit_finished(True, msg, result_override=final_dest)
                             return
 
@@ -517,6 +522,8 @@ class RenameRunnable(GIOOperationRunnable):
             result = gfile.set_display_name(self.job.dest, self.job.cancellable)
             if result:
                 abs_path = _gfile_path(result)
+                from core.utils.vfs_path import vfs_basename
+                self.job.inverse_payload = {"action": "rename", "target": abs_path, "new_name": vfs_basename(self.job.source)}
                 self.emit_finished(True, "Success", result_override=abs_path)
             else:
                 self.emit_finished(False, "Rename returned no result")

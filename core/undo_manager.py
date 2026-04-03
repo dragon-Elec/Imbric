@@ -7,9 +7,9 @@ Listens to TransactionManager for committed history.
 
 from PySide6.QtCore import QObject, Signal, Slot
 from core.transaction import Transaction, TransactionStatus
-from core.backends.gio.helpers import _make_gfile
 from collections import deque
 from enum import Enum
+from core.utils.vfs_path import vfs_basename
 
 
 class PendingMode(Enum):
@@ -151,41 +151,34 @@ class UndoManager(QObject):
                 op.dest or op.result_path
             )  # Fallback to result if dest was empty (e.g. createFolder)
 
+            # Execute inverse mapping
             if is_undo:
-                # INVERSE LOGIC
-                match op.op_type:
-                    case "createFolder":
-                        # Undo Create -> Trash the *actual* created path (result_path)
-                        target_to_trash = op.result_path or src
-                        jid = self._file_ops.trash(target_to_trash)
-
-                    case "trash":
-                        # Undo Trash -> Restore
-                        jid = self._file_ops.restore_from_trash(src)
-
-                    case "rename":
-                        # Undo Rename (A->B) -> Rename (B->A)
-                        current_path = op.result_path or dest
-                        if current_path and src:
-                            original_name = _make_gfile(src).get_basename()
-                            jid = self._file_ops.rename(current_path, original_name)
-
-                    case "copy":
-                        # Undo Copy -> Trash the copy
-                        target = op.result_path or dest
-                        if target == src and not op.result_path:
-                            print(
-                                f"[UndoManager] Safety: Skipping undo {op.op_type} (target==src)"
-                            )
-                            continue
-                        if target:
-                            jid = self._file_ops.trash(target)
-
-                    case "move":
-                        # Undo Move (A->B) -> Move (B->A)
-                        current_loc = op.result_path or dest
-                        if current_loc and src:
-                            jid = self._file_ops.move(current_loc, src)
+                if op.inverse_payload:
+                    payload = op.inverse_payload.copy()
+                    payload["tid"] = self._pending_tx.id if self._pending_tx else ""
+                    jid = self._file_ops.execute_inverse_payload(payload)
+                else:
+                    match op.op_type:
+                        case "trash":
+                            jid = self._file_ops.restore_from_trash(src)
+                        case "rename":
+                            current_path = op.result_path or dest
+                            if current_path and src:
+                                original_name = vfs_basename(src)
+                                jid = self._file_ops.rename(current_path, original_name)
+                        case "copy":
+                            target = op.result_path or dest
+                            if target == src and not op.result_path:
+                                print(
+                                    f"[UndoManager] Safety: Skipping undo {op.op_type} (target==src)"
+                                )
+                                continue
+                            if target:
+                                jid = self._file_ops.trash(target)
+                        case "move":
+                            current_loc = op.result_path or dest
+                            if current_loc and src:
+                                jid = self._file_ops.move(current_loc, src)
             else:
                 # REDO LOGIC (Standard Replay)
                 match op.op_type:
@@ -197,7 +190,7 @@ class UndoManager(QObject):
                         jid = self._file_ops.restore_from_trash(src)
                     case "rename":
                         if dest:
-                            new_name = _make_gfile(dest).get_basename()
+                            new_name = vfs_basename(dest)
                             jid = self._file_ops.rename(src, new_name)
                     case "copy":
                         jid = self._file_ops.copy(src, dest)
@@ -209,8 +202,8 @@ class UndoManager(QObject):
 
     # --- ASYNC HANDLERS ---
 
-    @Slot(str, str, str, str, bool, str)
-    def _on_op_finished(self, tid, job_id, op_type, path, success, msg):
+    @Slot(str, str, str, str, bool, str, object)
+    def _on_op_finished(self, tid, job_id, op_type, path, success, msg, inv_payload=None):
         if job_id in self._pending_job_ids:
             self._pending_job_ids.discard(job_id)
             if not success:

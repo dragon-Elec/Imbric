@@ -11,8 +11,8 @@ Responsibilities:
 4. error handling policies (Stop/Continue).
 """
 
-from PySide6.QtCore import QObject, Signal, Slot
-from typing import Callable
+from PySide6.QtCore import QObject, Signal, Slot, QMutex, QMutexLocker
+from typing import Callable, cast
 from uuid import uuid4
 
 from core.transaction import Transaction, TransactionOperation, TransactionStatus
@@ -52,7 +52,7 @@ class TransactionManager(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._active_transactions: dict[str, Transaction] = {}
-        self._pending_conflicts: dict[str, object] = {}  # job_id -> conflict_data
+        self._pending_conflicts: dict[str, dict[str, object]] = {}  # job_id -> conflict_data
         self._batch_resolvers: dict[
             str, Callable
         ] = {}  # tid -> conflict_resolver callback
@@ -120,7 +120,11 @@ class TransactionManager(QObject):
 
         self.conflictResolved.emit(job_id, resolution)
 
-        stored_ctx = conflict_data.get("_context", {})
+        raw_ctx = conflict_data.get("_context", {})
+        if not isinstance(raw_ctx, dict):
+            print(f"[TM] Error: Invalid context for conflict {job_id}")
+            return
+        stored_ctx = cast(dict[str, object], raw_ctx)
         op_type = stored_ctx.get("op_type")
         src = stored_ctx.get("src")
         dest = stored_ctx.get("dest")
@@ -151,7 +155,7 @@ class TransactionManager(QObject):
                         )
 
             case "rename":
-                new_dest = build_renamed_dest(dest, new_name) if dest else dest
+                new_dest = build_renamed_dest(str(dest), new_name) if dest else ""
                 match op_type:
                     case "restore":
                         self._file_ops.restore(
@@ -291,7 +295,7 @@ class TransactionManager(QObject):
                     }
                 )
 
-        if batch_items:
+        if batch_items and self._file_ops:
             self._file_ops.transfer_batch(
                 tid, batch_items, ui_refresh_rate_ms=100, halt_on_error=False
             )
@@ -335,8 +339,8 @@ class TransactionManager(QObject):
                     self.transactionProgress.emit(tid, percent)
                 return
 
-    @Slot(str, str, str, str, bool, str)
-    def onOperationFinished(self, tid, job_id, op_type, result_path, success, message):
+    @Slot(str, str, str, str, bool, str, object)
+    def onOperationFinished(self, tid, job_id, op_type, result_path, success, message, inverse_payload=None):
         print(f"[TM] opFinished: tid={tid[:8]}, jid={job_id[:8]}, success={success}")
         # [FIX] Always emit jobCompleted for UI, even for orphan jobs (no transaction)
         # This provides granular feedback for Smart UI behaviors (select after rename, etc.)
@@ -356,17 +360,20 @@ class TransactionManager(QObject):
             )
 
         if op:
-            status = (
-                TransactionStatus.COMPLETED if success else TransactionStatus.FAILED
-            )
+            if not success and "cancel" in message.lower():
+                status = TransactionStatus.CANCELLED
+            elif success and op_type == "move" and "Partial Success" in message:
+                status = TransactionStatus.PARTIAL
+            else:
+                status = TransactionStatus.COMPLETED if success else TransactionStatus.FAILED
+
             tx.update_status(job_id, status, error=message if not success else "")
 
             if success:
                 # [CRITICAL] Data Integrity for Undo
-                # For Copy/Move/Rename: result_path is the final destination (e.g. "file (2).txt")
-                # For Trash: result_path is the source (item trashed) - handled by default logic
                 op.dest = result_path
                 op.result_path = result_path
+                op.inverse_payload = inverse_payload
                 print(f"[TM] ✓ {op_type.upper()}: {op.src} -> {result_path}")
 
                 # [NEW] Fire async post-condition validation
@@ -377,7 +384,6 @@ class TransactionManager(QObject):
                 print(f"[TM] ✗ {op_type.upper()} Failed: {op.src} (Error: {message})")
 
         # Always increment completed_ops count regardless of success
-        # This prevents "hanging" transactions if one item fails
         tx.completed_ops += 1
 
         # [NEW] Emit aggregated progress for UI
@@ -446,20 +452,24 @@ class TransactionManager(QObject):
         if (
             conflict_data
             and isinstance(conflict_data, dict)
-            and conflict_data.get("error") == "exists"
         ):
+            from typing import cast
+            data = cast(dict[str, object], conflict_data)
+            if data.get("error") != "exists":
+                self.operationFailed.emit(op_type, path, message)
+                return
             # It is a conflict!
             # Store context so we know how to retry
-            conflict_data["_context"] = {
+            data["_context"] = {
                 "op_type": op_type,
                 "src": path,
-                "dest": message,  # Fallback, likely unused if conflict_data has paths
+                "dest": message,  # Fallback, likely unused if data has paths
                 "tid": tid,
             }
 
-            # Try to get paths from conflict_data directly (preferred)
-            src = conflict_data.get("src_path")
-            dest = conflict_data.get("dest_path")
+            # Try to get paths from data directly (preferred)
+            src = data.get("src_path")
+            dest = data.get("dest_path")
 
             # Use 'path' (from signal) as source fallback if not provided in data
             if not src:
@@ -469,11 +479,13 @@ class TransactionManager(QObject):
             # If dest is missing, we must rely on what we have or fail gracefully.
             # Restore is special: source is treated as the item to restore.
 
-            conflict_data["_context"]["src"] = src
-            conflict_data["_context"]["dest"] = dest
+            ctx = data["_context"]
+            if isinstance(ctx, dict):
+                ctx["src"] = str(src) if src else path
+                ctx["dest"] = str(dest) if dest else ""
 
-            self._pending_conflicts[job_id] = conflict_data
-            self.conflictDetected.emit(job_id, conflict_data)
+            self._pending_conflicts[job_id] = data
+            self.conflictDetected.emit(job_id, data)
         else:
             # Regular error
             self.operationFailed.emit(op_type, path, message)
