@@ -92,7 +92,7 @@ def backend_registry(signals):
     from core.backends.gio.backend import GIOBackend
 
     registry = BackendRegistry()
-    registry.set_default_io(GIOBackend(signals))
+    registry.set_default_io(GIOBackend())
     return registry
 
 
