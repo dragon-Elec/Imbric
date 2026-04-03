@@ -19,28 +19,17 @@ def _split_name_ext(filename: str) -> tuple[str, str]:
 def generate_candidate_path(base_path: str, counter: int, style: str = "copy") -> str:
     """
     Generate a candidate path for auto-renaming.
-    Note: This is a pure string manipulation version. Backend-specific
-    versions will need to handle actual Gio.File operations.
+    Uses vfs_path helpers for URI-safe splitting.
     """
     if counter == 0:
         return base_path
 
-    # Extract directory and filename
-    # Handle both local paths and URIs
-    if "://" in base_path:
-        # URI handling - split at last /
-        last_slash = base_path.rfind("/")
-        if last_slash <= 0:
-            return base_path
-        dir_path = base_path[: last_slash + 1]
-        filename = base_path[last_slash + 1 :]
-    else:
-        # Local path handling
-        last_slash = base_path.rfind("/")
-        if last_slash < 0:
-            return base_path
-        dir_path = base_path[: last_slash + 1]
-        filename = base_path[last_slash + 1 :]
+    from core.utils.vfs_path import vfs_basename, vfs_dirname, vfs_join
+
+    filename = vfs_basename(base_path)
+    dir_path = vfs_dirname(base_path)
+    if not filename:
+        return base_path
 
     name, ext = _split_name_ext(filename)
 
@@ -49,22 +38,22 @@ def generate_candidate_path(base_path: str, counter: int, style: str = "copy") -
     else:
         suffix = f" ({counter})"
 
-    return f"{dir_path}{name}{suffix}{ext}"
+    return vfs_join(dir_path, f"{name}{suffix}{ext}")
 
 
-import os
+from core.utils.vfs_path import vfs_basename, vfs_dirname, vfs_join
 
 def build_dest_path(src: str, dest_dir: str) -> str:
     """Build full dest path: dest_dir/basename(src)."""
-    return os.path.join(dest_dir, os.path.basename(src))
+    return vfs_join(dest_dir, vfs_basename(src))
 
 
 def build_renamed_dest(dest: str, new_name: str) -> str:
     """Replace filename in dest with new_name."""
     if not new_name:
         return dest
-    parent = os.path.dirname(dest)
-    return os.path.join(parent, new_name)
+    parent = vfs_dirname(dest)
+    return vfs_join(parent, new_name)
 
 
 def build_conflict_payload(
