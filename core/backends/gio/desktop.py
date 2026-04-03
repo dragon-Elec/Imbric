@@ -9,7 +9,7 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot, Property
-from core.threading.worker_pool import GioWorkerPool
+from core.threading.worker_pool import AsyncWorkerPool
 from core.backends.gio.helpers import ensure_uri
 
 
@@ -186,7 +186,7 @@ class BookmarksBridge(QObject):
         self._is_resolving = False
         self._monitor = None
 
-        self._pool = GioWorkerPool(max_concurrent=1, parent=self)
+        self._pool = AsyncWorkerPool(max_concurrent=1, parent=self)
         self._pool.resultReady.connect(self._on_resolve_ready)
 
         self._setup_monitor()
@@ -280,7 +280,7 @@ class QuickAccessBridge(QObject):
 
         self._cached_items = []
         self._trash_icon = "delete"
-        self._pool = GioWorkerPool(max_concurrent=1, parent=self)
+        self._pool = AsyncWorkerPool(max_concurrent=1, parent=self)
         self._pool.resultReady.connect(self._on_worker_result)
 
         self._setup_trash_monitor()

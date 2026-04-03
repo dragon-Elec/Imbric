@@ -8,7 +8,7 @@ import gi
 gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib
 from PySide6.QtCore import QObject, Signal, Slot, Property
-from core.threading.worker_pool import GioWorkerPool
+from core.threading.worker_pool import AsyncWorkerPool
 
 
 def _fetch_usage_task(path: str) -> dict | None:
@@ -31,7 +31,7 @@ def _fetch_usage_task(path: str) -> dict | None:
 
 
 class VolumesBridge(QObject):
-    """Wraps Gio.VolumeMonitor with async usage updates via GioWorkerPool."""
+    """Wraps Gio.VolumeMonitor with async usage updates via AsyncWorkerPool."""
 
     volumesChanged = Signal()
     mountSuccess = Signal(str)
@@ -53,7 +53,7 @@ class VolumesBridge(QObject):
         self._cached_volumes = []
         self._is_rebuilding = False
 
-        self._pool = GioWorkerPool(max_concurrent=3, parent=self)
+        self._pool = AsyncWorkerPool(max_concurrent=3, parent=self)
         self._pool.resultReady.connect(self._on_worker_result)
 
         for sig in [

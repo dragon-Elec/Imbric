@@ -11,20 +11,20 @@ from gi.repository import Gio, GLib, GnomeDesktop
 from datetime import datetime
 from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtGui import QImageReader
-from core.threading.worker_pool import GioWorkerPool
+from core.threading.worker_pool import AsyncWorkerPool
 from core.backends.gio.metadata import get_file_info
 from core.backends.gio.helpers import _make_gfile, to_unix_timestamp
 from core.utils.path_ops import generate_candidate_path
 
 
 class ItemCountWorker(QObject):
-    """Async Directory Item Counter using GioWorkerPool."""
+    """Async Directory Item Counter using AsyncWorkerPool."""
 
     countReady = Signal(str, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._pool = GioWorkerPool(max_concurrent=4, parent=self)
+        self._pool = AsyncWorkerPool(max_concurrent=4, parent=self)
         self._pool.resultReady.connect(self._on_result)
 
     def _on_result(self, path: str, count: int) -> None:
@@ -63,13 +63,13 @@ class ItemCountWorker(QObject):
 
 
 class DimensionWorker(QObject):
-    """Async Image Dimension Reader using GioWorkerPool."""
+    """Async Image Dimension Reader using AsyncWorkerPool."""
 
     dimensionsReady = Signal(str, int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._pool = GioWorkerPool(max_concurrent=4, parent=self)
+        self._pool = AsyncWorkerPool(max_concurrent=4, parent=self)
         self._pool.resultReady.connect(self._on_result)
 
     @Slot(str, str)
@@ -111,13 +111,13 @@ class DimensionWorker(QObject):
 
 
 class PropertiesWorker(QObject):
-    """Async File Properties Reader using GioWorkerPool."""
+    """Async File Properties Reader using AsyncWorkerPool."""
 
     propertiesReady = Signal(str, dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._pool = GioWorkerPool(max_concurrent=2, parent=self)
+        self._pool = AsyncWorkerPool(max_concurrent=2, parent=self)
         self._pool.resultReady.connect(self._on_result)
 
     def _on_result(self, path: str, props: dict) -> None:
@@ -166,13 +166,13 @@ class PropertiesWorker(QObject):
 
 
 class ExistenceWorker(QObject):
-    """Async Existence Checker using GioWorkerPool."""
+    """Async Existence Checker using AsyncWorkerPool."""
 
     existenceReady = Signal(str, bool)  # (task_id, exists)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._pool = GioWorkerPool(max_concurrent=4, parent=self)
+        self._pool = AsyncWorkerPool(max_concurrent=4, parent=self)
         self._pool.resultReady.connect(self._on_result)
 
     def _on_result(self, task_id: str, exists: bool) -> None:
@@ -191,13 +191,13 @@ class ExistenceWorker(QObject):
 
 
 class UniqueNameWorker(QObject):
-    """Async Unique Name Generator using GioWorkerPool."""
+    """Async Unique Name Generator using AsyncWorkerPool."""
 
     uniqueNameReady = Signal(str, str)  # (task_id, unique_path)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._pool = GioWorkerPool(max_concurrent=4, parent=self)
+        self._pool = AsyncWorkerPool(max_concurrent=4, parent=self)
         self._pool.resultReady.connect(self._on_result)
 
     def _on_result(self, task_id: str, unique_path: str) -> None:
@@ -233,7 +233,7 @@ class BatchProcessorWorker(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         # Higher concurrency for CPU-bound thumbnail checks
-        self._pool = GioWorkerPool(max_concurrent=8, parent=self)
+        self._pool = AsyncWorkerPool(max_concurrent=8, parent=self)
         self._pool.resultReady.connect(self._on_result)
         self._pool.allTasksDone.connect(self.allTasksDone)
 

@@ -32,9 +32,9 @@ class FileMonitor(QObject):
         self._monitor_handler = None
         self._current_path = None
 
-        from core.threading.worker_pool import GioWorkerPool
+        from core.threading.worker_pool import AsyncWorkerPool
 
-        self._pool = GioWorkerPool(max_concurrent=1, parent=self)
+        self._pool = AsyncWorkerPool(max_concurrent=1, parent=self)
         self._pool.resultReady.connect(self._on_watch_result)
         self._pool.errorOccurred.connect(self._on_watch_error)
 

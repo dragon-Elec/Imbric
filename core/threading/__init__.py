@@ -2,10 +2,10 @@
 Threading primitives - WorkerPool for background task orchestration.
 """
 
-from core.threading.worker_pool import GioWorkerPool, WorkerPool, GioTask
+from core.threading.worker_pool import AsyncWorkerPool, WorkerPool, AsyncTask
 
 __all__ = [
-    "GioWorkerPool",
+    "AsyncWorkerPool",
     "WorkerPool",
-    "GioTask",
+    "AsyncTask",
 ]

@@ -11,7 +11,7 @@ Key Architectural Features:
 4. Progress Relaying: Mid-task feedback for long-running I/O.
 """
 
-import inspect
+
 import threading
 import heapq
 import itertools
@@ -21,7 +21,7 @@ from typing import Any
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, QMutex, QMutexLocker
 
 
-class GioTask(QRunnable):
+class AsyncTask(QRunnable):
     def __init__(
         self,
         task_id: str,
@@ -44,25 +44,11 @@ class GioTask(QRunnable):
         self.inject_cancel = inject_cancel
         self.setAutoDelete(True)
 
-        try:
-            sig = inspect.signature(func)
-            params = sig.parameters
-            self._accepts_var_kw = any(p.kind == p.VAR_KEYWORD for p in params.values())
-            self._named_params = set(params.keys())
-        except (ValueError, TypeError):
-            self._accepts_var_kw = False
-            self._named_params = set()
+
 
     def _safe_inject(self) -> None:
-        if self.inject_cancel and self._can_accept("cancel_event"):
+        if self.inject_cancel:
             self.kwargs["cancel_event"] = self.cancel_event
-        if self._can_accept("report_progress"):
-            self.kwargs["report_progress"] = lambda current, total: self.on_progress(
-                self.task_id, current, total
-            )
-
-    def _can_accept(self, name: str) -> bool:
-        return self._accepts_var_kw or name in self._named_params
 
     def run(self) -> None:
         if self.cancel_event.is_set():
@@ -84,9 +70,10 @@ class GioTask(QRunnable):
                 self.on_complete(self.task_id, None, None, True)
 
 
-class GioWorkerPool(QObject):
+class AsyncWorkerPool(QObject):
     resultReady = Signal(str, object)
     errorOccurred = Signal(str, str)
+    taskCancelled = Signal(str)
     progressUpdated = Signal(str, int, int)
     allTasksDone = Signal(str)
 
@@ -158,7 +145,7 @@ class GioWorkerPool(QObject):
             if batch_id:
                 if batch_id in self._batch_events:
                     self._batch_events[batch_id].set()
-                    del self._batch_events[batch_id]
+                    del self._batch_events[batch_id]  # type: ignore
 
                 # Count and filter tasks in one pass
                 remaining = []
@@ -176,11 +163,11 @@ class GioWorkerPool(QObject):
                 if batch_id in self._pending_batches:
                     self._pending_batches[batch_id] -= removed_count
                     if self._pending_batches[batch_id] <= 0:
-                        del self._pending_batches[batch_id]
+                        del self._pending_batches[batch_id]  # type: ignore
                         emit_done = True
 
                 if batch_id in self._batch_stats:
-                    del self._batch_stats[batch_id]
+                    del self._batch_stats[batch_id]  # type: ignore
 
                 if emit_done:
                     self.allTasksDone.emit(batch_id)
@@ -198,11 +185,11 @@ class GioWorkerPool(QObject):
     def forget_batch(self, batch_id: str) -> None:
         with QMutexLocker(self._mutex):
             if batch_id in self._pending_batches:
-                del self._pending_batches[batch_id]
+                del self._pending_batches[batch_id]  # type: ignore
             if batch_id in self._batch_stats:
-                del self._batch_stats[batch_id]
+                del self._batch_stats[batch_id]  # type: ignore
             if batch_id in self._batch_events:
-                del self._batch_events[batch_id]
+                del self._batch_events[batch_id]  # type: ignore
 
     def get_batch_stats(self, batch_id: str) -> dict:
         with QMutexLocker(self._mutex):
@@ -213,6 +200,7 @@ class GioWorkerPool(QObject):
             while self._queue and self._active_count < self.max_concurrent:
                 priority, _, task_data = heapq.heappop(self._queue)
                 task_id, func, batch_id, inject_cancel, args, kwargs = task_data
+                print(f"[Pool] Pop: {task_id} Prio: {priority} Active: {self._active_count}")
 
                 self._active_count += 1
 
@@ -229,7 +217,7 @@ class GioWorkerPool(QObject):
                     else self._global_cancel
                 )
 
-                runnable = GioTask(
+                runnable = AsyncTask(
                     task_id,
                     func,
                     on_end,
@@ -259,6 +247,7 @@ class GioWorkerPool(QObject):
                 if batch_id and batch_id in self._batch_stats:
                     if error is not None:
                         self._batch_stats[batch_id]["error"] += 1
+                        
                     else:
                         self._batch_stats[batch_id]["done"] += 1
 
@@ -266,13 +255,15 @@ class GioWorkerPool(QObject):
                     self.resultReady.emit(task_id, result)
                 else:
                     self.errorOccurred.emit(task_id, error)
+            else:
+                self.taskCancelled.emit(task_id)
 
             if batch_id and batch_id in self._pending_batches:
                 self._pending_batches[batch_id] -= 1
                 if self._pending_batches[batch_id] <= 0:
                     del self._pending_batches[batch_id]
                     if batch_id in self._batch_events:
-                        del self._batch_events[batch_id]
+                        del self._batch_events[batch_id]  # type: ignore
                     batch_done_signal = True
 
         if batch_done_signal:
@@ -282,4 +273,4 @@ class GioWorkerPool(QObject):
 
 
 # Backwards compatibility alias
-WorkerPool = GioWorkerPool
+WorkerPool = AsyncWorkerPool

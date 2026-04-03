@@ -4,7 +4,7 @@ from ui.widgets.drag_helper import start_drag_session
 from ui.services.conflict_resolver import ConflictResolver
 from ui.dialogs.conflicts import ConflictAction
 from core.services.search.worker import SearchWorker
-from core.threading.worker_pool import GioWorkerPool
+from core.threading.worker_pool import AsyncWorkerPool
 
 
 class AppBridge(QObject):
@@ -37,7 +37,7 @@ class AppBridge(QObject):
         self._search_worker.searchError.connect(self.searchError)
 
         # Async Rename Assessment
-        self._rename_pool = GioWorkerPool(max_concurrent=1, parent=self)
+        self._rename_pool = AsyncWorkerPool(max_concurrent=1, parent=self)
         self._rename_pool.resultReady.connect(self._on_rename_assessed)
 
         # Connect to clipboard changes

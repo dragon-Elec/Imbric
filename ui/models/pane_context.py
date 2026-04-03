@@ -3,7 +3,7 @@ from pathlib import Path
 from gi.repository import Gio, GLib
 
 # Import core components
-from core.threading.worker_pool import GioWorkerPool
+from core.threading.worker_pool import AsyncWorkerPool
 from core.backends.gio.desktop import (
     resolve_identity,
     enrich_breadcrumbs,
@@ -75,7 +75,7 @@ class PaneContext(QObject):
         )
 
         # Background worker pool for resolving mounts/links without freezing UI
-        self._nav_pool = GioWorkerPool(max_concurrent=2, parent=self)
+        self._nav_pool = AsyncWorkerPool(max_concurrent=2, parent=self)
         self._nav_pool.resultReady.connect(self._on_nav_worker_result)
         self._cached_segments = []
 
