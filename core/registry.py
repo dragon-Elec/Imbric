@@ -7,12 +7,14 @@ from core.interfaces.io_backend import IOBackend
 from core.interfaces.scanner_backend import ScannerBackend
 from core.interfaces.thumbnail_provider import ThumbnailProviderBackend
 from core.interfaces.metadata_provider import MetadataProvider
+from core.models.file_job import FileOperationSignals
 
 
 class BackendRegistry:
     """Maps mount types / path patterns to backend instances."""
 
     def __init__(self):
+        self._io_signals = FileOperationSignals()
         self._io_backends: dict[str, IOBackend] = {}
         self._scanner_backends: dict[str, ScannerBackend] = {}
         self._thumbnail_backends: list[ThumbnailProviderBackend] = []
@@ -26,10 +28,12 @@ class BackendRegistry:
     # -------------------------------------------------------------------------
     def register_io(self, scheme: str, backend: IOBackend) -> None:
         """Register backend for a URI scheme (e.g., 'mtp', 'sftp', 'file')."""
+        backend.set_signals(self._io_signals)
         self._io_backends[scheme] = backend
 
     def set_default_io(self, backend: IOBackend) -> None:
         """Set the default IO backend (typically GIO for local files)."""
+        backend.set_signals(self._io_signals)
         self._default_io = backend
 
     def get_io(self, path_or_uri: str) -> IOBackend | None:
@@ -39,6 +43,14 @@ class BackendRegistry:
             if scheme in self._io_backends:
                 return self._io_backends[scheme]
         return self._default_io
+
+    def get_io_id(self, path_or_uri: str) -> str:
+        """Return the scheme/backend key for a given path. 'default' for the fallback."""
+        if "://" in path_or_uri:
+            scheme = path_or_uri.split("://")[0]
+            if scheme in self._io_backends:
+                return scheme
+        return "default"
 
     # -------------------------------------------------------------------------
     # Scanner Backend Registration
@@ -85,7 +97,5 @@ class BackendRegistry:
         return self._metadata_provider
 
     def get_io_signals(self):
-        """Get the FileOperationSignals from the default IO backend."""
-        if self._default_io:
-            return self._default_io._signals
-        return None
+        """Get the FileOperationSignals hub shared across all backends."""
+        return self._io_signals

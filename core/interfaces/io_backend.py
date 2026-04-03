@@ -2,13 +2,22 @@
 IOBackend ABC - Contract for file I/O operations.
 All file operations (copy, move, delete, create) go through this interface.
 """
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from core.models.file_job import FileJob
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.models.file_job import FileJob
 
 
 class IOBackend(ABC):
     """Contract for file I/O operations."""
+
+    @abstractmethod
+    def set_signals(self, signals) -> None:
+        """Inject the global FileOperationSignals hub into this backend."""
+        pass
 
     @abstractmethod
     def copy(self, job: FileJob) -> str:

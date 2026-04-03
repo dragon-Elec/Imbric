@@ -39,9 +39,12 @@ from core.backends.gio.helpers import _make_gfile
 class GIOBackend(IOBackend):
     """GIO-based implementation of file operations."""
 
-    def __init__(self, signals):
-        self._signals = signals
+    def __init__(self):
+        self._signals = None
         self._pool = QThreadPool.globalInstance()
+
+    def set_signals(self, signals) -> None:
+        self._signals = signals
 
     def _submit(self, job: FileJob, runnable_class) -> str:
         # Ensure a fresh cancellable for every job
