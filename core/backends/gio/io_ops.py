@@ -10,7 +10,7 @@ import gi
 gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib
 
-from core.models.file_job import FileJob, FileOperationSignals
+from core.models.file_job import FileJob, FileOperationSignals, InversePayload
 from core.backends.gio.helpers import _make_gfile, _gfile_path
 from core.backends.gio.metadata import get_file_info
 from core.utils.path_ops import generate_candidate_path, build_conflict_payload
@@ -98,6 +98,9 @@ class GIOOperationRunnable(QRunnable):
                 gfile = _make_gfile(candidate)
                 try:
                     self._do_create(gfile)
+                    self.job.inverse_payload = InversePayload(
+                        action="trash", target=candidate, backend_id=self.job.backend_id
+                    )
                     self.emit_finished(True, candidate, result_override=candidate)
                     return
                 except GLib.Error as e:
@@ -112,6 +115,9 @@ class GIOOperationRunnable(QRunnable):
         gfile = _make_gfile(target_path)
         try:
             self._do_create(gfile)
+            self.job.inverse_payload = InversePayload(
+                action="trash", target=target_path, backend_id=self.job.backend_id
+            )
             self.emit_finished(True, target_path)
         except GLib.Error as e:
             self._handle_gio_error(e, op_type, target_path)
@@ -384,7 +390,12 @@ class TransferRunnable(GIOOperationRunnable):
                                     self._progress_callback,
                                     None,
                                 )
-                                self.job.inverse_payload = {"action": "move", "target": final_dest, "dest": self.job.source}
+                                self.job.inverse_payload = InversePayload(
+                                    action="move",
+                                    target=final_dest,
+                                    dest=self.job.source,
+                                    backend_id=self.job.backend_id,
+                                )
                                 self.emit_finished(
                                     True, "Success", result_override=final_dest
                                 )
@@ -404,7 +415,12 @@ class TransferRunnable(GIOOperationRunnable):
                                             if self.job.skipped_files
                                             else "Success"
                                         )
-                                        self.job.inverse_payload = {"action": "move", "target": final_dest, "dest": self.job.source}
+                                        self.job.inverse_payload = InversePayload(
+                                            action="move",
+                                            target=final_dest,
+                                            dest=self.job.source,
+                                            backend_id=self.job.backend_id,
+                                        )
                                         self.emit_finished(
                                             True, msg, result_override=final_dest
                                         )
@@ -418,7 +434,11 @@ class TransferRunnable(GIOOperationRunnable):
                                 if self.job.skipped_files
                                 else "Success"
                             )
-                            self.job.inverse_payload = {"action": "trash", "target": final_dest}
+                            self.job.inverse_payload = InversePayload(
+                                action="trash",
+                                target=final_dest,
+                                backend_id=self.job.backend_id,
+                            )
                             self.emit_finished(True, msg, result_override=final_dest)
                             return
 
@@ -523,7 +543,13 @@ class RenameRunnable(GIOOperationRunnable):
             if result:
                 abs_path = _gfile_path(result)
                 from core.utils.vfs_path import vfs_basename
-                self.job.inverse_payload = {"action": "rename", "target": abs_path, "new_name": vfs_basename(self.job.source)}
+
+                self.job.inverse_payload = InversePayload(
+                    action="rename",
+                    target=abs_path,
+                    new_name=vfs_basename(self.job.source),
+                    backend_id=self.job.backend_id,
+                )
                 self.emit_finished(True, "Success", result_override=abs_path)
             else:
                 self.emit_finished(False, "Rename returned no result")

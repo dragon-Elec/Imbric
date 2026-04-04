@@ -32,6 +32,7 @@ class AppBridge(QObject):
 
         # Initialize search worker
         self._search_worker = SearchWorker(self)
+        self._search_worker.setRegistry(main_window.registry)
         self._search_worker.resultsFound.connect(self.searchResultsFound)
         self._search_worker.searchFinished.connect(self.searchFinished)
         self._search_worker.searchError.connect(self.searchError)

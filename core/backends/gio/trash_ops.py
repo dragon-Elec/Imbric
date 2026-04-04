@@ -9,7 +9,7 @@ import gi
 gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib
 
-from core.models.file_job import FileJob, FileOperationSignals
+from core.models.file_job import FileJob, FileOperationSignals, InversePayload
 from core.models.trash_item import TrashItem
 from core.backends.gio.io_ops import GIOOperationRunnable
 from core.backends.gio.helpers import _make_gfile, _gfile_path
@@ -26,6 +26,9 @@ class SendToTrashRunnable(GIOOperationRunnable):
 
         try:
             gfile.trash(self.job.cancellable)
+            self.job.inverse_payload = InversePayload(
+                action="restore", target=path, backend_id=self.job.backend_id
+            )
             self.emit_finished(True, path)
 
         except GLib.Error as e:
@@ -53,6 +56,9 @@ class RestoreFromTrashRunnable(GIOOperationRunnable):
                 parent_gfile = _make_gfile(original_path).get_parent()
                 final_path = _gfile_path(parent_gfile.get_child(self.job.rename_to))
 
+            self.job.inverse_payload = InversePayload(
+                action="trash", target=final_path, backend_id=self.job.backend_id
+            )
             self.emit_finished(True, final_path)
 
         except GLib.Error as e:

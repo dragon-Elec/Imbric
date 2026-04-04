@@ -109,7 +109,7 @@ class FileOperations(QObject):
 
         self.batchFinished.emit(tid, success_list, failed_list)
 
-    @Slot(str, str, str, str, bool, str)
+    @Slot(str, str, str, str, bool, str, object)
     def _on_finished(
         self,
         tid: str,
@@ -118,16 +118,16 @@ class FileOperations(QObject):
         result_path: str,
         success: bool,
         message: str,
+        inv_payload=None,
     ):
         print(f"[FO] _on_finished: tid={tid[:8]}, jid={job_id[:8]}")
-        inv_payload = None
         with QMutexLocker(self._mutex):
             if job_id in self._jobs:
-                job = self._jobs[job_id]
-                inv_payload = getattr(job, "inverse_payload", None)
                 del self._jobs[job_id]
 
-        self.operationFinished.emit(tid, job_id, op_type, result_path, success, message, inv_payload)
+        self.operationFinished.emit(
+            tid, job_id, op_type, result_path, success, message, inv_payload
+        )
 
     @Slot(str, str, str, str, str, object)
     def _on_error(
@@ -282,7 +282,9 @@ class FileOperations(QObject):
         backend = self._registry.get_io(first_source)
         return self._submit(job, backend.batch_transfer)
 
-    def assessBatch(self, tid: str, sources: list, dest_dir: str, mode: str, resolver=None):
+    def assessBatch(
+        self, tid: str, sources: list, dest_dir: str, mode: str, resolver=None
+    ):
         runnable = BatchAssessmentRunnable(
             tid, sources, dest_dir, mode, self, self._signals, resolver=resolver
         )
@@ -408,11 +410,18 @@ class FileOperations(QObject):
         if action == "trash":
             return self.trash(payload["target"], transaction_id=tid)
         elif action == "restore":
-            return self.restore(payload["target"], transaction_id=tid, rename_to=payload.get("rename_to", ""))
+            return self.restore(
+                payload["target"],
+                transaction_id=tid,
+                rename_to=payload.get("rename_to", ""),
+            )
         elif action == "rename":
-            return self.rename(payload["target"], payload["new_name"], transaction_id=tid)
+            return self.rename(
+                payload["target"], payload["new_name"], transaction_id=tid
+            )
         elif action == "move":
             from core.utils.vfs_path import vfs_dirname
+
             dest_dir = vfs_dirname(payload["dest"])
             return self.move(payload["target"], dest_dir, transaction_id=tid)
         return ""
@@ -539,22 +548,22 @@ class BatchAssessmentRunnable(QRunnable):
                     # RESOLVE IN BACKGROUND
                     # This calls ConflictResolver which handles thread-safe dialog execution.
                     action, final_dest = self.resolver(src, dest)
-                    
+
                     # Convert Enum to string if necessary (resolver might return ConflictAction enum)
                     action_val = action.value if hasattr(action, "value") else action
-                    
+
                     if action_val == "cancel":
                         break
                     if action_val == "skip":
                         continue
-                    
+
                     valid_items.append(
                         {
-                            "src": src, 
-                            "dest": final_dest or dest, 
-                            "mode": self.mode, 
+                            "src": src,
+                            "dest": final_dest or dest,
+                            "mode": self.mode,
                             "overwrite": (action_val == "overwrite"),
-                            "auto_rename": (action_val == "rename" and not final_dest)
+                            "auto_rename": (action_val == "rename" and not final_dest),
                         }
                     )
                 else:

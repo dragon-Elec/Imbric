@@ -7,6 +7,13 @@ from core.interfaces.io_backend import IOBackend
 from core.interfaces.scanner_backend import ScannerBackend
 from core.interfaces.thumbnail_provider import ThumbnailProviderBackend
 from core.interfaces.metadata_provider import MetadataProvider
+from core.interfaces.monitor_backend import MonitorBackend
+from core.interfaces.device_provider import DeviceProvider
+from core.interfaces.metadata_workers import (
+    ItemCountWorkerBackend,
+    DimensionWorkerBackend,
+)
+from core.interfaces.search_backend import SearchBackend
 from core.models.file_job import FileOperationSignals
 
 
@@ -19,6 +26,11 @@ class BackendRegistry:
         self._scanner_backends: dict[str, ScannerBackend] = {}
         self._thumbnail_backends: list[ThumbnailProviderBackend] = []
         self._metadata_provider: MetadataProvider | None = None
+        self._monitor_backend: MonitorBackend | None = None
+        self._device_provider: DeviceProvider | None = None
+        self._count_worker_cls: type[ItemCountWorkerBackend] | None = None
+        self._dimension_worker_cls: type[DimensionWorkerBackend] | None = None
+        self._search_backend: SearchBackend | None = None
 
         self._default_io: IOBackend | None = None
         self._default_scanner: ScannerBackend | None = None
@@ -96,6 +108,47 @@ class BackendRegistry:
         """Get the metadata provider."""
         return self._metadata_provider
 
+    # -------------------------------------------------------------------------
+    # Monitor & Devices
+    # -------------------------------------------------------------------------
+    def set_monitor_backend(self, backend: MonitorBackend) -> None:
+        self._monitor_backend = backend
+
+    def get_monitor(self) -> MonitorBackend | None:
+        return self._monitor_backend
+
+    def set_device_provider(self, provider: DeviceProvider) -> None:
+        self._device_provider = provider
+
+    def get_devices(self) -> DeviceProvider | None:
+        return self._device_provider
+
+    # -------------------------------------------------------------------------
+    # Metadata Workers
+    # -------------------------------------------------------------------------
+    def set_worker_classes(
+        self,
+        count_cls: type[ItemCountWorkerBackend],
+        dim_cls: type[DimensionWorkerBackend],
+    ) -> None:
+        self._count_worker_cls = count_cls
+        self._dimension_worker_cls = dim_cls
+
+    def create_count_worker(self) -> ItemCountWorkerBackend | None:
+        return self._count_worker_cls() if self._count_worker_cls else None
+
+    def create_dimension_worker(self) -> DimensionWorkerBackend | None:
+        return self._dimension_worker_cls() if self._dimension_worker_cls else None
+
     def get_io_signals(self):
         """Get the FileOperationSignals hub shared across all backends."""
         return self._io_signals
+
+    # -------------------------------------------------------------------------
+    # Search Backend
+    # -------------------------------------------------------------------------
+    def set_search_backend(self, backend: SearchBackend) -> None:
+        self._search_backend = backend
+
+    def get_search(self) -> SearchBackend | None:
+        return self._search_backend

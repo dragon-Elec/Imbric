@@ -1,6 +1,10 @@
 from dataclasses import dataclass, field
 from enum import Enum
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.models.file_job import InversePayload
 
 
 class TransactionStatus(Enum):
@@ -23,7 +27,9 @@ class TransactionOperation:
     result_path: str = ""  # Specifically for rename/copy (e.g., "file (2).txt")
     job_id: str = ""  # The low-level job ID from FileOperations
     backend_id: str = ""  # The backend that executed this operation
-    inverse_payload: dict | None = None  # Built by backend to instruct UndoManager
+    inverse_payload: "InversePayload | None" = (
+        None  # Built by backend to instruct UndoManager
+    )
     status: TransactionStatus = TransactionStatus.PENDING
     error: str = ""
 
@@ -47,6 +53,7 @@ class Transaction:
     status: TransactionStatus = TransactionStatus.PENDING
     error_message: str = ""
     is_committed: bool = False
+    is_reversible: bool = True
 
     def add_operation(self, op: TransactionOperation):
         self.ops.append(op)

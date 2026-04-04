@@ -3,14 +3,9 @@ Post-operation filesystem verification.
 Moved from core/operation_validator.py
 """
 
-import gi
-
-gi.require_version("Gio", "2.0")
-from gi.repository import Gio
-
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
 
-from core.backends.gio.helpers import _make_gfile
+from core.registry import BackendRegistry
 
 
 class OperationValidator(QObject):
@@ -23,6 +18,10 @@ class OperationValidator(QObject):
         super().__init__(parent)
         self._pool = QThreadPool.globalInstance()
         self._enabled = True
+        self._registry: BackendRegistry | None = None
+
+    def setRegistry(self, registry: BackendRegistry):
+        self._registry = registry
 
     def setEnabled(self, enabled: bool):
         self._enabled = enabled
@@ -59,11 +58,16 @@ class ValidationRunnable(QRunnable):
 
     def run(self):
         try:
+            if not self.validator._registry:
+                return
+
+            backend = self.validator._registry.get_io(self.source)
+
             checker = _VALIDATORS.get(self.op_type)
             if not checker:
                 return
 
-            passed, expected, actual = checker(self.source, self.result_path)
+            passed, expected, actual = checker(self.source, self.result_path, backend)
 
             if passed:
                 self.validator.validationPassed.emit(self.job_id, self.op_type)
@@ -80,9 +84,9 @@ class ValidationRunnable(QRunnable):
             print(f"[VALIDATOR] Error during validation: {e}")
 
 
-def _check_copy(source: str, result_path: str) -> tuple:
-    src_exists = _make_gfile(source).query_exists(None)
-    dest_exists = _make_gfile(result_path).query_exists(None)
+def _check_copy(source: str, result_path: str, backend) -> tuple:
+    src_exists = backend.query_exists(source)
+    dest_exists = backend.query_exists(result_path)
 
     if dest_exists and src_exists:
         return (True, "", "")
@@ -96,9 +100,9 @@ def _check_copy(source: str, result_path: str) -> tuple:
     return (False, "dest exists + source exists", ", ".join(issues))
 
 
-def _check_move(source: str, result_path: str) -> tuple:
-    src_exists = _make_gfile(source).query_exists(None)
-    dest_exists = _make_gfile(result_path).query_exists(None)
+def _check_move(source: str, result_path: str, backend) -> tuple:
+    src_exists = backend.query_exists(source)
+    dest_exists = backend.query_exists(result_path)
 
     if dest_exists and not src_exists:
         return (True, "", "")
@@ -112,18 +116,18 @@ def _check_move(source: str, result_path: str) -> tuple:
     return (False, "dest exists + source gone", ", ".join(issues))
 
 
-def _check_rename(source: str, result_path: str) -> tuple:
-    if _make_gfile(source).equal(_make_gfile(result_path)):
-        exists = _make_gfile(result_path).query_exists(None)
+def _check_rename(source: str, result_path: str, backend) -> tuple:
+    if backend.is_same_file(source, result_path):
+        exists = backend.query_exists(result_path)
         if exists:
             return (True, "", "")
         return (False, "file exists", "file missing")
 
-    return _check_move(source, result_path)
+    return _check_move(source, result_path, backend)
 
 
-def _check_trash(source: str, result_path: str) -> tuple:
-    src_exists = _make_gfile(source).query_exists(None)
+def _check_trash(source: str, result_path: str, backend) -> tuple:
+    src_exists = backend.query_exists(source)
 
     if not src_exists:
         return (True, "", "")
@@ -131,27 +135,17 @@ def _check_trash(source: str, result_path: str) -> tuple:
     return (False, "source gone", "source still exists")
 
 
-def _check_create_folder(source: str, result_path: str) -> tuple:
-    gfile = _make_gfile(result_path)
-
-    if not gfile.query_exists(None):
+def _check_create_folder(source: str, result_path: str, backend) -> tuple:
+    if not backend.query_exists(result_path):
         return (False, "folder exists", "folder missing")
 
-    try:
-        info = gfile.query_info("standard::type", Gio.FileQueryInfoFlags.NONE, None)
-        if info.get_file_type() == Gio.FileType.DIRECTORY:
-            return (True, "", "")
-        return (
-            False,
-            "is directory",
-            f"is file type {info.get_file_type().value_nick}",
-        )
-    except Exception:
-        return (False, "is directory", "type query failed")
+    if backend.is_directory(result_path):
+        return (True, "", "")
+    return (False, "is directory", "is not directory")
 
 
-def _check_restore(source: str, result_path: str) -> tuple:
-    exists = _make_gfile(result_path).query_exists(None)
+def _check_restore(source: str, result_path: str, backend) -> tuple:
+    exists = backend.query_exists(result_path)
 
     if exists:
         return (True, "", "")
@@ -159,36 +153,22 @@ def _check_restore(source: str, result_path: str) -> tuple:
     return (False, "file exists at restore location", "file missing")
 
 
-def _check_create_file(source: str, result_path: str) -> tuple:
-    gfile = _make_gfile(result_path)
-
-    if not gfile.query_exists(None):
+def _check_create_file(source: str, result_path: str, backend) -> tuple:
+    if not backend.query_exists(result_path):
         return (False, "file exists", "file missing")
 
-    try:
-        info = gfile.query_info("standard::type", Gio.FileQueryInfoFlags.NONE, None)
-        if info.get_file_type() == Gio.FileType.REGULAR:
-            return (True, "", "")
-        return (False, "is regular file", f"is {info.get_file_type().value_nick}")
-    except Exception:
-        return (False, "is regular file", "type query failed")
+    if backend.is_regular_file(result_path):
+        return (True, "", "")
+    return (False, "is regular file", "is not regular file")
 
 
-def _check_create_symlink(source: str, result_path: str) -> tuple:
-    gfile = _make_gfile(result_path)
-
-    if not gfile.query_exists(None):
+def _check_create_symlink(source: str, result_path: str, backend) -> tuple:
+    if not backend.query_exists(result_path):
         return (False, "symlink exists", "symlink missing")
 
-    try:
-        info = gfile.query_info(
-            "standard::type", Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, None
-        )
-        if info.get_file_type() == Gio.FileType.SYMBOLIC_LINK:
-            return (True, "", "")
-        return (False, "is symlink", f"is {info.get_file_type().value_nick}")
-    except Exception:
-        return (False, "is symlink", "type query failed")
+    if backend.is_symlink(result_path):
+        return (True, "", "")
+    return (False, "is symlink", "is not symlink")
 
 
 _VALIDATORS = {

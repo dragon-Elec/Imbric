@@ -1,4 +1,4 @@
-Identity: core/backends — Concrete backend implementations. Each sub-directory is a self-contained provider for one technology.
+Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/core/backends — Concrete backend implementations. Each sub-directory is a self-contained provider for one technology.
 
 !Decision: [Backend-per-subdirectory] - Reason: Isolates GIO, gnome-thumbnailer, and any future backends (MTP, SFTP, liburing) into their own dependency boundaries.
 

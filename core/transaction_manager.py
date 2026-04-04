@@ -52,7 +52,9 @@ class TransactionManager(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._active_transactions: dict[str, Transaction] = {}
-        self._pending_conflicts: dict[str, dict[str, object]] = {}  # job_id -> conflict_data
+        self._pending_conflicts: dict[
+            str, dict[str, object]
+        ] = {}  # job_id -> conflict_data
         self._batch_resolvers: dict[
             str, Callable
         ] = {}  # tid -> conflict_resolver callback
@@ -66,14 +68,15 @@ class TransactionManager(QObject):
     # PUBLIC API (Called by AppBridge / UI)
     # -------------------------------------------------------------------------
 
-    @Slot(str, result=str)
-    def startTransaction(self, description: str) -> str:
+    @Slot(str, bool, result=str)
+    def startTransaction(self, description: str, is_reversible: bool = True) -> str:
         """
         Start a new batch job.
         Returns: transaction_id (str)
         """
         tid = str(uuid4())
         tx = Transaction(id=tid, description=description)
+        tx.is_reversible = is_reversible
         tx.status = TransactionStatus.RUNNING
 
         self._active_transactions[tid] = tx
@@ -195,7 +198,9 @@ class TransactionManager(QObject):
         if conflict_resolver:
             self._batch_resolvers[tid] = conflict_resolver
 
-        self._file_ops.assessBatch(tid, sources, dest_dir, mode, resolver=conflict_resolver)
+        self._file_ops.assessBatch(
+            tid, sources, dest_dir, mode, resolver=conflict_resolver
+        )
 
     # -------------------------------------------------------------------------
     # DEPENDENCY INJECTION
@@ -340,7 +345,9 @@ class TransactionManager(QObject):
                 return
 
     @Slot(str, str, str, str, bool, str, object)
-    def onOperationFinished(self, tid, job_id, op_type, result_path, success, message, inverse_payload=None):
+    def onOperationFinished(
+        self, tid, job_id, op_type, result_path, success, message, inverse_payload=None
+    ):
         print(f"[TM] opFinished: tid={tid[:8]}, jid={job_id[:8]}, success={success}")
         # [FIX] Always emit jobCompleted for UI, even for orphan jobs (no transaction)
         # This provides granular feedback for Smart UI behaviors (select after rename, etc.)
@@ -365,7 +372,9 @@ class TransactionManager(QObject):
             elif success and op_type == "move" and "Partial Success" in message:
                 status = TransactionStatus.PARTIAL
             else:
-                status = TransactionStatus.COMPLETED if success else TransactionStatus.FAILED
+                status = (
+                    TransactionStatus.COMPLETED if success else TransactionStatus.FAILED
+                )
 
             tx.update_status(job_id, status, error=message if not success else "")
 
@@ -449,11 +458,9 @@ class TransactionManager(QObject):
         print(f"[TM] Error/Conflict op={op_type} path={path}: {message}")
 
         # Check if it is a conflict
-        if (
-            conflict_data
-            and isinstance(conflict_data, dict)
-        ):
+        if conflict_data and isinstance(conflict_data, dict):
             from typing import cast
+
             data = cast(dict[str, object], conflict_data)
             if data.get("error") != "exists":
                 self.operationFailed.emit(op_type, path, message)

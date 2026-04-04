@@ -1,11 +1,11 @@
-Identity: core/interfaces — ABC layer defining every backend contract. Any new backend must implement these protocols.
+1. Identity: /Imbric/core/interfaces — ABC layer defining every backend contract. Any new backend must implement these protocols.
 
 !Decision: [ABCs > duck-typing] - Reason: Enforces contract completion at instantiation time; prevents silent partial implementations.
 !Pattern: [IO via FileJob] - Reason: All IOBackend methods accept a FileJob and return job_id (str); result is surfaced via signals, never return value.
 
 ---
 
-### [FILE: __init__.py] [DONE]
+### [FILE: __init__.py] [USABLE]
 Role: Re-exports all ABCs for single-import convenience.
 
 /DNA/: `from core.interfaces import IOBackend, ScannerBackend, ...` -> all 5 ABCs available.
@@ -14,7 +14,7 @@ Role: Re-exports all ABCs for single-import convenience.
 
 ---
 
-### [FILE: io_backend.py] [DONE]
+### [FILE: io_backend.py] [USABLE]
 Role: ABC for all file I/O (copy, move, trash, restore, delete, create, rename, symlink).
 
 /DNA/: All methods accept `FileJob` -> return `job_id: str`; contract mandates callers receive outcome via `FileOperationSignals`, not return value.
@@ -23,6 +23,7 @@ Role: ABC for all file I/O (copy, move, trash, restore, delete, create, rename, 
 
 API:
   - IOBackend(ABC):
+    - set_signals(signals) -> None: injects global signal hub.
     - copy(job) -> str
     - move(job) -> str
     - batch_transfer(job) -> str
@@ -40,7 +41,7 @@ API:
 
 ---
 
-### [FILE: scanner_backend.py] [DONE]
+### [FILE: scanner_backend.py] [USABLE]
 Role: ABC for directory scanning; results delivered via signals, not returns.
 
 /DNA/: `scan_directory(path)` -> emits file-discovery signals; `cancel()` -> halts scan in progress.
@@ -55,7 +56,7 @@ API:
 
 ---
 
-### [FILE: metadata_provider.py] [DONE]
+### [FILE: metadata_provider.py] [USABLE]
 Role: ABC for synchronous (blocking) metadata retrieval.
 
 /DNA/: `get_file_info(path_or_uri)` => `FileInfo | None`; `get_dimensions` and `get_item_count` may return sentinel (`None`/`-1`) for async-only impls.
@@ -70,7 +71,7 @@ API:
 
 ---
 
-### [FILE: thumbnail_provider.py] [DONE]
+### [FILE: thumbnail_provider.py] [USABLE]
 Role: ABC for thumbnail generation; providers stacked in registry, first-match wins.
 
 /DNA/: `supports(mime_type)` => bool; `if True` -> `generate(uri, mime, mtime)` => thumb_path | None; `lookup` checks cache before generate.
@@ -85,7 +86,7 @@ API:
 
 ---
 
-### [FILE: cache_provider.py] [DONE]
+### [FILE: cache_provider.py] [USABLE]
 Role: ABC for mount-scoped cache layer (get/set/invalidate/warm/clear).
 
 /DNA/: `get(key)` => cached value or None; `warm(path)` pre-fills cache aggressively; `clear()` nukes all entries.
@@ -99,3 +100,18 @@ API:
     - invalidate(key) -> None
     - warm(path) -> None
     - clear() -> None
+102: 
+103: ---
+104: 
+105: ### [FILE: cancellation.py] [USABLE]
+106: Role: Abstract base for backend-neutral cancellation tokens.
+107: 
+108: /DNA/: [call:cancel() -> is_cancelled() => true]
+109: 
+110: - SrcDeps: None
+111: - SysDeps: abc{ABC, abstractmethod}
+112: 
+113: API:
+114:   - CancellationToken(ABC):
+115:     - cancel() -> None: triggers the cancellation state.
+116:     - is_cancelled() -> bool: checks for active cancellation request.

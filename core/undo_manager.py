@@ -68,6 +68,9 @@ class UndoManager(QObject):
         if self._pending_mode != PendingMode.NONE:
             return
 
+        if not tx.is_reversible:
+            return
+
         self._undo_stack.append(tx)
         self._redo_stack.clear()
         self._emit_status()
@@ -203,7 +206,9 @@ class UndoManager(QObject):
     # --- ASYNC HANDLERS ---
 
     @Slot(str, str, str, str, bool, str, object)
-    def _on_op_finished(self, tid, job_id, op_type, path, success, msg, inv_payload=None):
+    def _on_op_finished(
+        self, tid, job_id, op_type, path, success, msg, inv_payload=None
+    ):
         if job_id in self._pending_job_ids:
             self._pending_job_ids.discard(job_id)
             if not success:

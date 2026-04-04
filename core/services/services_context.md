@@ -22,6 +22,9 @@ API:
     - setKey(key: int) -> None
     - setAscending(ascending: bool) -> None
     - setFoldersFirst(enabled: bool) -> None
+    - currentKey() -> int: returns current SortKey value.
+    - isAscending() -> bool: returns current sort direction.
+    - isFoldersFirst() -> bool: returns current folders-first preference.
 
 !Caveat: `sort()` operates on list[dict] (QML JSON model dicts), not `FileInfo` objects. Keys accessed: `isDir`, `name`, `dateModified`, `size`.
 

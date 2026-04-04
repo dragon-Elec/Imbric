@@ -8,7 +8,6 @@ from ui.models.tab_model import TabListModel
 from ui.models.pane_context import PaneContext
 from ui.models.sidebar_model import SidebarModel
 from core.backends.gio.desktop import QuickAccessBridge
-from core.backends.gio.volumes import VolumesBridge
 
 
 class ShellManager(QObject):
@@ -39,7 +38,8 @@ class ShellManager(QObject):
 
         # 1. Initialize Bridges
         self.quick_access = QuickAccessBridge(self)
-        self.volumes_bridge = VolumesBridge(self)
+        self.volumes_bridge = main_window.registry.get_devices()
+        self.volumes_bridge.setParent(self)
 
         # Internal State for UI persistence
         self._section_states = {
@@ -76,7 +76,7 @@ class ShellManager(QObject):
         from core.backends.gnome_thumbnailer.provider import ThumbnailProvider
         from core.backends.gnome_thumbnailer.theme_icons import ThemeImageProvider
 
-        self._thumbnail_provider = ThumbnailProvider()
+        self._thumbnail_provider = ThumbnailProvider(main_window.registry)
         self._theme_provider = ThemeImageProvider()
 
         self.qml_view.engine().addImageProvider("thumbnail", self._thumbnail_provider)

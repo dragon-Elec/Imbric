@@ -11,7 +11,6 @@ Key Architectural Features:
 4. Progress Relaying: Mid-task feedback for long-running I/O.
 """
 
-
 import threading
 import heapq
 import itertools
@@ -30,6 +29,7 @@ class AsyncTask(QRunnable):
         on_progress_callback: Callable[[str, int, int], None],
         cancel_event: threading.Event,
         inject_cancel: bool,
+        inject_progress: bool,
         *args: Any,
         **kwargs: Any,
     ):
@@ -42,13 +42,16 @@ class AsyncTask(QRunnable):
         self.kwargs = kwargs.copy()
         self.cancel_event = cancel_event
         self.inject_cancel = inject_cancel
+        self.inject_progress = inject_progress
         self.setAutoDelete(True)
-
-
 
     def _safe_inject(self) -> None:
         if self.inject_cancel:
             self.kwargs["cancel_event"] = self.cancel_event
+        if self.inject_progress:
+            self.kwargs["report_progress"] = lambda current, total: self.on_progress(
+                self.task_id, current, total
+            )
 
     def run(self) -> None:
         if self.cancel_event.is_set():
@@ -100,13 +103,21 @@ class AsyncWorkerPool(QObject):
         batch_id: str | None = None,
         priority: int = 50,
         inject_cancel: bool = False,
+        inject_progress: bool = False,
         *args: Any,
         **kwargs: Any,
     ) -> None:
         with QMutexLocker(self._mutex):
             self._register_batch(batch_id)
             self._enqueue_locked(
-                task_id, func, batch_id, priority, inject_cancel, args, kwargs
+                task_id,
+                func,
+                batch_id,
+                priority,
+                inject_cancel,
+                inject_progress,
+                args,
+                kwargs,
             )
         self._process_queue()
 
@@ -116,19 +127,43 @@ class AsyncWorkerPool(QObject):
         batch_id: str,
         priority: int = 50,
         inject_cancel: bool = False,
+        inject_progress: bool = False,
     ) -> None:
         with QMutexLocker(self._mutex):
             self._register_batch(batch_id)
             for task_id, func, args, kwargs in tasks:
                 self._enqueue_locked(
-                    task_id, func, batch_id, priority, inject_cancel, args, kwargs
+                    task_id,
+                    func,
+                    batch_id,
+                    priority,
+                    inject_cancel,
+                    inject_progress,
+                    args,
+                    kwargs,
                 )
         self._process_queue()
 
     def _enqueue_locked(
-        self, task_id, func, batch_id, priority, inject_cancel, args, kwargs
+        self,
+        task_id,
+        func,
+        batch_id,
+        priority,
+        inject_cancel,
+        inject_progress,
+        args,
+        kwargs,
     ):
-        task_data = (task_id, func, batch_id, inject_cancel, args, kwargs)
+        task_data = (
+            task_id,
+            func,
+            batch_id,
+            inject_cancel,
+            inject_progress,
+            args,
+            kwargs,
+        )
         heapq.heappush(self._queue, (priority, next(self._counter), task_data))
         if batch_id:
             self._pending_batches[batch_id] += 1
@@ -199,8 +234,18 @@ class AsyncWorkerPool(QObject):
         with QMutexLocker(self._mutex):
             while self._queue and self._active_count < self.max_concurrent:
                 priority, _, task_data = heapq.heappop(self._queue)
-                task_id, func, batch_id, inject_cancel, args, kwargs = task_data
-                print(f"[Pool] Pop: {task_id} Prio: {priority} Active: {self._active_count}")
+                (
+                    task_id,
+                    func,
+                    batch_id,
+                    inject_cancel,
+                    inject_progress,
+                    args,
+                    kwargs,
+                ) = task_data
+                print(
+                    f"[Pool] Pop: {task_id} Prio: {priority} Active: {self._active_count}"
+                )
 
                 self._active_count += 1
 
@@ -224,6 +269,7 @@ class AsyncWorkerPool(QObject):
                     on_prog,
                     cancel_evt,
                     inject_cancel,
+                    inject_progress,
                     *args,
                     **kwargs,
                 )
@@ -247,7 +293,7 @@ class AsyncWorkerPool(QObject):
                 if batch_id and batch_id in self._batch_stats:
                     if error is not None:
                         self._batch_stats[batch_id]["error"] += 1
-                        
+
                     else:
                         self._batch_stats[batch_id]["done"] += 1
 

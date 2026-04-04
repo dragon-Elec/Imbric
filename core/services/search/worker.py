@@ -6,12 +6,9 @@ Moved from core/search_worker.py
 from PySide6.QtCore import QThread, Signal, Slot, QMutex, QMutexLocker
 from typing import List
 import os
-import gi
-
-gi.require_version("Gio", "2.0")
-from gi.repository import Gio
 
 from core.services.search.engines import get_search_engine, SearchEngine
+from core.registry import BackendRegistry
 
 
 class SearchWorker(QThread):
@@ -32,6 +29,10 @@ class SearchWorker(QThread):
         self._recursive: bool = True
         self._cancelled: bool = False
         self._mutex = QMutex()
+        self._registry: BackendRegistry | None = None
+
+    def setRegistry(self, registry: BackendRegistry):
+        self._registry = registry
 
     @property
     def engine_name(self) -> str:
@@ -63,12 +64,17 @@ class SearchWorker(QThread):
             pattern = self._pattern
             recursive = self._recursive
 
-        gfile = Gio.File.new_for_commandline_arg(search_uri)
-        if not gfile.query_exists():
+        if not self._registry:
+            self.searchError.emit("Backend registry not configured for SearchWorker.")
+            return
+
+        backend = self._registry.get_io(search_uri)
+
+        if not backend.query_exists(search_uri):
             self.searchError.emit(f"Invalid location: {search_uri}")
             return
 
-        local_search_path = gfile.get_path()
+        local_search_path = backend.get_local_path(search_uri)
 
         if not local_search_path or not os.path.isdir(local_search_path):
             error_msg = f"Search is not supported on this location ('{search_uri}'). "

@@ -4,8 +4,21 @@ No GIO/Qt dependencies in the dataclass definition - those are injected in the r
 """
 
 from dataclasses import dataclass, field
+from typing import TypedDict, NotRequired
 from PySide6.QtCore import QObject, Signal
 from core.interfaces.cancellation import CancellationToken
+
+
+class InversePayload(TypedDict, total=False):
+    """Contract for undo reversal data. Built by backend, executed by UndoManager."""
+
+    action: str  # "trash" | "restore" | "rename" | "move"
+    target: str  # Path to operate on
+    dest: NotRequired[str]  # Original source (for move reversal)
+    new_name: NotRequired[str]  # Original name (for rename reversal)
+    rename_to: NotRequired[str]  # For restore with new name
+    tid: NotRequired[str]  # Transaction ID (injected at execution time)
+    backend_id: NotRequired[str]  # Backend that should execute the reversal
 
 
 @dataclass(slots=True)
@@ -20,7 +33,7 @@ class FileJob:
     cancellable: CancellationToken | None = field(
         default=None, repr=False
     )  # Injected by executor
-    inverse_payload: dict | None = None  # Built by the backend upon success
+    inverse_payload: InversePayload | None = None  # Built by backend upon success
     auto_rename: bool = (
         False  # If True, automatically find a free name (For New Folder / Duplicate)
     )

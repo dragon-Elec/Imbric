@@ -13,16 +13,23 @@ from PySide6.QtGui import QImage, QIcon
 from PySide6.QtCore import QSize, QRunnable, QThreadPool, QMutex, QMutexLocker
 
 import os
-from core.backends.gio.metadata import get_file_info
+from core.registry import BackendRegistry
 
 
 class ThumbnailResponse(QQuickImageResponse):
-    def __init__(self, path: str, requested_size: QSize, factory):
+    def __init__(
+        self,
+        path: str,
+        requested_size: QSize,
+        factory,
+        registry: BackendRegistry | None = None,
+    ):
         super().__init__()
         self._image = QImage()
         self._path = path
         self._requested_size = requested_size
         self._factory = factory
+        self._registry = registry
 
         runnable = ThumbnailRunnable(self)
         QThreadPool.globalInstance().start(runnable)
@@ -52,10 +59,14 @@ class ThumbnailRunnable(QRunnable):
         file_path = self._response._path
         requested_size = self._response._requested_size
         factory = self._response._factory
+        registry = self._response._registry
 
         target_size = requested_size if requested_size.isValid() else QSize(256, 256)
 
-        info = get_file_info(file_path)
+        info = None
+        if registry and registry.metadata:
+            info = registry.metadata.get_file_info(file_path)
+
         if not info:
             img = self._get_emblemed_icon(
                 "emblem-unreadable", "emblem-unreadable", target_size
@@ -210,8 +221,9 @@ class ThumbnailProvider(QQuickAsyncImageProvider):
     _shared_factory = None
     _lock = QMutex()
 
-    def __init__(self):
+    def __init__(self, registry: BackendRegistry | None = None):
         super().__init__()
+        self._registry = registry
 
         if ThumbnailProvider._shared_factory is None:
             ThumbnailProvider._shared_factory = (
@@ -225,4 +237,4 @@ class ThumbnailProvider(QQuickAsyncImageProvider):
     def requestImageResponse(
         self, id_path: str, requested_size: QSize
     ) -> QQuickImageResponse:
-        return ThumbnailResponse(id_path, requested_size, self._factory)
+        return ThumbnailResponse(id_path, requested_size, self._factory, self._registry)

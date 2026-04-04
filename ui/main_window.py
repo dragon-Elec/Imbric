@@ -7,6 +7,8 @@ import os
 # Core Logic
 from core.managers import FileOperations, TransactionManager, UndoManager
 from core.backends.gio.monitor import FileMonitor
+from core.backends.gio.volumes import VolumesBridge
+from core.backends.gio.metadata_workers import ItemCountWorker, DimensionWorker
 from core.services.validator import OperationValidator
 from core.registry import BackendRegistry
 from core.backends.gio.backend import GIOBackend, GIOMetadataProvider
@@ -47,21 +49,28 @@ class MainWindow(QMainWindow):
 
         # 2. Register GIO Backend
         # We pass self.file_ops._signals so the backend can emit directly through the manager's hub
-        gio_backend = GIOBackend(self.file_ops._signals)
+        gio_backend = GIOBackend()
+        gio_backend.set_signals(self.file_ops._signals)
         self.registry.set_default_io(gio_backend)
         self.registry.set_metadata_provider(GIOMetadataProvider())
+
+        self.registry.set_monitor_backend(FileMonitor())
+        self.registry.set_device_provider(VolumesBridge())
+        self.registry.set_worker_classes(ItemCountWorker, DimensionWorker)
 
         # 3. Inject Registry
         self.file_ops.setRegistry(self.registry)
 
-        self.file_monitor = FileMonitor()
+        self.file_monitor = self.registry.get_monitor()
         self.transaction_manager = TransactionManager()
         self.undo_manager = UndoManager(self.transaction_manager)
         self.operation_validator = OperationValidator()
+        self.operation_validator.setRegistry(self.registry)
 
         # Wire Core Logic
         self.transaction_manager.setFileOperations(self.file_ops)
         self.transaction_manager.setValidator(self.operation_validator)
+
         self.file_ops.setTransactionManager(self.transaction_manager)
         self.file_ops.setUndoManager(self.undo_manager)
 

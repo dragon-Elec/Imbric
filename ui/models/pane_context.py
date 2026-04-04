@@ -10,7 +10,6 @@ from core.backends.gio.desktop import (
     get_breadcrumb_segments,
 )
 from core.backends.gio.scanner import FileScanner
-from core.backends.gio.metadata_workers import ItemCountWorker, DimensionWorker
 from ui.services.row_builder import RowBuilder
 from ui.bridges.app_bridge import AppBridge
 
@@ -38,8 +37,13 @@ class PaneContext(QObject):
         self.bridge = AppBridge(main_window)
 
         # Background workers for scanner
-        self._count_worker = ItemCountWorker()
-        self._dimension_worker = DimensionWorker()
+        registry = self.mw.registry
+        self._count_worker = registry.create_count_worker()
+        self._dimension_worker = registry.create_dimension_worker()
+        if self._count_worker:
+            self._count_worker.setParent(self)
+        if self._dimension_worker:
+            self._dimension_worker.setParent(self)
         self.scanner.set_workers(self._count_worker, self._dimension_worker)
 
         # Wire up components

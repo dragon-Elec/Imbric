@@ -10,7 +10,7 @@ from gi.repository import Gio
 
 from PySide6.QtCore import QThreadPool
 
-from core.interfaces.io_backend import IOBackend
+from core.interfaces.io_backend import IOBackend, BackendFeature
 from core.interfaces.scanner_backend import ScannerBackend
 from core.interfaces.metadata_provider import MetadataProvider
 from core.models.file_job import FileJob
@@ -43,8 +43,24 @@ class GIOBackend(IOBackend):
         self._signals = None
         self._pool = QThreadPool.globalInstance()
 
+    def supports_feature(self, feature: BackendFeature) -> bool:
+        # GIO is a very rich backend, it supports most features.
+        # Hardware specific backends might not.
+        return feature in {
+            BackendFeature.SYMLINK,
+            BackendFeature.TRASH,
+            BackendFeature.HARDLINK,
+            BackendFeature.PERMISSIONS,
+            # Search might be supported separately or partially
+            BackendFeature.SEARCH,
+        }
+
     def set_signals(self, signals) -> None:
         self._signals = signals
+
+    def build_inverse_payload(self, job: FileJob, result_path: str) -> dict | None:
+        """Return the inverse payload built by the runnable during execution."""
+        return getattr(job, "inverse_payload", None)
 
     def _submit(self, job: FileJob, runnable_class) -> str:
         # Ensure a fresh cancellable for every job
@@ -99,6 +115,38 @@ class GIOBackend(IOBackend):
 
     def is_same_file(self, path_a: str, path_b: str) -> bool:
         return _make_gfile(path_a).equal(_make_gfile(path_b))
+
+    def is_directory(self, path: str) -> bool:
+        try:
+            info = _make_gfile(path).query_info(
+                "standard::type", Gio.FileQueryInfoFlags.NONE, None
+            )
+            return info.get_file_type() == Gio.FileType.DIRECTORY
+        except GLib.Error:
+            return False
+
+    def is_symlink(self, path: str) -> bool:
+        try:
+            info = _make_gfile(path).query_info(
+                "standard::type", Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, None
+            )
+            return info.get_file_type() == Gio.FileType.SYMBOLIC_LINK
+        except GLib.Error:
+            return False
+
+    def is_regular_file(self, path: str) -> bool:
+        try:
+            info = _make_gfile(path).query_info(
+                "standard::type", Gio.FileQueryInfoFlags.NONE, None
+            )
+            return info.get_file_type() == Gio.FileType.REGULAR
+        except GLib.Error:
+            return False
+
+    def get_local_path(self, path: str) -> str | None:
+        """Get the local POSIX path if available."""
+        gfile = _make_gfile(path)
+        return gfile.get_path()
 
 
 class GIOMetadataProvider(MetadataProvider):

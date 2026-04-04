@@ -8,6 +8,7 @@ from core.interfaces.thumbnail_provider import ThumbnailProviderBackend
 from core.interfaces.metadata_provider import MetadataProvider
 from core.interfaces.cache_provider import CacheProvider
 from core.interfaces.cancellation import CancellationToken
+from core.interfaces.search_backend import SearchBackend
 
 __all__ = [
     "IOBackend",
@@ -16,4 +17,5 @@ __all__ = [
     "MetadataProvider",
     "CacheProvider",
     "CancellationToken",
+    "SearchBackend",
 ]

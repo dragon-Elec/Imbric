@@ -2,21 +2,45 @@
 IOBackend ABC - Contract for file I/O operations.
 All file operations (copy, move, delete, create) go through this interface.
 """
+
 from __future__ import annotations
 
+from enum import StrEnum
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.models.file_job import FileJob
+    from core.models.file_job import FileJob, InversePayload
+
+
+class BackendFeature(StrEnum):
+    """Features that a backend might optionally support."""
+
+    SYMLINK = "symlink"
+    TRASH = "trash"
+    HARDLINK = "hardlink"
+    PERMISSIONS = "permissions"
+    SEARCH = "search"
 
 
 class IOBackend(ABC):
     """Contract for file I/O operations."""
 
     @abstractmethod
+    def supports_feature(self, feature: BackendFeature) -> bool:
+        """Query if the backend supports a specific feature."""
+        pass
+
+    @abstractmethod
     def set_signals(self, signals) -> None:
         """Inject the global FileOperationSignals hub into this backend."""
+        pass
+
+    @abstractmethod
+    def build_inverse_payload(
+        self, job: FileJob, result_path: str
+    ) -> InversePayload | None:
+        """Build reverse operation data for undo. Return None if not reversible."""
         pass
 
     @abstractmethod
@@ -123,4 +147,27 @@ class IOBackend(ABC):
     @abstractmethod
     def is_same_file(self, path_a: str, path_b: str) -> bool:
         """Check if two paths refer to the same file."""
+        pass
+
+    @abstractmethod
+    def is_directory(self, path: str) -> bool:
+        """Check if path is a directory."""
+        pass
+
+    @abstractmethod
+    def is_symlink(self, path: str) -> bool:
+        """Check if path is a symlink."""
+        pass
+
+    @abstractmethod
+    def is_regular_file(self, path: str) -> bool:
+        """Check if path is a regular file."""
+        pass
+
+    @abstractmethod
+    def get_local_path(self, path: str) -> str | None:
+        """
+        Get the local POSIX path if available.
+        Returns None for virtual backends (e.g. MTP) or if not supported.
+        """
         pass
