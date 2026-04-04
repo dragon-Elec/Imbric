@@ -64,8 +64,8 @@ class ThumbnailRunnable(QRunnable):
         target_size = requested_size if requested_size.isValid() else QSize(256, 256)
 
         info = None
-        if registry and registry.metadata:
-            info = registry.metadata.get_file_info(file_path)
+        if registry and registry.get_metadata():
+            info = registry.get_metadata().get_file_info(file_path)
 
         if not info:
             img = self._get_emblemed_icon(
