@@ -108,6 +108,11 @@ class BackendRegistry:
         """Get the metadata provider."""
         return self._metadata_provider
 
+    @property
+    def metadata(self) -> MetadataProvider | None:
+        """Alias for get_metadata()."""
+        return self._metadata_provider
+
     # -------------------------------------------------------------------------
     # Monitor & Devices
     # -------------------------------------------------------------------------
