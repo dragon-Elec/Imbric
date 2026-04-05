@@ -1,0 +1,3 @@
+#!/bin/bash
+cd /usr/lib/imbric
+exec python3 main.py "$@"

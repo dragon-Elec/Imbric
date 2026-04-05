@@ -1,0 +1,29 @@
+{
+  "include": [
+    "."
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".agents",
+    ".pydexi",
+    ".vscode",
+    "diff_tmp"
+  ],
+  "typeCheckingMode": "basic",
+  "useLibraryCodeForTypes": true,
+  "reportMissingTypeStubs": false,
+  
+  "reportMissingImports": "error",
+  "reportUndefinedVariable": "error",
+  "reportOptionalMemberAccess": "warning",
+  
+  "reportAttributeAccessIssue": "information",
+  "reportArgumentType": "information",
+  
+  "reportUnknownMemberType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnknownArgumentType": "none"
+}

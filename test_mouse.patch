@@ -1,0 +1,9 @@
+--- a/ui/managers/shell_manager.py
++++ b/ui/managers/shell_manager.py
+@@ -114,6 +114,7 @@ class ShellManager(QObject):
+         # Pass main_window as parent for the window container
+         self.container = QWidget.createWindowContainer(self.qml_view, main_window)
+         self.container.setFocusPolicy(Qt.FocusPolicy.TabFocus)
++        self.container.setMouseTracking(True)
+         
+         # 10. Signal Connections
