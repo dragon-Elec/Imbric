@@ -6,9 +6,9 @@
 ---
 
 ### [FILE: __init__.py] [USABLE]
-Role: Re-exports all ABCs for single-import convenience.
+Role: Re-exports core ABCs for single-import convenience.
 
-/DNA/: `from core.interfaces import IOBackend, ScannerBackend, ...` -> all 5 ABCs available.
+/DNA/: `from core.interfaces import IOBackend, ...` -> core 7 ABCs available.
 
 - SysDeps: (none — pure re-export)
 
@@ -19,25 +19,22 @@ Role: ABC for all file I/O (copy, move, trash, restore, delete, create, rename, 
 
 /DNA/: All methods accept `FileJob` -> return `job_id: str`; contract mandates callers receive outcome via `FileOperationSignals`, not return value.
 
-- SysDeps: abc, core.models.file_job
+- SysDeps: abc, enum, typing, core.models.file_job{FileJob, InversePayload}
 
 API:
+  - BackendFeature(StrEnum): SYMLINK, TRASH, HARDLINK, PERMISSIONS, SEARCH.
   - IOBackend(ABC):
+    - supports_feature(feature: BackendFeature) -> bool: queries backend capabilities.
     - set_signals(signals) -> None: injects global signal hub.
-    - copy(job) -> str
-    - move(job) -> str
-    - batch_transfer(job) -> str
-    - trash(job) -> str
-    - restore(job) -> str
-    - delete(job) -> str
-    - create_folder(job) -> str
-    - create_file(job) -> str
-    - rename(job) -> str
-    - create_symlink(job) -> str
-    - list_trash(job) -> str
-    - empty_trash(job) -> str
+    - build_inverse_payload(job, result_path) -> InversePayload | None: for UndoManager.
+    - copy(job) / move(job) / batch_transfer(job) -> str: transfer operations.
+    - trash(job) / restore(job) / delete(job) -> str: deletion and trash lifecycle.
+    - create_folder(job) / create_file(job) / rename(job) / create_symlink(job) -> str: creation and naming.
+    - list_trash(job) / empty_trash(job) -> str: trash management.
     - query_exists(path) -> bool
     - is_same_file(path_a, path_b) -> bool
+    - is_directory(path) / is_symlink(path) / is_regular_file(path) -> bool.
+    - get_local_path(path) -> str | None.
 
 ---
 
@@ -61,7 +58,7 @@ Role: ABC for synchronous (blocking) metadata retrieval.
 
 /DNA/: `get_file_info(path_or_uri)` => `FileInfo | None`; `get_dimensions` and `get_item_count` may return sentinel (`None`/`-1`) for async-only impls.
 
-- SysDeps: abc, typing, core.models.file_info
+- SysDeps: abc, typing, core.models.file_info{FileInfo}
 
 API:
   - MetadataProvider(ABC):
@@ -100,18 +97,81 @@ API:
     - invalidate(key) -> None
     - warm(path) -> None
     - clear() -> None
-102: 
-103: ---
-104: 
-105: ### [FILE: cancellation.py] [USABLE]
-106: Role: Abstract base for backend-neutral cancellation tokens.
-107: 
-108: /DNA/: [call:cancel() -> is_cancelled() => true]
-109: 
-110: - SrcDeps: None
-111: - SysDeps: abc{ABC, abstractmethod}
-112: 
-113: API:
-114:   - CancellationToken(ABC):
-115:     - cancel() -> None: triggers the cancellation state.
-116:     - is_cancelled() -> bool: checks for active cancellation request.
+
+---
+
+### [FILE: search_backend.py] [USABLE]
+Role: ABC for live file search (filename/content/fuzzy). Results stream via signals.
+
+/DNA/: `[search(query, path, mode, options) -> resultsReady(list) -> searchFinished(sid)]` + `[cancel() -> halts stream]`
+
+- SysDeps: abc, PySide6{QtCore}
+
+API:
+  - SearchBackend(ABC, QObject):
+    - search(query, path, mode, options) -> None: asynchronous streaming search.
+    - cancel() -> None: terminates current search session.
+    - Signals: resultsReady(list), searchFinished(sid), searchError(msg)
+
+---
+
+### [FILE: monitor_backend.py] [USABLE]
+Role: QObject-based ABC for directory change monitoring (Inotify/GFileMonitor).
+
+/DNA/: `[watch(path) -> watchReady | watchFailed] -> [fileCreated | fileDeleted | fileChanged | fileRenamed | directoryChanged]`
+
+- SysDeps: PySide6{QtCore}
+
+API:
+  - MonitorBackend(QObject):
+    - watch(directory_path) -> None: starts watching.
+    - stop() -> None: terminates current watcher.
+    - currentPath() -> str: returns the watched directory path.
+    - Signals: fileCreated(path), fileDeleted(path), fileChanged(path), fileRenamed(old, new), directoryChanged, watchReady(path), watchFailed(reason)
+
+---
+
+### [FILE: device_provider.py] [USABLE]
+Role: QObject-based ABC for volume and MTP device monitoring and lifecycle.
+
+/DNA/: `[mount_volume(id) -> mountSuccess | mountError]` + `[unmount_volume(id) -> volumesChanged]`
+
+- SysDeps: PySide6{QtCore}
+
+API:
+  - DeviceProvider(QObject):
+    - get_volumes() -> list: dictionary items for each volume/mount.
+    - mount_volume(identifier) / unmount_volume(identifier) -> None: lifecycle control.
+    - title / icon Properties: UI integration metadata.
+    - Signals: volumesChanged, mountSuccess(id), mountError(msg)
+
+---
+
+### [FILE: metadata_workers.py] [USABLE]
+Role: Contracts for high-frequency, async metadata extraction (counts, dimensions).
+
+/DNA/: `[enqueue(uri, path) -> worker processing -> dimensionsReady | countReady]` + `[clear() -> empty queue]`
+
+- SysDeps: PySide6{QtCore}
+
+API:
+  - ItemCountWorkerBackend(QObject):
+    - enqueue(uri, path) / clear() -> None
+    - Signals: countReady(path, count)
+  - DimensionWorkerBackend(QObject):
+    - enqueue(uri, path) / clear() -> None
+    - Signals: dimensionsReady(id, w, h)
+
+---
+
+### [FILE: cancellation.py] [USABLE]
+Role: Abstract base for backend-neutral cancellation tokens.
+
+/DNA/: [call:cancel() -> is_cancelled() => true]
+
+- SysDeps: abc{ABC, abstractmethod}
+
+API:
+  - CancellationToken(ABC):
+    - cancel() -> None: triggers the cancellation state.
+    - is_cancelled() -> bool: checks for active cancellation request.

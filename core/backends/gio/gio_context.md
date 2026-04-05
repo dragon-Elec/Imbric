@@ -38,24 +38,31 @@ Role: GIOBackend implements IOBackend; GIOMetadataProvider implements MetadataPr
 
 /DNA/: `GIOBackend._submit(job, RunClass)` -> if()!job.cancellable: assign Gio.Cancellable -> `RunClass(job, signals)` -> pool.start -> return job.id
 
-- SrcDeps: .io_ops, .trash_ops, .scanner, .metadata, .helpers, core.interfaces{IOBackend, ScannerBackend, MetadataProvider}, core.models{FileJob, FileInfo}
-- SysDeps: PySide6{QtCore}, gi.repository{Gio}
+- SrcDeps: .io_ops, .trash_ops, .metadata, .helpers, core.interfaces{IOBackend, BackendFeature, MetadataProvider}, core.models{FileJob, FileInfo}
+- SysDeps: PySide6.QtCore, gi.repository.Gio
 
 API:
   - GIOBackend(IOBackend):
+    - supports_feature(feature: BackendFeature) -> bool: returns True for SYMLINK, TRASH, HARDLINK, PERMISSIONS, SEARCH.
     - set_signals(signals) -> None: injects global signal hub.
+    - build_inverse_payload(job: FileJob, result_path: str) -> dict | None: returns job.inverse_payload if set.
     - copy(job), move(job), batch_transfer(job), trash(job), restore(job), list_trash(job), empty_trash(job) -> str
-    - delete(job) -> str: alias for trash
+    - delete(job) -> str: alias for trash.
     - create_folder(job), create_file(job), rename(job), create_symlink(job) -> str
-    - query_exists(path) -> bool: _make_gfile(path).query_exists(None)
-    - is_same_file(path_a, path_b) -> bool: _make_gfile(a).equal(_make_gfile(b))
+    - query_exists(path) -> bool: _make_gfile(path).query_exists(None).
+    - is_same_file(path_a, path_b) -> bool: _make_gfile(a).equal(_make_gfile(b)).
+    - is_directory(path) -> bool: query_info standard::type => FileType.DIRECTORY.
+    - is_symlink(path) -> bool: query_info NOFOLLOW_SYMLINKS => FileType.SYMBOLIC_LINK.
+    - is_regular_file(path) -> bool: query_info standard::type => FileType.REGULAR.
+    - get_local_path(path) -> str | None: _make_gfile(path).get_path().
 
   - GIOMetadataProvider(MetadataProvider):
-    - get_file_info(path_or_uri, attributes=None) -> FileInfo | None: calls metadata.get_file_info
-    - get_dimensions(...) -> None: always None; dimensions handled async by DimensionWorker
-    - get_item_count(...) -> -1: always -1; count handled async by ItemCountWorker
+    - get_file_info(path_or_uri, attributes=None) -> FileInfo | None: calls metadata.get_file_info.
+    - get_dimensions(...) -> None: always None; dimensions handled async by DimensionWorker.
+    - get_item_count(...) -> -1: always -1; count handled async by ItemCountWorker.
 
 !Caveat: `delete()` falls through to `trash()`; no permanent-delete runnable.
+!Caveat: `is_directory/symlink/regular_file` catch GLib.Error and return False on any query failure.
 
 ---
 
@@ -122,7 +129,7 @@ API:
     - showHidden() -> bool (slot)
     - current_path() -> str (property)
     - set_workers(count_worker, dimension_worker) -> None
-    Signals: filesFound(session_id, list), scanFinished(session_id), scanError(error), fileAttributeUpdated(path, key, val)
+    Signals: filesFound(session_id, list), scanFinished(session_id), scanError(error), fileAttributeUpdated(path, key, val), singleFileScanned(session_id, dict)
 
 ---
 
@@ -143,7 +150,7 @@ API:
 ### [FILE: metadata_workers.py] [USABLE]
 Role: QObject background workers for directory counting, image dimensions, file properties, existence, and scanner batch processing.
 
-/DNA/: `ItemCountWorker.enqueue(path)` -> `AsyncWorkerPool` run `_count` [blocking iterator]; `DimensionWorker.enqueue(path)` -> `QImageReader` read [local] or `FileInfo` follow target -> `QImageReader`; `BatchProcessorWorker.enqueue(file_infos)` -> `_process_background` [convert Gio.FileInfo list to dict list with MIME/thumbnail metadata].
+/DNA/: `ItemCountWorker.enqueue(path)` -> `AsyncWorkerPool` run `_count` [blocking iterator]; `DimensionWorker.enqueue(uri, path)` -> `QImageReader` read [local] or `Gio.File.read` stream → `QImageReader` [virtual paths, reads first 64KB header only]; `BatchProcessorWorker.enqueue(file_infos)` -> `_process_background` [convert Gio.FileInfo list to dict list with MIME/thumbnail metadata].
 
 - SrcDeps: core.threading.worker_pool, .metadata, .helpers, core.utils.path_ops
 - SysDeps: gi.repository{Gio, GLib, GnomeDesktop}, PySide6{QtCore, QtGui}, datetime
@@ -155,37 +162,49 @@ API:
     Signals: countReady(path, count)
   - DimensionWorker(QObject):
     - enqueue(uri, path) -> None (slot)
+    - clear() -> None (slot)
+    Signals: dimensionsReady(identifier, width, height)
+    !Caveat: Virtual paths (MTP, SFTP, GDrive) use GIO stream → QImageReader. Only the first 64KB is read (enough for any image header), so dimensions work without downloading the full file.
   - PropertiesWorker(QObject):
     - enqueue(path) -> None (slot)
     - enqueue_batch(paths) -> None (slot)
+    - clear() -> None (slot)
+    Signals: propertiesReady(path, dict)
   - ExistenceWorker(QObject):
     - enqueue(task_id, path) -> None (slot)
+    - clear() -> None (slot)
+    Signals: existenceReady(task_id, exists)
   - UniqueNameWorker(QObject):
     - enqueue(task_id, dest_path, style="copy") -> None (slot)
+    - clear() -> None (slot)
+    Signals: uniqueNameReady(task_id, unique_path)
   - BatchProcessorWorker(QObject):
     - enqueue(session_id, file_infos, parent_uri, show_hidden, is_native) -> None (slot)
+    - clear() -> None (slot)
     Signals: batchProcessed(session_id, list), allTasksDone(session_id)
 
 ---
 
 ### [FILE: monitor.py] [USABLE]
 Role: GIO directory watcher with 200ms debounce coalescing; emits Qt signals for UI refresh.
+Uses a dedicated GLib thread for async, non-blocking monitor creation and callback dispatch.
 
-/DNA/: `watch(path)` -> [skip recent://, trash://] -> pool.enqueue(_setup_monitor_task) [background: Gio.File.monitor_directory] -> resultReady -> connect("changed", _on_changed); `_on_changed(event)` -> match event_type -> em:fileCreated|Deleted|Renamed|Changed + _debounce_timer.start -> timeout -> em:directoryChanged
+/DNA/: Singleton `_GLibThread(QThread)` runs `GLib.MainLoop`; `watch(path)` -> `GLib.idle_add(_setup_monitor_task)` [scheduled on GLib thread: Gio.File.monitor_directory] -> connect("changed", _on_changed); `_on_changed(event)` -> `QTimer.singleShot(0)` [marshal to Qt main thread] -> match event_type -> em:fileCreated|Deleted|Renamed|Changed + _debounce_timer.start -> timeout -> em:directoryChanged
 
-- SrcDeps: core.threading.worker_pool
+- SrcDeps: core.threading.worker_pool (removed — no longer uses worker pool)
 - SysDeps: PySide6{QtCore}, gi.repository{Gio, GLib}
 
 API:
   - FileMonitor(QObject):
     Signals: fileCreated(path), fileDeleted(path), fileChanged(path), fileRenamed(old, new),
              directoryChanged(), watchReady(path), watchFailed(error)
-    - watch(directory_path: str) -> None (slot)
-    - stop() -> None (slot)
+    - watch(directory_path: str) -> None (slot): async, non-blocking
+    - stop() -> None (slot): cancels monitor on GLib thread
     - currentPath() -> str (slot)
-    - stop() -> None (slot)
+  - _GLibThread(QThread): singleton, runs GLib.MainLoop for all FileMonitor instances
 
 !Caveat: `watch` silently returns (no-op) for `recent://` and `trash://` paths.
+!Caveat: The GLib thread is a singleton shared across all FileMonitor instances and cleaned up via `atexit`.
 
 ---
 
@@ -203,8 +222,7 @@ API:
     Properties (constant): title="Devices", icon="hard_drive"
     - title() -> str (property)
     - icon() -> str (property)
-    - get_icon_name(path) -> str
-    - get_volumes() -> list[dict]
+    - get_volumes() -> list[dict] (slot)
     - mount_volume(identifier: str) -> None (slot)
     - unmount_volume(identifier: str) -> None (slot)
 
@@ -229,6 +247,7 @@ API:
   - create_desktop_mime_data(paths: list, is_cut: bool) -> QMimeData
   - BookmarksBridge(QObject):
     - get_bookmarks() -> list (slot)
+    Signals: bookmarksChanged()
   - QuickAccessBridge(QObject):
     - title() -> str (property)
     - icon() -> str (property)

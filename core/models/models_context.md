@@ -6,9 +6,11 @@
 ---
 
 ### [FILE: __init__.py] [USABLE]
-Role: Re-exports FileInfo, FileJob, FileOperationSignals, TrashItem for single-import convenience.
+Role: Re-exports FileInfo, FileJob, FileOperationSignals, TrashItem, and Transaction-related objects for single-import convenience.
 
-/DNA/: Flat re-export only.
+/DNA/: `from core.models import ...` -> re-exports local models + core.transaction objects.
+
+- SrcDeps: core.transaction{Transaction, TransactionOperation, TransactionStatus}
 
 ---
 
@@ -31,26 +33,28 @@ API:
 ### [FILE: file_job.py] [USABLE]
 Role: Tracks a single file operation; also hosts FileOperationSignals hub.
 
-/DNA/: `FileJob(slots=True)` carries op metadata -> submitted to backend -> backend assigns `cancellable`; `FileOperationSignals(QObject)` owns all signals emitted by runnables.
+/DNA/: `FileJob(slots=True)` carries op metadata -> submitted to backend -> backend assigns `cancellable` (token) and builds `inverse_payload` (undo) upon success.
 
-- SysDeps: dataclasses, PySide6{QtCore}
+- SysDeps: dataclasses, typing, PySide6{QtCore}, core.interfaces.cancellation{CancellationToken}
 
 API:
+  - InversePayload(TypedDict): action (trash/restore/rename/move), target, dest, new_name, rename_to, tid, backend_id.
   - FileJob(dataclass, slots=True):
-    - fields: id, op_type, source, dest, transaction_id, cancellable, auto_rename,
-             skipped_files, overwrite, rename_to, status,
-             items (batch), ui_refresh_rate_ms, halt_on_error
+    - fields: id, op_type (copy, move, trash, restore, rename, createFolder, list, empty, transfer),
+             source, dest, transaction_id, cancellable, inverse_payload, auto_rename,
+             skipped_files, overwrite, rename_to, status, backend_id,
+             items (batch), ui_refresh_rate_ms, halt_on_error.
 
   - FileOperationSignals(QObject):
     - signals: started(job_id, op_type, source), progress(job_id, current, total),
-             finished(tid, job_id, op_type, result_path, success, message),
+             finished(tid, job_id, op_type, result_path, success, message, inverse_payload),
              operationError(tid, job_id, op_type, path, message, conflict_data),
              itemListed(TrashItem), trashNotSupported(path, error),
              batchAssessmentReady(tid, valid_items, conflicts),
              batchProgress(tid, completed, total, filename),
              batchFinished(tid, successful_items, failed_items)
 
-!Caveat: `cancellable` field type is `object` (not typed as `Gio.Cancellable`) to avoid GIO import in the model layer; cast at backend.
+!Caveat: `cancellable` field is a `CancellationToken` ABC; this allows backend-neutral cancellation without importing backend-specific tokens (like `Gio.Cancellable`) in the model layer.
 
 ---
 

@@ -1,47 +1,45 @@
-Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/core/backends/gnome_thumbnailer — QML async image provider using GnomeDesktop.DesktopThumbnailFactory.
+Identity: /Imbric/core/backends/gnome_thumbnailer - QML async thumbnail and themed icon providers leveraging GnomeDesktop.
 
-!Pattern: [shared factory + class-level lock] - Reason: `DesktopThumbnailFactory` is not thread-safe; single shared instance guarded by `ThumbnailProvider._lock` (QMutex) serializes `lookup` and `generate_thumbnail` calls.
-!Decision: [QQuickAsyncImageProvider > sync] - Reason: Thumbnail generation is blocking I/O; async provider keeps QML render thread unblocked.
+Rules:
+- [Factory Synchronization] DesktopThumbnailFactory is NOT thread-safe; all access MUST be serialized via `ThumbnailProvider._lock` (QMutex).
+
+Atomic Notes:
+- !Decision: [QQuickAsyncImageProvider > Sync] - Reason: Generation is blocking; async provider keeps QML render thread responsive.
+- !Pattern: [Tiered Fallback] - Reason: GNOME cache -> GnomeDesktop loop -> QImageReader (local only) -> MIME icon providing best-effort visual parity.
 
 Index:
-- provider.py — QML async thumbnail provider. Falls back from GNOME cache -> GnomeDesktop.generate -> QImageReader -> MIME icon.
-- theme_icons.py — System icon theme integration via QML image://theme/.
+- None
 
----
+Audits:
 
 ### [FILE: provider.py] [USABLE]
-Role: QML async thumbnail provider via `GnomeDesktop.DesktopThumbnailFactory`. Falls back from GNOME cache -> GnomeDesktop.generate -> QImageReader -> MIME icon.
+Role: QML async image provider using `GnomeDesktop` for standard thumbnails and local reader fallbacks.
 
-/DNA/: `ThumbnailProvider.requestImageResponse` -> `ThumbnailResponse` -> `ThumbnailRunnable` [QThreadPool] -> `get_file_info` -> if dir: themed icon | else: `[lock] factory.lookup || factory.generate_thumbnail [unlock]` -> if null: `QImageReader` -> if still null: `_get_mime_icon_from_type` -> `set_image`.
+/DNA/: [ThumbnailProvider.requestImageResponse -> ThumbnailResponse -> ThumbnailRunnable (QThreadPool) -> Metadata lookup -> {lock}factory.lookup/generate{unlock} -> QImageReader (local) -> MIME icon => set_image]
 
-- SrcDeps: core.backends.gio.metadata
-- SysDeps: gi.repository{GnomeDesktop, GLib, Gio}, PySide6{QtQuick, QtGui, QtCore}, os
+- SrcDeps: core.registry.BackendRegistry
+- SysDeps: gi.repository{GnomeDesktop, GLib, Gio}, PySide6.QtQuick{QQuickAsyncImageProvider, QQuickImageResponse}, PySide6.QtGui{QImage, QIcon}, PySide6.QtCore{QSize, QRunnable, QThreadPool, QMutex, QMutexLocker}, os
 
 API:
   - ThumbnailProvider(QQuickAsyncImageProvider):
     - requestImageResponse(id_path: str, requested_size: QSize) -> QQuickImageResponse
-
   - ThumbnailResponse(QQuickImageResponse):
-    - set_image(image: QImage) -> None: sets _image + em:finished
-    - textureFactory() -> QQuickTextureFactory
-    - errorString() -> str: always ""
-
+    - set_image(image: QImage) -> None: sets private image and emits finished.
+    - textureFactory() -> QQuickTextureFactory: wraps QImage for QML rendering.
+    - errorString() -> str: returns empty string.
   - ThumbnailRunnable(QRunnable):
-    Class attr: _mime_icon_cache (dict) — module-level MIME icon caching (no invalidation).
-    - run() -> None
-
-!Caveat: `ThumbnailRunnable._mime_icon_cache` is a class-level dict with no eviction.
-!Caveat: `ThumbnailRunnable.run()` references `ThumbnailProvider._lock` directly by class name.
-
----
+    - run(): executes the tiered lookup and generation fallbacks.
+!Caveat: `ThumbnailRunnable._mime_icon_cache` is a class-level stub, currently unused.
+!Caveat: `ThumbnailProvider._lock` must be used for both `lookup` and `generate_thumbnail` calls.
 
 ### [FILE: theme_icons.py] [USABLE]
-Role: Themed icon provider for QML `image://theme/`. Provides synchronous themed icon rendering for QML.
+Role: Synchronous QML image provider (`image://theme/`) for system icon lookup.
 
-/DNA/: `requestPixmap(id, size, requestedSize)` -> if "/" in id: `Gio.content_type_get_icon` -> `QIcon.fromTheme` | else: `QIcon.fromTheme(id)` -> `icon.pixmap`.
+/DNA/: [requestPixmap(id, size) -> if(MIME in id): Gio.content_type_get_icon -> QIcon.fromTheme | else: QIcon.fromTheme(id) => QPixmap]
 
-- SysDeps: PySide6{QtQuick, QtGui, QtCore}, gi.repository{Gio}
+- SrcDeps: None
+- SysDeps: PySide6.QtQuick.QQuickImageProvider, PySide6.QtGui{QIcon, QPixmap}, PySide6.QtCore.QSize, gi.repository.Gio
 
 API:
   - ThemeImageProvider(QQuickImageProvider):
-    - requestPixmap(id: str, size: QSize, requestedSize: QSize) -> QPixmap
+    - requestPixmap(id: str, size: QSize, requestedSize: QSize) -> QPixmap: resolves icon name or MIME type to themed pixmap.
