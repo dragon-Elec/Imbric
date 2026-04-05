@@ -35,6 +35,22 @@ class BackendRegistry:
         self._default_io: IOBackend | None = None
         self._default_scanner: ScannerBackend | None = None
 
+        # Strict VFS enforcement: when True, get_io/get_scanner raise on unknown schemes
+        self._strict_vfs = False
+
+    # -------------------------------------------------------------------------
+    # VFS Enforcement
+    # -------------------------------------------------------------------------
+    def set_strict_vfs(self, enabled: bool) -> None:
+        """
+        Enable strict VFS routing. When enabled, unknown schemes raise RuntimeError
+        instead of silently falling back to default. Forces UI to use proper routing.
+        """
+        self._strict_vfs = enabled
+
+    def is_strict_vfs(self) -> bool:
+        return self._strict_vfs
+
     # -------------------------------------------------------------------------
     # IO Backend Registration
     # -------------------------------------------------------------------------
@@ -54,6 +70,11 @@ class BackendRegistry:
             scheme = path_or_uri.split("://")[0]
             if scheme in self._io_backends:
                 return self._io_backends[scheme]
+            if self._strict_vfs:
+                raise RuntimeError(
+                    f"No IO backend registered for scheme '{scheme}'. "
+                    f"Registered schemes: {list(self._io_backends.keys())}"
+                )
         return self._default_io
 
     def get_io_id(self, path_or_uri: str) -> str:
@@ -63,6 +84,10 @@ class BackendRegistry:
             if scheme in self._io_backends:
                 return scheme
         return "default"
+
+    def get_registered_schemes(self) -> list[str]:
+        """Return all registered IO schemes for debugging/introspection."""
+        return list(self._io_backends.keys())
 
     # -------------------------------------------------------------------------
     # Scanner Backend Registration
@@ -81,6 +106,11 @@ class BackendRegistry:
             scheme = path_or_uri.split("://")[0]
             if scheme in self._scanner_backends:
                 return self._scanner_backends[scheme]
+            if self._strict_vfs:
+                raise RuntimeError(
+                    f"No scanner backend registered for scheme '{scheme}'. "
+                    f"Registered schemes: {list(self._scanner_backends.keys())}"
+                )
         return self._default_scanner
 
     # -------------------------------------------------------------------------
