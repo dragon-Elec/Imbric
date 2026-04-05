@@ -63,7 +63,17 @@ class ItemCountWorker(QObject):
 
 
 class DimensionWorker(QObject):
-    """Async Image Dimension Reader using AsyncWorkerPool."""
+    """Async Image Dimension Reader using AsyncWorkerPool.
+
+    Strategy:
+    1. Local files → QImageReader (fast, zero GIO overhead)
+    2. Virtual paths (MTP, SFTP, GDrive) → GIO stream → QImageReader
+       Reads only the image header bytes, not the full file.
+    3. Fallback → (0, 0)
+    """
+
+    # Read only the first 64KB — enough for any image header
+    _STREAM_READ_LIMIT = 64 * 1024
 
     dimensionsReady = Signal(str, int, int)
 
@@ -77,28 +87,38 @@ class DimensionWorker(QObject):
         self._pool.enqueue(path, self._read_dims, priority=60, uri=uri, path=path)
 
     def _read_dims(self, uri: str, path: str):
-        try:
-            if path and path.startswith("/"):
+        # Fast path: local POSIX file
+        if path and path.startswith("/"):
+            try:
                 reader = QImageReader(path)
                 if reader.canRead():
                     size = reader.size()
                     if size.width() > 0:
                         return (size.width(), size.height())
+            except Exception:
+                pass
 
+        # Virtual path: stream via GIO → QImageReader
+        try:
             gfile = Gio.File.new_for_commandline_arg(uri)
-            if not gfile.is_native():
-                info = get_file_info(uri, attributes="standard::target-uri")
-                if info and info.target_uri:
-                    gfile = Gio.File.new_for_commandline_arg(info.target_uri)
+            stream = gfile.read(None)
+            if stream:
+                # Read header bytes only (QImageReader can detect dimensions
+                # from the first few KB of any common image format)
+                raw = stream.read_bytes(self._STREAM_READ_LIMIT, None).get_data()
+                from PySide6.QtCore import QBuffer, QIODevice
 
-            local_path = gfile.get_path()
-            if local_path:
-                reader = QImageReader(local_path)
+                buf = QBuffer()
+                buf.setData(raw)
+                buf.open(QIODevice.OpenModeFlag.ReadOnly)
+                reader = QImageReader(buf)
                 if reader.canRead():
                     size = reader.size()
-                    return (size.width(), size.height())
+                    if size.width() > 0:
+                        return (size.width(), size.height())
         except Exception:
             pass
+
         return (0, 0)
 
     def _on_result(self, identifier: str, res: tuple):
@@ -205,7 +225,9 @@ class UniqueNameWorker(QObject):
 
     @Slot(str, str, str)
     def enqueue(self, task_id: str, dest_path: str, style: str = "copy") -> None:
-        self._pool.enqueue(task_id, self._find_unique, priority=10, dest_path=dest_path, style=style)
+        self._pool.enqueue(
+            task_id, self._find_unique, priority=10, dest_path=dest_path, style=style
+        )
 
     def _find_unique(self, dest_path: str, style: str) -> str:
         # Max attempts to avoid infinite loops on weird VFS
@@ -241,7 +263,14 @@ class BatchProcessorWorker(QObject):
         self.batchProcessed.emit(session_id, processed_batch)
 
     @Slot(str, list, str, bool, bool)
-    def enqueue(self, session_id: str, file_infos: list, parent_uri: str, show_hidden: bool, is_native: bool):
+    def enqueue(
+        self,
+        session_id: str,
+        file_infos: list,
+        parent_uri: str,
+        show_hidden: bool,
+        is_native: bool,
+    ):
         self._pool.enqueue(
             session_id,
             self._process_background,
@@ -250,16 +279,25 @@ class BatchProcessorWorker(QObject):
             file_infos=file_infos,
             parent_uri=parent_uri,
             show_hidden=show_hidden,
-            is_native=is_native
+            is_native=is_native,
         )
 
-    def _process_background(self, session_id: str, file_infos: list, parent_uri: str, show_hidden: bool, is_native: bool) -> list:
+    def _process_background(
+        self,
+        session_id: str,
+        file_infos: list,
+        parent_uri: str,
+        show_hidden: bool,
+        is_native: bool,
+    ) -> list:
         processed = []
         # Create a thread-local factory instance
         factory = None
         if is_native:
             try:
-                factory = GnomeDesktop.DesktopThumbnailFactory.new(GnomeDesktop.DesktopThumbnailSize.LARGE)
+                factory = GnomeDesktop.DesktopThumbnailFactory.new(
+                    GnomeDesktop.DesktopThumbnailSize.LARGE
+                )
             except Exception:
                 factory = None
 
@@ -288,57 +326,94 @@ class BatchProcessorWorker(QObject):
 
             thumb_path = info.get_attribute_byte_string("standard::thumbnail-path")
             is_visual = False
-            
+
             if thumb_path:
                 is_visual = True
             else:
                 if not is_native:
-                    is_visual = mime_type.startswith(("image/", "video/", "application/pdf"))
+                    is_visual = mime_type.startswith(
+                        ("image/", "video/", "application/pdf")
+                    )
                 else:
                     if factory:
                         mtime = to_unix_timestamp(info.get_modification_date_time())
                         try:
-                            is_visual = factory.can_thumbnail(full_uri, mime_type, mtime)
+                            is_visual = factory.can_thumbnail(
+                                full_uri, mime_type, mtime
+                            )
                         except Exception:
-                            is_visual = mime_type.startswith(("image/", "video/", "application/pdf"))
+                            is_visual = mime_type.startswith(
+                                ("image/", "video/", "application/pdf")
+                            )
                     else:
-                        is_visual = mime_type.startswith(("image/", "video/", "application/pdf"))
+                        is_visual = mime_type.startswith(
+                            ("image/", "video/", "application/pdf")
+                        )
 
             is_symlink = info.get_attribute_boolean("standard::is-symlink")
-            symlink_target = info.get_attribute_byte_string("standard::symlink-target") or "" if is_symlink else ""
+            symlink_target = (
+                info.get_attribute_byte_string("standard::symlink-target") or ""
+                if is_symlink
+                else ""
+            )
             size = info.get_size()
             date_modified = to_unix_timestamp(info.get_modification_date_time())
             date_accessed = to_unix_timestamp(info.get_access_date_time())
 
-            mode = info.get_attribute_uint32("unix::mode") if info.has_attribute("unix::mode") else 0
-            uid = info.get_attribute_uint32("unix::uid") if info.has_attribute("unix::uid") else 0
-            gid = info.get_attribute_uint32("unix::gid") if info.has_attribute("unix::gid") else 0
+            mode = (
+                info.get_attribute_uint32("unix::mode")
+                if info.has_attribute("unix::mode")
+                else 0
+            )
+            uid = (
+                info.get_attribute_uint32("unix::uid")
+                if info.has_attribute("unix::uid")
+                else 0
+            )
+            gid = (
+                info.get_attribute_uint32("unix::gid")
+                if info.has_attribute("unix::gid")
+                else 0
+            )
 
-            icon_name = "" if is_visual else (mime_type if mime_type else "application-x-generic")
+            icon_name = (
+                ""
+                if is_visual
+                else (mime_type if mime_type else "application-x-generic")
+            )
 
-            processed.append({
-                "name": name,
-                "path": full_path,
-                "uri": full_uri,
-                "iconName": icon_name,
-                "isDir": is_dir,
-                "size": size,
-                "mimeType": mime_type,
-                "isVisual": is_visual,
-                "isSymlink": is_symlink,
-                "symlinkTarget": symlink_target,
-                "dateModified": date_modified,
-                "dateAccessed": date_accessed,
-                "mode": mode,
-                "uid": uid,
-                "gid": gid,
-                "childCount": -1 if (is_dir and not is_symlink) else 0,
-                "width": 0,
-                "height": 0,
-                "trashOrigPath": info.get_attribute_byte_string("trash::orig-path") or "",
-                "trashDeletionDate": info.get_attribute_string("trash::deletion-date") if info.has_attribute("trash::deletion-date") else "",
-                "targetUri": info.get_attribute_string("standard::target-uri") if info.has_attribute("standard::target-uri") else "",
-            })
+            processed.append(
+                {
+                    "name": name,
+                    "path": full_path,
+                    "uri": full_uri,
+                    "iconName": icon_name,
+                    "isDir": is_dir,
+                    "size": size,
+                    "mimeType": mime_type,
+                    "isVisual": is_visual,
+                    "isSymlink": is_symlink,
+                    "symlinkTarget": symlink_target,
+                    "dateModified": date_modified,
+                    "dateAccessed": date_accessed,
+                    "mode": mode,
+                    "uid": uid,
+                    "gid": gid,
+                    "childCount": -1 if (is_dir and not is_symlink) else 0,
+                    "width": 0,
+                    "height": 0,
+                    "trashOrigPath": info.get_attribute_byte_string("trash::orig-path")
+                    or "",
+                    "trashDeletionDate": info.get_attribute_string(
+                        "trash::deletion-date"
+                    )
+                    if info.has_attribute("trash::deletion-date")
+                    else "",
+                    "targetUri": info.get_attribute_string("standard::target-uri")
+                    if info.has_attribute("standard::target-uri")
+                    else "",
+                }
+            )
 
         return processed
 
