@@ -1,0 +1,87 @@
+## scanner.py [+39 -39]
+- REFACTOR: Replace scattered startswith() checks with classify() from path_classifier
+- SEMANTIC: is_native now comes from path_caps.is_native instead of gfile.is_native()
+- SEMANTIC: Check path type (native/recent/trash) using PathCapabilities instead of string prefix
+- STYLE: Reformat multi-line conditionals for readability
+
+## monitor.py [+1 -1]
+- BUGFIX: Remove trash:// from monitor exclusion — trash:// IS monitorable via gvfsd-trash
+- SEMANTIC: Only exclude recent:// from monitoring (trash was incorrectly excluded)
+
+## __init__.py [+5 -13]
+- DEPRECATION: Removed Sorter, SortKey exports (moved to ui/services/sorter.py)
+- CHORE: Updated docstring to reflect current scope (search, validation)
+
+## row_builder.py [+76 -16]
+- NEW: Added path awareness via setCurrentPath() — auto-configures view based on path type
+- NEW: Import path_classifier for capability detection
+- NEW: Import view_config for presentation defaults per path type
+- NEW: Added _row_model (RowModel) for incremental QML updates
+- REFACTOR: _build_rows() now uses RowModel for incremental updates instead of raw list
+- PERF: During streaming, debounce row builds instead of rebuilding every batch
+- PERF: Added ViewConfig-aware thumbnail precompute skip for recent:// paths
+- UI: getAllItems() now returns from row_model.getAllItems() for consistency
+
+## context_menu_model.py [+108]
+- NEW: Added Sort By submenu to directory context menu
+- NEW: Import SortKey from ui.services.sorter
+- NEW: _get_current_sorter() to retrieve active pane's sorter
+- NEW: _build_sort_submenu() to construct sort options model
+- UI: Sort options (Name, Date, Size, Type) as radio-style checkable items
+- UI: Sort direction toggle (Ascending/Descending)
+- UI: Folders First toggle
+- SIGNAL: Added action handlers for SORT_KEY_*, SORT_ASCENDING, SORT_FOLDERS_FIRST
+
+## FileDelegate.qml [+1 -1]
+- CLEANUP: Commented out debug console.log (reduces noise)
+
+## GtkActionMenu.qml [+11]
+- NEW: Added sortKeyGroup ActionGroup for exclusive selection (radio behavior)
+- UI: Sort key actions added to exclusive group
+- DEBUG: Added console.log for action trigger debugging
+
+## GtkMenu.qml [+17]
+- NEW: Added onClicked handler for MenuItem to fix binding and click handling
+- UI: Restore broken binding after user click
+- UI: Trigger action/close menu on click
+
+## RowDelegate.qml [+4 -4]
+- REFACTOR: rowData now comes from model.rowData (QAbstractListModel role) instead of modelData
+- UI: Updated comment to reflect QML model binding
+
+## JustifiedView.qml [+15 -22]
+- REFACTOR: Replace rows property with rowModel (QAbstractListModel)
+- NEW: rowModel from rowBuilder.getRowModel()
+- REMOVED: onRowsChanged handler — incremental updates via model
+- REMOVED: Component.onCompleted rows initialization — handled by model
+
+## ui/models/pane_context.py [+1]
+- BUGFIX: Call row_builder.setCurrentPath() on scan_current() so view config updates
+
+## ui/widgets/context_menu.py [DELETED]
+- DELETION: Widget-based context menu removed — replaced by QML GtkMenu approach
+
+## core/services/sorter.py [DELETED]
+- DELETION: Moved to ui/services/sorter.py (UI is the only consumer)
+
+## core/utils/path_classifier.py [NEW]
+- NEW: PathClassifier utility — pure string analysis for VFS capability classification
+- NEW: PathCapabilities dataclass with scheme, is_native, is_monitorable, is_writable, is_virtual
+- NEW: classify() function — replaces scattered startswith() checks across codebase
+
+## ui/models/row_model.py [NEW]
+- NEW: RowModel — QAbstractListModel wrapper for row data
+- NEW: Incremental update API (setRows, appendRows, clear) for QML ListView performance
+- NEW: RowDataRole for QML access to row contents
+
+## ui/services/sorter.py [NEW]
+- NEW: Sorter moved from core/services/sorter.py
+- NEW: SortKey enum (NAME, DATE_MODIFIED, SIZE, TYPE)
+- NEW: Natural sorting support
+- NEW: Folders-first sorting option
+
+## ui/services/view_config.py [NEW]
+- NEW: ViewConfig dataclass — presentation defaults per path type
+- NEW: Presets for recent://, trash://, file:// schemes
+- NEW: resolve() to convert PathCapabilities to ViewConfig
+- CONFIG: Default sort key, direction, folders-first, thumbnail strategy per path type

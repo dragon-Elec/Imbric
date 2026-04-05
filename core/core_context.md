@@ -13,7 +13,7 @@ Index:
 - interfaces/: Abstract contracts for backends/services.
 - managers/: High-level controllers (FileOperations).
 - models/: Pure DTO structs (FileInfo, FileJob).
-- services/: Stateless logic (Sorter, Validator, Search).
+- services/: Stateless logic (Validator, Search).
 - threading/: AsyncWorkerPool (QTOAST) bridge.
 - utils/: Shared path and formatting helpers.
 

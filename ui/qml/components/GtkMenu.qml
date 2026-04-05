@@ -119,6 +119,23 @@ Menu {
                     width: visible ? indicator.width : 0
                     M.Material.theme: root.isDark ? M.Material.Dark : M.Material.Light
                     M.Material.accent: sysPalette.highlight
+                    
+                    onClicked: {
+                        // Restore binding that was broken by user click
+                        check.checked = Qt.binding(function() { return item.checked; });
+                        
+                        // Pass click to action or item
+                        if (item.action) {
+                            item.action.trigger();
+                        } else {
+                            item.triggered();
+                        }
+                        
+                        // Close menu
+                        if (root) {
+                            root.dismiss();
+                        }
+                    }
                 }
                 
                 IconImage {

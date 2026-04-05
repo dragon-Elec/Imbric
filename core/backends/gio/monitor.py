@@ -104,7 +104,7 @@ class FileMonitor(QObject):
         """
         self.stop()
 
-        if directory_path.startswith(("recent://", "trash://")):
+        if directory_path.startswith("recent://"):
             return
 
         self._current_path = directory_path

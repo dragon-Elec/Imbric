@@ -1,4 +1,5 @@
 from PySide6.QtCore import QObject, Slot, Signal, Property
+from ui.services.sorter import SortKey
 
 
 class ContextMenuViewModel(QObject):
@@ -10,6 +11,76 @@ class ContextMenuViewModel(QObject):
     def __init__(self, main_window):
         super().__init__(main_window)
         self.mw = main_window
+
+    def _get_current_sorter(self):
+        """Get the Sorter from the currently active pane."""
+        shell = self.mw.shell_manager
+        pane = shell.current_pane
+        if pane:
+            sorter = pane.row_builder.getSorter()
+            print(f"[ContextMenuViewModel] Got sorter from active pane: {sorter}")
+            return sorter
+        print(f"[ContextMenuViewModel] No active pane found")
+        return None
+
+    def _build_sort_submenu(self):
+        """Build the Sort By submenu model."""
+        sorter = self._get_current_sorter()
+        if not sorter:
+            print(f"[ContextMenuViewModel] No sorter, skipping sort submenu")
+            return []
+
+        current_key = sorter.currentKey()
+        is_ascending = sorter.isAscending()
+        is_folders_first = sorter.isFoldersFirst()
+
+        print(
+            f"[ContextMenuViewModel] Sort state: key={current_key}, asc={is_ascending}, folders_first={is_folders_first}"
+        )
+
+        submenu = []
+
+        # Sort by options (mutually exclusive - only one checked at a time)
+        for key in SortKey:
+            is_checked = key.value == current_key
+            print(
+                f"[ContextMenuViewModel] Sort option: {key.name} checked={is_checked}"
+            )
+            submenu.append(
+                {
+                    "id": f"SORT_KEY_{key.name}",
+                    "text": key.name.replace("_", " ").title(),
+                    "icon": "view-sort-ascending-symbolic" if is_checked else "",
+                    "checkable": True,
+                    "checked": is_checked,
+                }
+            )
+
+        submenu.append({"type": "separator"})
+
+        # Ascending/Descending toggle
+        submenu.append(
+            {
+                "id": "SORT_ASCENDING",
+                "text": "Ascending",
+                "icon": "view-sort-ascending-symbolic" if is_ascending else "",
+                "checkable": True,
+                "checked": is_ascending,
+            }
+        )
+
+        # Folders First toggle
+        submenu.append(
+            {
+                "id": "SORT_FOLDERS_FIRST",
+                "text": "Folders First",
+                "icon": "folder-symbolic" if is_folders_first else "",
+                "checkable": True,
+                "checked": is_folders_first,
+            }
+        )
+
+        return submenu
 
     @Slot(list, result=list)
     def getModelForPaths(self, paths):
@@ -54,6 +125,19 @@ class ContextMenuViewModel(QObject):
                     "enabled": True,
                 }
             )
+
+            model.append({"type": "separator"})
+
+            # Sort By submenu
+            sort_submenu = self._build_sort_submenu()
+            if sort_submenu:
+                model.append(
+                    {
+                        "text": "Sort By",
+                        "icon": "view-sort-ascending-symbolic",
+                        "submenu": sort_submenu,
+                    }
+                )
         else:
             # --- File/Folder Context Menu ---
             if is_single:
@@ -135,6 +219,30 @@ class ContextMenuViewModel(QObject):
 
         if action_id == "OPEN_NATIVE" and paths:
             _open_file(paths[0])
+            return
+
+        # Sort actions
+        if action_id.startswith("SORT_KEY_"):
+            key_name = action_id[len("SORT_KEY_") :]
+            try:
+                sort_key = SortKey[key_name]
+                sorter = self._get_current_sorter()
+                if sorter:
+                    sorter.setKey(int(sort_key))
+            except KeyError:
+                print(f"[ContextMenuViewModel] Unknown sort key: {key_name}")
+            return
+
+        if action_id == "SORT_ASCENDING":
+            sorter = self._get_current_sorter()
+            if sorter:
+                sorter.setAscending(not sorter.isAscending())
+            return
+
+        if action_id == "SORT_FOLDERS_FIRST":
+            sorter = self._get_current_sorter()
+            if sorter:
+                sorter.setFoldersFirst(not sorter.isFoldersFirst())
             return
 
         try:

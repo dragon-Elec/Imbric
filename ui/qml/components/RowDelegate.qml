@@ -6,8 +6,8 @@ Row {
     id: rowDelegateRoot
     spacing: rowBuilder ? rowBuilder.spacing : 0
     
-    // Model data passed from ListView
-    property var rowData: modelData
+    // Model data passed from ListView (QAbstractListModel exposes via role)
+    property var rowData: model.rowData
     
     // Constants (Bound to RowBuilder if possible, or passed via context)
     property int imageHeight

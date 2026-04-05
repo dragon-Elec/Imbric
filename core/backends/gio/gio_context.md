@@ -203,7 +203,7 @@ API:
     - currentPath() -> str (slot)
   - _GLibThread(QThread): singleton, runs GLib.MainLoop for all FileMonitor instances
 
-!Caveat: `watch` silently returns (no-op) for `recent://` and `trash://` paths.
+!Caveat: `watch` silently returns (no-op) for `recent://` paths only. `trash://` IS monitored via gvfsd-trash.
 !Caveat: The GLib thread is a singleton shared across all FileMonitor instances and cleaned up via `atexit`.
 
 ---

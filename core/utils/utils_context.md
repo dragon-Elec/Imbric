@@ -10,6 +10,7 @@ Atomic Notes:
 Index:
 - formatting.py — Human-readable string conversion.
 - path_ops.py — Path string orchestration and conflict metadata.
+- path_classifier.py — Pure utility for VFS path capability detection.
 - vfs_path.py — URI-safe path manipulation.
 - vfs_enforce.py — VFS enforcement helpers for UI migration.
 
@@ -53,6 +54,31 @@ API:
   - vfs_basename(path_or_uri: str) -> str: decoded basename handling schemes.
   - vfs_dirname(path_or_uri: str) -> str: parent path preserving scheme.
   - vfs_join(base: str, *parts) -> str: joins URI parts preserving schemes.
+
+### [FILE: path_classifier.py] [USABLE]
+Role: Pure utility that categorizes paths by their VFS capabilities. Zero I/O, thread-safe.
+
+/DNA/: `classify(path)` -> [split scheme from "://" or default "file"] -> [lookup frozensets] => PathCapabilities(scheme, is_native, is_monitorable, is_writable, is_virtual)
+
+- SrcDeps: None
+- SysDeps: dataclasses
+
+API:
+  - PathCapabilities(dataclass, frozen):
+    - scheme: str
+    - is_native: bool
+    - is_monitorable: bool
+    - is_writable: bool
+    - is_virtual: bool
+    - is_local_file: bool (property)
+    - is_recent: bool (property)
+    - is_trash: bool (property)
+  - classify(path: str) -> PathCapabilities
+
+!Caveat: `is_monitorable` is False for `recent://` and `trash://` — GIO cannot monitor synthetic paths.
+!Caveat: `is_writable` is False for `recent://` — it's a read-only aggregation.
+
+---
 
 ### [FILE: vfs_enforce.py] [USABLE]
 Role: VFS enforcement utilities that force the UI layer to go through BackendRegistry instead of direct os/pathlib access.

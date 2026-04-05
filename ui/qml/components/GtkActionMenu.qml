@@ -15,6 +15,11 @@ GtkMenu {
     property bool checkable: false
     property bool checked: false
     
+    // Exclusive action group for sort-by options (radio button behavior)
+    ActionGroup {
+        id: sortKeyGroup
+    }
+    
     // Rebuild the menu when the data model updates. 
     // We defer the execution using Qt.callLater to allow the Menu time to handle the 
     // click event and close itself before we rip the items out from underneath it.
@@ -82,8 +87,14 @@ GtkMenu {
                 if (itemDef.checkable !== undefined) action.checkable = itemDef.checkable;
                 if (itemDef.checked !== undefined) action.checked = itemDef.checked;
                 
+                // Exclusive group for sort-by keys (radio button behavior)
+                if (itemDef.id && itemDef.id.startsWith("SORT_KEY_")) {
+                    sortKeyGroup.addAction(action);
+                }
+                
                 let actionId = itemDef.id || "unknown";
                 action.triggered.connect(function() {
+                    console.log("[GtkActionMenu] Action triggered:", actionId);
                     rootMenu.actionTriggered(actionId);
                 });
                 

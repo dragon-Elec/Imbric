@@ -20,21 +20,14 @@ Item {
     // =========================================================================
     required property var rowBuilder
     required property var paneContext
-    property var rows: []
+    
+    // RowModel — QAbstractListModel for incremental updates
+    property var rowModel: rowBuilder ? rowBuilder.getRowModel() : null
     
     Connections {
         target: rowBuilder
-        function onRowsChanged() { 
-            root.rows = rowBuilder.getRows() 
-        }
         function onSelectAllRequested() {
             root.selectAll()
-        }
-    }
-    
-    Component.onCompleted: {
-        if (rowBuilder) {
-            root.rows = rowBuilder.getRows()
         }
     }
 
@@ -265,7 +258,7 @@ Item {
                 }
             }
             
-            model: root.rows
+            model: root.rowModel
             spacing: rowBuilder ? rowBuilder.spacing : 0
             
             header: Item { height: rowBuilder ? rowBuilder.spacing : 0 }

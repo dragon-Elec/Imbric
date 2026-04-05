@@ -254,6 +254,7 @@ class PaneContext(QObject):
     def scan_current(self):
         """Re-scans the current directory."""
         if self._current_path:
+            self.row_builder.setCurrentPath(self._current_path)
             self.row_builder.setFiles([])  # Clear UI
             self.scanner.scan_directory(self._current_path)
             self._current_session_id = self.scanner._session_id

@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, Signal, Slot, QTimer
 
 from core.backends.gio.helpers import _make_gfile, _gfile_path, to_unix_timestamp
 from core.backends.gio.metadata_workers import BatchProcessorWorker
+from core.utils.path_classifier import classify
 
 
 class FileScanner(QObject):
@@ -72,7 +73,7 @@ class FileScanner(QObject):
         self._emit_timer.setInterval(self.EMIT_DEBOUNCE_MS)
         self._emit_timer.setSingleShot(True)
         self._emit_timer.timeout.connect(self._flush_buffer)
-        
+
         self._enumeration_finished = False
 
         # Background workers - injected or lazy loaded
@@ -91,22 +92,30 @@ class FileScanner(QObject):
                 # Trigger workers for the single file
                 if item["isDir"] and not item["isSymlink"] and self._count_worker:
                     self._count_worker.enqueue(item["uri"], item["path"])
-                if item["mimeType"].startswith("image/") and self._is_native and self._dimension_worker:
+                if (
+                    item["mimeType"].startswith("image/")
+                    and self._is_native
+                    and self._dimension_worker
+                ):
                     self._dimension_worker.enqueue(item["uri"], item["path"])
-                
+
                 self.singleFileScanned.emit(original_session, item)
             return
 
         if session_id != self._session_id:
             return
-        
+
         if processed_batch:
             # Trigger background workers for the batch
             for item in processed_batch:
                 if item["isDir"] and not item["isSymlink"] and self._count_worker:
                     self._count_worker.enqueue(item["uri"], item["path"])
-                
-                if item["mimeType"].startswith("image/") and self._is_native and self._dimension_worker:
+
+                if (
+                    item["mimeType"].startswith("image/")
+                    and self._is_native
+                    and self._dimension_worker
+                ):
                     self._dimension_worker.enqueue(item["uri"], item["path"])
 
             self._batch_buffer.extend(processed_batch)
@@ -145,7 +154,8 @@ class FileScanner(QObject):
         self._is_native = gfile.is_native()
 
         query = ",".join(self.BASE_ATTRIBUTES)
-        if self._is_native or path.startswith(("trash://", "recent://")):
+        caps = classify(path)
+        if caps.is_native or caps.is_recent or caps.is_trash:
             query += "," + ",".join(self.NATIVE_ATTRIBUTES)
 
         self._cancellable = Gio.Cancellable()
@@ -166,18 +176,19 @@ class FileScanner(QObject):
     @Slot(str)
     def scan_single_file(self, path: str) -> None:
         gfile = Gio.File.new_for_commandline_arg(path)
-        is_native = gfile.is_native()
+        caps = classify(path)
+        is_native = caps.is_native
         query = ",".join(self.BASE_ATTRIBUTES)
-        if is_native or path.startswith(("trash://", "recent://")):
+        if is_native or caps.is_recent or caps.is_trash:
             query += "," + ",".join(self.NATIVE_ATTRIBUTES)
-        
+
         gfile.query_info_async(
             query,
             Gio.FileQueryInfoFlags.NONE,
             GLib.PRIORITY_DEFAULT,
             None,
             self._on_single_query_ready,
-            None
+            None,
         )
 
     def _on_single_query_ready(self, gfile, result, user_data):
@@ -190,7 +201,7 @@ class FileScanner(QObject):
                 [info],
                 parent.get_uri(),
                 self._show_hidden,
-                self._is_native
+                self._is_native,
             )
         except GLib.Error:
             pass
@@ -208,7 +219,7 @@ class FileScanner(QObject):
             self._count_worker.clear()
         if self._dimension_worker:
             self._dimension_worker.clear()
-        
+
         self._batch_processor.clear()
 
     def _on_enumerate_ready(
@@ -279,7 +290,7 @@ class FileScanner(QObject):
             file_infos,
             parent_gfile.get_uri(),
             self._show_hidden,
-            self._is_native
+            self._is_native,
         )
 
         self._fetch_next_batch(stored_enumerator, parent_gfile, cancellable)

@@ -1,32 +1,7 @@
-Identity: core/services — Stateless utility services: sorting, pre/post operation validation, and file search.
+Identity: core/services — Stateless utility services: pre/post operation validation, and file search.
 
 Index:
 - search/ — SearchEngine implementations + QThread worker for background search.
-
----
-
-### [FILE: sorter.py] [DONE]
-Role: QML-exposed file list sorter with natural sort, folders-first, and sort-direction state.
-
-/DNA/: `sort(files, key?, asc?)` -> [if folders_first: split dirs/files -> each.sort(key) -> rejoin | else: list.sort(key)] => sorted list; `setKey()/setAscending()/setFoldersFirst()` -> if changed: em:sortChanged
-
-- SysDeps: PySide6{QtCore}, enum
-
-API:
-  - SortKey(IntEnum): NAME=0, DATE_MODIFIED=1, SIZE=2, TYPE=3
-
-  - Sorter(QObject):
-    Signals: sortChanged()
-    Properties: key (int), ascending (bool), foldersFirst (bool)
-    - sort(files: list[dict], key=None, ascending=None) -> list[dict]
-    - setKey(key: int) -> None
-    - setAscending(ascending: bool) -> None
-    - setFoldersFirst(enabled: bool) -> None
-    - currentKey() -> int: returns current SortKey value.
-    - isAscending() -> bool: returns current sort direction.
-    - isFoldersFirst() -> bool: returns current folders-first preference.
-
-!Caveat: `sort()` operates on list[dict] (QML JSON model dicts), not `FileInfo` objects. Keys accessed: `isDir`, `name`, `dateModified`, `size`.
 
 ---
 

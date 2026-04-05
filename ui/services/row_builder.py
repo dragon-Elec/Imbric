@@ -13,7 +13,10 @@ Algorithm:
 """
 
 from PySide6.QtCore import QObject, Slot, Signal, Property, QTimer
-from core.services.sorter import Sorter
+from ui.services.sorter import Sorter
+from ui.models.row_model import RowModel
+from core.utils.path_classifier import classify
+from ui.services.view_config import resolve as resolve_view_config
 import hashlib
 import urllib.parse
 from pathlib import Path
@@ -55,8 +58,15 @@ class RowBuilder(QObject):
             str, tuple[int, int]
         ] = {}  # path -> (width, height)
 
+        # Path awareness for virtual/volatile path handling
+        self._current_path = ""
+        self._path_caps = None
+
         self._sorter = Sorter(self)
         self._sorter.sortChanged.connect(self._on_sort_changed)
+
+        # QAbstractListModel for incremental QML updates
+        self._row_model = RowModel(self)
 
         # [FIX] Layout Debouncer
         self._layout_timer = QTimer(self)
@@ -87,8 +97,6 @@ class RowBuilder(QObject):
             print(f"[DEBUG-LAYOUT] setRowHeight({height}) from {self._image_height}")
             self._image_height = height
             self._trigger_layout_update()
-            # self.rowsChanged.emit() # Handled by timer
-            self.rowHeightChanged.emit(height)
             self.rowHeightChanged.emit(height)
 
     @Slot(result=int)
@@ -173,6 +181,18 @@ class RowBuilder(QObject):
             self._trigger_layout_update()
             # self.rowsChanged.emit()
 
+    @Slot(str)
+    def setCurrentPath(self, path: str) -> None:
+        """Set the current path so RowBuilder can adjust behavior for virtual paths."""
+        self._current_path = path
+        self._path_caps = classify(path)
+        self._view_config = resolve_view_config(self._path_caps)
+
+        # Auto-apply path-type-aware defaults
+        self._sorter.setKey(int(self._view_config.default_sort_key))
+        self._sorter.setAscending(self._view_config.default_ascending)
+        self._sorter.setFoldersFirst(self._view_config.folders_first)
+
     @Slot(list)
     def setFiles(self, files: list) -> None:
         """Called on navigation to reset the view."""
@@ -247,16 +267,26 @@ class RowBuilder(QObject):
 
         self._items.extend(new_files)
         self._sorted_items.extend(new_files)
-        self._build_rows()
-        self.rowsChanged.emit()
+
+        # [PERF] During streaming, debounce row builds instead of rebuilding on every batch.
+        # For paths with streaming disabled (e.g. Recent), skip entirely and wait for finishLoading().
+        if self._view_config and not self._view_config.use_streaming_layout:
+            return
+        if self._is_loading:
+            self._trigger_layout_update()
+        else:
+            self._reapply_sort_and_layout()
 
     def _calculate_thumbnail_cap(self, item: dict) -> None:
         """
         Calculate the maximum display size for a thumbnail.
-
-        For visuals (photos), this is the GNOME LARGE cache size (256px longest edge).
-        For non-visuals (icons/vectors), this is 0 (no cap - can scale infinitely).
+        Respects ViewConfig for path-type-aware thumbnail strategy.
         """
+        if self._view_config and self._view_config.skip_thumbnail_precompute:
+            item["thumbnailWidth"] = 0
+            item["thumbnailHeight"] = 0
+            return
+
         if not item.get("isVisual"):
             # Icons/folders: no cap (vectors scale infinitely)
             item["thumbnailWidth"] = 0
@@ -348,6 +378,10 @@ class RowBuilder(QObject):
         return self._rows
 
     @Slot(result="QObject*")  # type: ignore
+    def getRowModel(self):
+        return self._row_model
+
+    @Slot(result="QObject*")  # type: ignore
     def getSorter(self) -> Sorter:
         return self._sorter
 
@@ -364,9 +398,11 @@ class RowBuilder(QObject):
     def _build_rows(self):
         """
         The core "Simple Justified" algorithm.
+        Uses RowModel for incremental QML updates.
         """
         if not self._sorted_items:
             self._rows = []
+            self._row_model.clear()
             return
 
         rows = []
@@ -412,7 +448,27 @@ class RowBuilder(QObject):
         if current_row:
             rows.append(current_row)
 
-        self._rows = rows
+        # Incremental model update: compare old vs new row count
+        old_count = len(self._rows)
+        new_count = len(rows)
+
+        if old_count == 0:
+            # First build — append all rows
+            self._rows = rows
+            self._row_model.appendRows(rows)
+        elif new_count == 0:
+            # Cleared
+            self._rows = []
+            self._row_model.clear()
+        elif new_count > old_count:
+            # More rows added (streaming append) — replace all for correctness
+            # since justified layout changes ALL rows when new items are added
+            self._rows = rows
+            self._row_model.setRows(rows)
+        else:
+            # Same or fewer rows — full rebuild needed (layout changed)
+            self._rows = rows
+            self._row_model.setRows(rows)
 
     # --- Selection Logic ---
 
@@ -535,7 +591,7 @@ class RowBuilder(QObject):
 
     @Slot(result=list)
     def getAllItems(self) -> list:
-        return self._sorted_items
+        return self._row_model.getAllItems()
 
     @Slot(str, str, object)
     def updateItem(self, path: str, attr: str, value) -> None:

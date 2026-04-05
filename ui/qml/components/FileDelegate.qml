@@ -12,7 +12,7 @@ Item {
     id: delegateRoot
 
     Component.onCompleted: {
-        console.log("[FileDelegate] Created for:", path, "Width:", width, "Height:", imageHeight)
+        // console.log("[FileDelegate] Created for:", path, "Width:", width, "Height:", imageHeight)
     }
 
 
