@@ -215,8 +215,8 @@ Item {
             // PADDING: Use internal margins instead of anchors to avoid clipping scrollbars/dead zones
             leftMargin: rowBuilder ? rowBuilder.spacing : 0
             rightMargin: rowBuilder ? rowBuilder.spacing : 0
-            topMargin: rowBuilder ? rowBuilder.spacing : 0
-            bottomMargin: rowBuilder ? rowBuilder.spacing : 0
+            topMargin: rowBuilder ? rowBuilder.spacing * 2 : 0
+            bottomMargin: rowBuilder ? rowBuilder.spacing * 2 : 0
             
             clip: true
             
@@ -261,8 +261,8 @@ Item {
             model: root.rowModel
             spacing: rowBuilder ? rowBuilder.spacing : 0
             
-            header: Item { height: rowBuilder ? rowBuilder.spacing : 0 }
-            footer: Item { height: rowBuilder ? rowBuilder.spacing : 0 }
+            // header: Item { height: rowBuilder ? rowBuilder.spacing : 0 }
+            // footer: Item { height: rowBuilder ? rowBuilder.spacing : 0 }
             
             delegate: Components.RowDelegate {
                 bridge: root.bridge
@@ -317,24 +317,23 @@ Item {
             
             onActiveChanged: {
                 if (active) {
-                    // START
-                    isSelecting = true
                     var start = centroid.pressPosition
                     
-                    // Capture Start in CONTENT SPACE
-                    // Visual X (relative to Rectangle) -> Content X
-                    // ListView has leftMargin (previously hardcoded 10+10). Now just LeftMargin.
-                    startContentX = start.x - rowListView.leftMargin        
+                    // Sanity Guard: Ignore phantom starts from focus-stitching or outside clicks
+                    if (start.x < 0 || start.y < 0 || start.x > parent.width || start.y > parent.height) {
+                        isSelecting = false
+                        return
+                    }
+
+                    isSelecting = true
                     
-                    // Visual Y (relative to Rectangle) -> Content Y
-                    // ListView has topMargin. ContentY starts at -topMargin.
-                    // Visual Y = topMargin + (Item Y - contentY) -> Item Y = Visual Y - topMargin + contentY
+                    // Capture Start in CONTENT SPACE
+                    startContentX = start.x - rowListView.leftMargin        
                     startContentY = start.y - rowListView.topMargin + rowListView.contentY
                     
                     rubberBand.show()
                     updateSelection()
                 } else {
-                    // FINISH
                     isSelecting = false
                     rubberBand.hide()
                     autoScrollTimer.stop()
@@ -342,7 +341,7 @@ Item {
             }
             
             onCentroidChanged: {
-                if (active) {
+                if (active && isSelecting) {
                     updateSelection()
                     handleAutoScroll(centroid.position.y)
                 }
@@ -405,6 +404,18 @@ Item {
                     
                 } else {
                     // Safe Zone
+                    autoScrollTimer.stop()
+                }
+            }
+        }
+
+        // Reset selection state if window loses focus during a drag
+        Connections {
+            target: root.Window || null
+            function onActiveChanged() {
+                if (root.Window && !root.Window.active && marqueeHandler.isSelecting) {
+                    marqueeHandler.isSelecting = false
+                    rubberBand.hide()
                     autoScrollTimer.stop()
                 }
             }
