@@ -96,6 +96,35 @@ API:
 !Caveat: The Undo/Redo stack is limited to 50 historical transactions.
 !Caveat: Uses `inverse_payload` if available for complex reversals (e.g. multi-step Move/Restore).
 
+### [FILE: backends/gio/view_state.py] [USABLE]
+Role: GVfs metadata-based persistence for per-directory UI presentation state (sort, view type).
+
+/DNA/: `[get_view_state(path) -> query GVfs metadata::imbric-* keys => ViewState] + [set_view_state(path, state) -> write non-None fields as strings to GVfs metadata]`
+
+- SrcDeps: core.interfaces.view_state_provider, core.models.view_state, core.utils.path_classifier, core.backends.gio.helpers
+- SysDeps: gi{Gio, GLib}
+
+API:
+  - GIOViewStateProvider(ViewStateProvider):
+    - get_view_state(path_or_uri) => ViewState | None: reads sort_key, sort_ascending, folders_first, view_type.
+    - set_view_state(path_or_uri, state) -> None: writes non-None fields as strings.
+!Caveat: Returns None for virtual paths or non-writable mounts (MTP read-only, etc).
+!Caveat: All values stored as strings in GVfs to avoid type mismatch across backends.
+
+### [FILE: models/view_state.py] [USABLE]
+Role: Pure data model (DTO) for directory-specific presentation state.
+
+/DNA/: `ViewState(dataclass, frozen)` -> immutable snapshot of sort/view preferences per directory.
+
+- SysDeps: dataclasses, typing
+
+API:
+  - ViewState(dataclass, frozen):
+    - sort_key: Optional[str] — e.g. "NAME", "DATE_MODIFIED", "SIZE", "TYPE"
+    - sort_ascending: Optional[bool]
+    - folders_first: Optional[bool]
+    - view_type: Optional[str] — "grid", "list", "compact"
+
 ### [FILE: utils/vfs_enforce.py] [USABLE]
 Role: VFS enforcement helpers that force UI layer to route through BackendRegistry.
 

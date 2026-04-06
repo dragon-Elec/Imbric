@@ -68,3 +68,19 @@ Role: Lightweight struct representing a trash entry; emitted via itemListed sign
 API:
   - TrashItem(dataclass):
     - fields: trash_name, display_name, original_path, deletion_date, trash_uri, size, is_dir
+
+---
+
+### [FILE: view_state.py] [USABLE]
+Role: Pure data model representing the saved UI presentation state for a specific directory.
+
+/DNA/: Dataclass with `sort_key`, `sort_ascending`, `folders_first`.
+
+- SrcDeps: None
+- SysDeps: dataclasses, typing
+
+API:
+  - ViewState(dataclass, frozen):
+    - sort_key: Optional[str]
+    - sort_ascending: Optional[bool]
+    - folders_first: Optional[bool]

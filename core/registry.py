@@ -9,6 +9,7 @@ from core.interfaces.thumbnail_provider import ThumbnailProviderBackend
 from core.interfaces.metadata_provider import MetadataProvider
 from core.interfaces.monitor_backend import MonitorBackend
 from core.interfaces.device_provider import DeviceProvider
+from core.interfaces.view_state_provider import ViewStateProvider
 from core.interfaces.metadata_workers import (
     ItemCountWorkerBackend,
     DimensionWorkerBackend,
@@ -31,6 +32,7 @@ class BackendRegistry:
         self._count_worker_cls: type[ItemCountWorkerBackend] | None = None
         self._dimension_worker_cls: type[DimensionWorkerBackend] | None = None
         self._search_backend: SearchBackend | None = None
+        self._view_state_provider: ViewStateProvider | None = None
 
         self._default_io: IOBackend | None = None
         self._default_scanner: ScannerBackend | None = None
@@ -182,3 +184,12 @@ class BackendRegistry:
 
     def get_search(self) -> SearchBackend | None:
         return self._search_backend
+
+    # -------------------------------------------------------------------------
+    # View State Provider
+    # -------------------------------------------------------------------------
+    def set_view_state_provider(self, provider: ViewStateProvider) -> None:
+        self._view_state_provider = provider
+
+    def get_view_state(self) -> ViewStateProvider | None:
+        return self._view_state_provider
