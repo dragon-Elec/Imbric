@@ -243,9 +243,9 @@ class AsyncWorkerPool(QObject):
                     args,
                     kwargs,
                 ) = task_data
-                print(
-                    f"[Pool] Pop: {task_id} Prio: {priority} Active: {self._active_count}"
-                )
+                # print(
+                #     f"[Pool] Pop: {task_id} Prio: {priority} Active: {self._active_count}"
+                # )
 
                 self._active_count += 1
 

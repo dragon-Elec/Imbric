@@ -1,11 +1,18 @@
 {
-  "executionEnvironments": [
-    {
-      "root": ".",
-      "extraPaths": [
-        "/home/ray/.local/lib/python3.12/site-packages",
-        "/usr/lib/python3/dist-packages"
-      ]
-    }
-  ]
+  "include": ["."],
+  "exclude": ["**/__pycache__", ".git"],
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Linux",
+  "extraPaths": [
+    "/home/ray/.local/lib/python3.12/site-packages",
+    "/usr/lib/python3/dist-packages"
+  ],
+  "typeCheckingMode": "standard",
+  "useLibraryCodeForTypes": true,
+  "reportMissingTypeStubs": false,
+  "reportAttributeAccessIssue": "none",
+  "reportArgumentType": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportUnusedImport": "information",
+  "reportUnusedParameter": "information"
 }
