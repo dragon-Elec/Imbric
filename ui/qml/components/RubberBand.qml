@@ -27,9 +27,18 @@ Rectangle {
     
     // --- Appearance ---
     visible: false
+    opacity: 0.0
     color: fillColor
     border.color: borderColor
     border.width: 1
+
+    // --- Animation ---
+    Behavior on opacity {
+        NumberAnimation {
+            duration: 150
+            easing.type: Easing.OutQuad
+        }
+    }
     
     // --- API ---
     
@@ -54,13 +63,22 @@ Rectangle {
      */
     function show() {
         root.visible = true
+        root.opacity = 1.0
     }
     
     /**
      * Hides the rubberband.
      */
     function hide() {
-        root.visible = false
+        root.opacity = 0.0
+        // Wait for fade before hiding completely
+        hideTimer.restart()
+    }
+
+    Timer {
+        id: hideTimer
+        interval: 160 // slightly longer than NumberAnimation duration
+        onTriggered: root.visible = false
     }
     
     /**
