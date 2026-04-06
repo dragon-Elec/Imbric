@@ -97,6 +97,8 @@ Menu {
         Accessible.role: Accessible.MenuItem
         Accessible.name: item.text
         
+        readonly property bool isRadio: item.action && item.action.isRadio !== undefined ? item.action.isRadio : false
+        
         arrow: Canvas {
             x: parent.width - 20; y: 11; width: 5; height: 10; visible: item.subMenu
             onPaint: {
@@ -110,10 +112,31 @@ Menu {
             
             Row {
                 id: contentRow; anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
-                spacing: (check.visible || iconItem.visible) ? 12 : 0; leftPadding: 12
+                spacing: (check.visible || radio.visible || iconItem.visible) ? 12 : 0; leftPadding: 12
+                
+                M.RadioButton {
+                    id: radio; visible: item.checkable && item.isRadio; checked: item.checked
+                    enabled: item.enabled; focusPolicy: Qt.NoFocus
+                    padding: 0; leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
+                    width: visible ? indicator.width : 0
+                    M.Material.theme: root.isDark ? M.Material.Dark : M.Material.Light
+                    M.Material.accent: sysPalette.highlight
+
+                    onClicked: {
+                        radio.checked = Qt.binding(function() { return item.checked; });
+                        if (item.action) {
+                            item.action.trigger();
+                        } else {
+                            item.triggered();
+                        }
+                        if (root) {
+                            root.dismiss();
+                        }
+                    }
+                }
                 
                 M.CheckBox {
-                    id: check; visible: item.checkable; checked: item.checked
+                    id: check; visible: item.checkable && !item.isRadio; checked: item.checked
                     enabled: item.enabled; focusPolicy: Qt.NoFocus
                     padding: 0; leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
                     width: visible ? indicator.width : 0
@@ -166,9 +189,9 @@ Menu {
         }
 
         background: Rectangle {
-            anchors.fill: parent; anchors.margins: 4; radius: 6
-            color: sysPalette.highlight; opacity: item.highlighted ? (root.isDark ? 0.19 : 0.25) : 0.0
-            Behavior on opacity { NumberAnimation { duration: 50 } }
+            anchors.fill: parent; anchors.margins: 2; radius: 8
+            color: sysPalette.highlight; opacity: item.highlighted ? (root.isDark ? 0.22 : 0.32) : 0.0
+            Behavior on opacity { NumberAnimation { duration: 60 } }
         }
     }
 }

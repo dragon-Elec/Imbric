@@ -77,7 +77,7 @@ GtkMenu {
             else {
                 let action = Qt.createQmlObject(`
                     import QtQuick.Controls
-                    Action {}
+                    Action { property bool isRadio: false }
                 `, rootMenu);
                 
                 action.text = itemDef.text || "";
@@ -86,6 +86,7 @@ GtkMenu {
                 if (itemDef.enabled !== undefined) action.enabled = itemDef.enabled;
                 if (itemDef.checkable !== undefined) action.checkable = itemDef.checkable;
                 if (itemDef.checked !== undefined) action.checked = itemDef.checked;
+                action.isRadio = itemDef.is_radio !== undefined ? itemDef.is_radio : false;
                 
                 // Exclusive group for sort-by keys (radio button behavior)
                 if (itemDef.id && itemDef.id.startsWith("SORT_KEY_")) {
