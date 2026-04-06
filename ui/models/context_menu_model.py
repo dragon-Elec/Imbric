@@ -1,5 +1,6 @@
 from PySide6.QtCore import QObject, Slot, Signal, Property
 from ui.services.sorter import SortKey
+from core.models.view_state import ViewState
 
 
 class ContextMenuViewModel(QObject):
@@ -53,6 +54,7 @@ class ContextMenuViewModel(QObject):
                     "icon": "view-sort-ascending-symbolic" if is_checked else "",
                     "checkable": True,
                     "checked": is_checked,
+                    "is_radio": True,
                 }
             )
 
@@ -79,6 +81,37 @@ class ContextMenuViewModel(QObject):
                 "checked": is_folders_first,
             }
         )
+
+        return submenu
+
+    def _build_view_submenu(self):
+        """Build the View As submenu model."""
+        shell = self.mw.shell_manager
+        pane = shell.current_pane
+        if not pane:
+            return []
+
+        row_builder = pane.row_builder
+        if not row_builder:
+            return []
+
+        current_view = row_builder.getCurrentViewType()
+
+        submenu = []
+        for view_type in ("grid", "list", "compact"):
+            is_checked = view_type == current_view
+            is_enabled = view_type == "grid"
+            submenu.append(
+                {
+                    "id": f"VIEW_TYPE_{view_type.upper()}",
+                    "text": view_type.capitalize(),
+                    "icon": "view-grid-symbolic" if is_checked else "",
+                    "checkable": True,
+                    "checked": is_checked,
+                    "enabled": is_enabled,
+                    "is_radio": True,
+                }
+            )
 
         return submenu
 
@@ -136,6 +169,17 @@ class ContextMenuViewModel(QObject):
                         "text": "Sort By",
                         "icon": "view-sort-ascending-symbolic",
                         "submenu": sort_submenu,
+                    }
+                )
+
+            # View As submenu
+            view_submenu = self._build_view_submenu()
+            if view_submenu:
+                model.append(
+                    {
+                        "text": "View As",
+                        "icon": "view-grid-symbolic",
+                        "submenu": view_submenu,
                     }
                 )
         else:
@@ -229,6 +273,9 @@ class ContextMenuViewModel(QObject):
                 sorter = self._get_current_sorter()
                 if sorter:
                     sorter.setKey(int(sort_key))
+                    path = self.mw.shell_manager.current_pane.current_path
+                    state = ViewState(sort_key=sort_key.name)
+                    self.mw.registry.get_view_state().set_view_state(path, state)
             except KeyError:
                 print(f"[ContextMenuViewModel] Unknown sort key: {key_name}")
             return
@@ -236,13 +283,30 @@ class ContextMenuViewModel(QObject):
         if action_id == "SORT_ASCENDING":
             sorter = self._get_current_sorter()
             if sorter:
-                sorter.setAscending(not sorter.isAscending())
+                new_val = not sorter.isAscending()
+                sorter.setAscending(new_val)
+                path = self.mw.shell_manager.current_pane.current_path
+                state = ViewState(sort_ascending=new_val)
+                self.mw.registry.get_view_state().set_view_state(path, state)
             return
 
         if action_id == "SORT_FOLDERS_FIRST":
             sorter = self._get_current_sorter()
             if sorter:
-                sorter.setFoldersFirst(not sorter.isFoldersFirst())
+                new_val = not sorter.isFoldersFirst()
+                sorter.setFoldersFirst(new_val)
+                path = self.mw.shell_manager.current_pane.current_path
+                state = ViewState(folders_first=new_val)
+                self.mw.registry.get_view_state().set_view_state(path, state)
+            return
+
+        # View type actions
+        if action_id.startswith("VIEW_TYPE_"):
+            view_type = action_id[len("VIEW_TYPE_") :].lower()
+            shell = self.mw.shell_manager
+            pane = shell.current_pane
+            if pane and pane.row_builder:
+                pane.row_builder.setViewType(view_type)
             return
 
         try:
