@@ -42,9 +42,9 @@ API:
     - format_size(int) -> str: Bytes to human-readable.
 
 ### [FILE: row_builder.py] [USABLE]
-Role: Justified Grid Layout engine that streams items, calculates scaling/aspects, builds row batches, and pre-renders thumbnail URIs.
+Role: Justified Grid Layout engine that streams items, calculates scaling/aspects, builds row batches, and pre-renders thumbnail URIs. Manages view type state (grid/list/compact) with GVfs persistence.
 
-/DNA/: `[em:appendFiles -> _calculate_thumbnail_cap -> _resolve_thumbnail_url -> _trigger_layout_update] + [QTimer(50) -> _build_rows() -> scale(aspect*ht) -> pack_or_wrap -> em:rowsChanged]`
+/DNA/: `[em:appendFiles -> _calculate_thumbnail_cap -> _resolve_thumbnail_url -> _trigger_layout_update] + [QTimer(50) -> _build_rows() -> scale(aspect*ht) -> pack_or_wrap -> em:rowsChanged] + [setCurrentPath(path) -> read saved view_type from GVfs -> apply default from ViewConfig if none -> em:viewTypeChanged]`
 
 - SrcDeps: ui.services.sorter, ui.services.view_config, ui.models.row_model
 - SysDeps: PySide6{QtCore}, hashlib, urllib.parse, pathlib, gi.repository.GLib
@@ -54,20 +54,23 @@ API:
     - appendFiles(list) -> None: Streams new files into layout.
     - addSingleItem(dict) / removeSingleItem(str) -> None: Surgical updates.
     - setRowHeight(int) / setAvailableWidth(int) -> None: Triggers re-layout.
+    - setViewType(str) -> None: Sets view type ("grid"/"list"/"compact") and persists to GVfs.
     - getItemsInRect(x, y, w, h) -> list: Calculates intersection for marquee selection.
     - getItemsInRange(start, end) -> list: Path list for row range.
     - setFiles(list) / finishLoading() -> None: Navigation state management.
     - clear() -> None: Resets layout.
     - updateItem(path, attr, value) -> None: Single item state update.
-    - calculate_next_zoom_height(direction) -> int: Snap height calculation.
+    - calculate_next_zoom_height(direction) -> int: Snap heights calculation.
     - getRows() -> list: Row data structure.
     - getRowHeight() -> int / getSorter() -> Sorter: Accessors.
+    - getCurrentViewType() -> str: Returns current view type string.
     - getAllItems() -> list: Flattened sorted items.
-    - Properties: rowHeight(int), sorter(Sorter), spacing(int), footerHeight(int).
+    - Properties: rowHeight(int), sorter(Sorter), spacing(int), footerHeight(int), currentViewType(str).
 
 !Caveat: `_resolve_thumbnail_url` directly checks `~/.cache/thumbnails/large/` via MD5 to skip blocking standard thumbnailer calls when cached.
 !Caveat: Layout updates are debounced by 50ms via `_layout_timer` to prevent UI freezing during streaming loads.
 !Caveat: Uses `RowModel` (QAbstractListModel) for incremental QML updates — no full model replacement on every change.
+!Caveat: View type persistence uses GVfs metadata (`metadata::imbric-view-type`); only "grid" is currently implemented, "list"/"compact" are disabled in UI.
 
 ---
 
@@ -97,7 +100,7 @@ API:
 ---
 
 ### [FILE: view_config.py] [USABLE]
-Role: Resolves PathCapabilities from core into presentation defaults (sort key, direction, thumbnail strategy).
+Role: Resolves PathCapabilities from core into presentation defaults (sort key, direction, view type, thumbnail strategy).
 
 /DNA/: `resolve(caps)` -> [lookup _CONFIGS by scheme] => ViewConfig | fallback to "file" preset
 
@@ -109,9 +112,11 @@ API:
     - default_sort_key: SortKey
     - default_ascending: bool
     - folders_first: bool
+    - default_view_type: str — "grid", "list", or "compact"
     - skip_thumbnail_precompute: bool
     - use_streaming_layout: bool
   - resolve(path_caps) -> ViewConfig
 
-!Caveat: `recent://` preset disables folders-first (meaningless for scattered files) and sorts by date desc.
-!Caveat: Unknown schemes fall back to the "file" preset (name asc, folders first).
+!Caveat: `recent://` preset disables folders-first (meaningless for scattered files), sorts by date desc, and defaults to "list" view.
+!Caveat: `trash://` defaults to "list" view for metadata density.
+!Caveat: Unknown schemes fall back to the "file" preset (name asc, folders first, "grid" view).

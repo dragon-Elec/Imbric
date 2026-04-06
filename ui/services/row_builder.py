@@ -26,6 +26,7 @@ class RowBuilder(QObject):
     rowsChanged = Signal()
     sortChanged = Signal()
     rowHeightChanged = Signal(int)
+    viewTypeChanged = Signal(str)
     selectAllRequested = Signal()
 
     # Constants for Phase 1
@@ -61,6 +62,9 @@ class RowBuilder(QObject):
         # Path awareness for virtual/volatile path handling
         self._current_path = ""
         self._path_caps = None
+        self._view_config = None
+        self._registry = None
+        self._current_view_type = "grid"
 
         self._sorter = Sorter(self)
         self._sorter.sortChanged.connect(self._on_sort_changed)
@@ -73,6 +77,9 @@ class RowBuilder(QObject):
         self._layout_timer.setSingleShot(True)
         self._layout_timer.setInterval(50)  # 50ms debounce
         self._layout_timer.timeout.connect(self._perform_layout_update)
+
+    def setRegistry(self, registry) -> None:
+        self._registry = registry
 
     def _trigger_layout_update(self):
         """Schedule a layout update."""
@@ -119,6 +126,37 @@ class RowBuilder(QObject):
     @Property(int, constant=True)
     def spacing(self) -> int:
         return self.SPACING
+
+    @Slot(str)
+    def setViewType(self, view_type: str) -> None:
+        """Set the view type (grid, list, compact) and persist it."""
+        valid_types = ("grid", "list", "compact")
+        if view_type not in valid_types:
+            return
+
+        if view_type != self._current_view_type:
+            self._current_view_type = view_type
+            self.viewTypeChanged.emit(view_type)
+
+            if self._current_path and self._registry:
+                vs_provider = self._registry.get_view_state()
+                if vs_provider:
+                    from core.models.view_state import ViewState
+
+                    state = ViewState(view_type=view_type)
+                    vs_provider.set_view_state(self._current_path, state)
+
+    @Slot(result=str)
+    def getCurrentViewType(self) -> str:
+        return self._current_view_type
+
+    @Property(str, notify=viewTypeChanged)
+    def currentViewType(self) -> str:
+        return self._current_view_type
+
+    @currentViewType.setter
+    def currentViewType(self, val: str) -> None:
+        self.setViewType(val)
 
     @Slot(int, result=int)
     def calculate_next_zoom_height(self, direction: int) -> int:
@@ -188,10 +226,36 @@ class RowBuilder(QObject):
         self._path_caps = classify(path)
         self._view_config = resolve_view_config(self._path_caps)
 
-        # Auto-apply path-type-aware defaults
-        self._sorter.setKey(int(self._view_config.default_sort_key))
-        self._sorter.setAscending(self._view_config.default_ascending)
-        self._sorter.setFoldersFirst(self._view_config.folders_first)
+        # Defaults
+        sort_key = self._view_config.default_sort_key
+        sort_asc = self._view_config.default_ascending
+        folders_first = self._view_config.folders_first
+        view_type = self._view_config.default_view_type
+
+        # Override with saved state
+        if hasattr(self, "_registry") and self._registry:
+            from ui.services.sorter import SortKey
+
+            vs_provider = self._registry.get_view_state()
+            if vs_provider:
+                state = vs_provider.get_view_state(path)
+                if state:
+                    if state.sort_key is not None:
+                        try:
+                            sort_key = SortKey[state.sort_key]
+                        except KeyError:
+                            pass
+                    if state.sort_ascending is not None:
+                        sort_asc = state.sort_ascending
+                    if state.folders_first is not None:
+                        folders_first = state.folders_first
+                    if state.view_type is not None:
+                        view_type = state.view_type
+
+        self._current_view_type = view_type
+        self._sorter.setKey(int(sort_key))
+        self._sorter.setAscending(sort_asc)
+        self._sorter.setFoldersFirst(folders_first)
 
     @Slot(list)
     def setFiles(self, files: list) -> None:
@@ -505,10 +569,6 @@ class RowBuilder(QObject):
     ) -> list:
         """
         Returns a list of item PATHS that intersect with the given rectangle.
-
-        Coordinate System:
-        - rect_x, rect_y: Content Coordinates (Already mapped from QML Viewport)
-        - Helper: Checks if item box (x, y, w, h) overlaps rect (x, y, w, h)
         """
         selected_paths = []
 

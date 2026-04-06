@@ -38,6 +38,7 @@ class PaneContext(QObject):
 
         # Background workers for scanner
         registry = self.mw.registry
+        self.row_builder.setRegistry(registry)
         self._count_worker = registry.create_count_worker()
         self._dimension_worker = registry.create_dimension_worker()
         if self._count_worker:
@@ -83,6 +84,9 @@ class PaneContext(QObject):
         self._nav_pool.resultReady.connect(self._on_nav_worker_result)
         self._cached_segments = []
 
+        # [FIX] Initial build to avoid binding loops in QML getters
+        self._build_fast_segments()
+
     def _on_nav_worker_result(self, task_id, result):
         if task_id.startswith("enrich_"):
             if result and task_id == f"enrich_{self._virtual_path}":
@@ -100,6 +104,7 @@ class PaneContext(QObject):
                 self.current_path = result
                 self._virtual_path = result
                 self._cached_segments = []
+                self._build_fast_segments() # [FIX] Ensure breadcrumbs update on canonical resolution
                 self.pathChanged.emit(self._current_path)
 
     @property
@@ -145,9 +150,6 @@ class PaneContext(QObject):
         """Generates dynamic breadcrumb models using a two-phase Async Pattern."""
         if not self._virtual_path:
             return []
-
-        if not self._cached_segments:
-            self._build_fast_segments()
 
         return self._cached_segments
 

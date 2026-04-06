@@ -22,6 +22,7 @@ class ViewConfig:
     default_sort_key: SortKey
     default_ascending: bool
     folders_first: bool
+    default_view_type: str  # "grid", "list", "compact"
     skip_thumbnail_precompute: bool
     use_streaming_layout: bool
 
@@ -32,6 +33,7 @@ _CONFIGS = {
         default_sort_key=SortKey.DATE_MODIFIED,
         default_ascending=False,  # most recent first
         folders_first=False,  # Recent mixes files from everywhere; folders-first is meaningless
+        default_view_type="list",  # Dense metadata view benefits from list layout
         skip_thumbnail_precompute=True,  # thumbnails are often stale for scattered files
         use_streaming_layout=False,  # Recent is one-shot; no streaming needed
     ),
@@ -39,6 +41,7 @@ _CONFIGS = {
         default_sort_key=SortKey.DATE_MODIFIED,
         default_ascending=False,  # most recently trashed first
         folders_first=False,
+        default_view_type="list",  # Trash benefits from seeing details
         skip_thumbnail_precompute=False,
         use_streaming_layout=False,
     ),
@@ -46,6 +49,7 @@ _CONFIGS = {
         default_sort_key=SortKey.NAME,
         default_ascending=True,
         folders_first=True,
+        default_view_type="grid",  # Standard file browsing = justified grid
         skip_thumbnail_precompute=False,
         use_streaming_layout=True,
     ),

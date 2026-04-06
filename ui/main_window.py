@@ -3,6 +3,7 @@ from PySide6.QtCore import QDir, Slot, Qt, QTimer
 
 from pathlib import Path
 import os
+# LSP payload test - basedpyright check v5
 
 # Core Logic
 from core.managers import FileOperations, TransactionManager, UndoManager
@@ -12,6 +13,7 @@ from core.backends.gio.metadata_workers import ItemCountWorker, DimensionWorker
 from core.services.validator import OperationValidator
 from core.registry import BackendRegistry
 from core.backends.gio.backend import GIOBackend, GIOMetadataProvider
+from core.backends.gio.view_state import GIOViewStateProvider
 
 # UI Managers
 from ui.managers.action_manager import ActionManager
@@ -53,6 +55,7 @@ class MainWindow(QMainWindow):
         gio_backend.set_signals(self.file_ops._signals)
         self.registry.set_default_io(gio_backend)
         self.registry.set_metadata_provider(GIOMetadataProvider())
+        self.registry.set_view_state_provider(GIOViewStateProvider())
 
         self.registry.set_monitor_backend(FileMonitor())
         self.registry.set_device_provider(VolumesBridge())
