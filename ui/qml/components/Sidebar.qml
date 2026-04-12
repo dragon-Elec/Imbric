@@ -18,9 +18,11 @@ Pane {
     // Bridge Properties (set from Python context)
     // The core model is 'sidebarModel', injected as 'sectionsModel' property here.
     property var sectionsModel
+    property int gridItemSize: 60
     
     // Internal State
     property string currentSelectionPath: ""
+    property string currentSelectionIdentifier: ""
     
     // --- SYSTEM PALETTE ---
     SystemPalette { id: sysPalette; colorGroup: SystemPalette.Active }
@@ -31,6 +33,18 @@ Pane {
     Material.accent: sysPalette.highlight
 
     // --- HELPER FUNCTIONS ---
+    function adjustGridSize(direction) {
+        // direction: 1 = increase, -1 = decrease
+        var step = 12
+        var minSize = 24
+        var maxSize = 60
+        
+        var newSize = gridItemSize + (direction * step)
+        if (newSize >= minSize && newSize <= maxSize) {
+            gridItemSize = newSize
+        }
+    }
+
     function getIconChar(name) {
         switch(name) {
             case "history": return "◴"       // Recent
@@ -146,12 +160,20 @@ Pane {
                         Repeater {
                             model: header.actionsList
                             delegate: ToolButton {
-                                text: modelData === "Add" ? "+" : (modelData === "Refresh" ? "⟳" : (modelData === "Settings" ? "⚙" : "?"))
+                                text: modelData === "Add" ? "+" : (modelData === "Refresh" ? "⟳" : (modelData === "Settings" ? "⚙" : (modelData === "Shrink" ? "-" : (modelData === "Grow" ? "➲" : "?"))))
                                 font.pointSize: 10 // roughly 14px
                                 flat: true
                                 opacity: hovered ? 1.0 : 0.6
                                 // Use the explicitly named title from the outer context
-                                onClicked: root.sectionActionTriggered(header.text, modelData)
+                                onClicked: {
+                                    if (modelData === "Shrink") {
+                                        root.adjustGridSize(-1)
+                                    } else if (modelData === "Grow") {
+                                        root.adjustGridSize(1)
+                                    } else {
+                                        root.sectionActionTriggered(header.text, modelData)
+                                    }
+                                }
                                 background: Rectangle { color: parent.down ? Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.1) : "transparent"; radius: 4 }
                             }
                         }
@@ -214,7 +236,9 @@ Pane {
                         model: dataModel // injected by Loader
                         delegate: ItemDelegate {
                             id: gridDelegate
-                            width: 60; height: 60; padding: 0
+                            width: root.gridItemSize
+                            height: root.gridItemSize
+                            padding: 0
                             
                             property string itemPath: model.path !== undefined ? model.path : ""
                             property bool isSelected: root.currentSelectionPath !== "" && root.currentSelectionPath === itemPath
@@ -223,7 +247,7 @@ Pane {
                             Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
                             
                             background: Rectangle {
-                                radius: 12
+                                radius: Math.round(root.gridItemSize / 5)
                                 color: isSelected ? Qt.rgba(sysPalette.highlight.r, sysPalette.highlight.g, sysPalette.highlight.b, 0.15) : 
                                        parent.hovered ? Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.05) : "transparent"
                                 border.color: (isSelected || parent.hovered) ? sysPalette.highlight : Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.15)
@@ -234,16 +258,16 @@ Pane {
 
                             contentItem: Column {
                                 anchors.centerIn: parent
-                                spacing: 2
+                                spacing: Math.round(root.gridItemSize * 0.03)
                                 Label {
                                     text: model.icon !== undefined ? root.getIconChar(model.icon) : "?"
-                                    font.pixelSize: (model.icon === "description" || model.icon === "history") ? 26 : 22 // Keep icons pixel-based
+                                    font.pixelSize: Math.round(root.gridItemSize * 0.37)
                                     color: isSelected ? sysPalette.highlight : sysPalette.text
                                     anchors.horizontalCenter: parent.horizontalCenter
                                 }
                                 Label {
                                     text: model.name !== undefined ? model.name : ""
-                                    font.pointSize: 7 // roughly 9px
+                                    font.pointSize: Math.round(Qt.application.font.pointSize * 0.6)
                                     color: sysPalette.text
                                     opacity: isSelected ? 1.0 : 0.7
                                     font.bold: isSelected
@@ -255,6 +279,7 @@ Pane {
                             onClicked: {
                                 if (model.path) {
                                     root.currentSelectionPath = model.path
+                                    root.currentSelectionIdentifier = ""
                                     root.navigationRequested(model.path)
                                 }
                             }
@@ -287,13 +312,14 @@ Pane {
                 textLabel: model.name !== undefined ? model.name : ""
                 iconSymbol: model.icon !== undefined ? root.getIconChar(model.icon) : "?"
                 usageData: model.usage !== undefined ? model.usage : null
-                isActive: root.currentSelectionPath !== "" && root.currentSelectionPath === model.path
+                isActive: (root.currentSelectionPath !== "" && root.currentSelectionPath === model.path) || 
+                          (root.currentSelectionIdentifier !== "" && model.identifier !== undefined && root.currentSelectionIdentifier === model.identifier)
                 showMountIndicator: model.isMounted !== undefined ? model.isMounted : false
                 
                 ToolButton {
                     visible: (model.isMounted !== undefined && model.isMounted === true && model.canUnmount !== undefined && model.canUnmount === true)
                     text: "⏏"
-                    font.pointSize: 10 // roughly 14px
+                    font.pixelSize: Math.round(Qt.application.font.pixelSize * 1.1)
                     flat: true
                     opacity: hovered ? 1.0 : 0.6
                     background: Rectangle { color: parent.down ? Qt.rgba(sysPalette.text.r, sysPalette.text.g, sysPalette.text.b, 0.1) : "transparent"; radius: 4 }
@@ -303,16 +329,24 @@ Pane {
                 }
 
                 onClicked: {
-                    if (model.path !== undefined) {
+                    if (model.path !== undefined && model.path !== "") {
                         root.currentSelectionPath = model.path
-                        if (model.isMounted !== undefined && model.isMounted) {
+                    } else {
+                        root.currentSelectionPath = ""
+                    }
+                    if (model.identifier !== undefined) {
+                        root.currentSelectionIdentifier = model.identifier
+                    } else {
+                        root.currentSelectionIdentifier = ""
+                    }
+
+                    if (model.isMounted !== undefined && model.isMounted) {
+                        if (model.path) root.navigationRequested(model.path)
+                    } else {
+                        if (model.identifier !== undefined) {
+                            root.mountRequested(model.identifier)
+                            // Restored behavior: still fire navigation so UI jumps there after mount
                             if (model.path) root.navigationRequested(model.path)
-                        } else {
-                            if (model.identifier !== undefined) {
-                                root.mountRequested(model.identifier)
-                                // Restored behavior: still fire navigation so UI jumps there after mount
-                                if (model.path) root.navigationRequested(model.path)
-                            }
                         }
                     }
                 }
