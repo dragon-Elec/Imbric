@@ -4,9 +4,9 @@ from PySide6.QtQuick import QQuickView
 from pathlib import Path
 
 
-from ui.models.tab_model import TabListModel
-from ui.models.pane_context import PaneContext
-from ui.models.sidebar_model import SidebarModel
+from application.models.tab_model import TabListModel
+from application.models.pane_context import PaneContext
+from application.models.sidebar_model import SidebarModel
 from core.backends.gio.desktop import QuickAccessBridge
 
 
@@ -67,7 +67,7 @@ class ShellManager(QObject):
         ctx.setContextProperty("sidebarModel", self.sidebar_model)
 
         # Instantiate ViewModel for Context Menu
-        from ui.models.context_menu_model import ContextMenuViewModel
+        from application.models.context_menu_model import ContextMenuViewModel
 
         self.context_menu_model = ContextMenuViewModel(main_window)
         ctx.setContextProperty("contextMenuViewModel", self.context_menu_model)

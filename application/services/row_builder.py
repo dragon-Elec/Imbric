@@ -13,10 +13,10 @@ Algorithm:
 """
 
 from PySide6.QtCore import QObject, Slot, Signal, Property, QTimer
-from ui.services.sorter import Sorter
-from ui.models.row_model import RowModel
+from application.services.sorter import Sorter
+from application.models.row_model import RowModel
 from core.utils.path_classifier import classify
-from ui.services.view_config import resolve as resolve_view_config
+from application.services.view_config import resolve as resolve_view_config
 import hashlib
 import urllib.parse
 from pathlib import Path
@@ -234,7 +234,7 @@ class RowBuilder(QObject):
 
         # Override with saved state
         if hasattr(self, "_registry") and self._registry:
-            from ui.services.sorter import SortKey
+            from application.services.sorter import SortKey
 
             vs_provider = self._registry.get_view_state()
             if vs_provider:

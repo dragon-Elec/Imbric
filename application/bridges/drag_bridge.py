@@ -1,5 +1,5 @@
 from PySide6.QtCore import QObject, Slot
-from ui.components.drag_helper import start_drag_session
+from application.components.drag_helper import start_drag_session
 
 
 class DragBridge(QObject):

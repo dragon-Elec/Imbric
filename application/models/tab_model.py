@@ -1,7 +1,7 @@
 from PySide6.QtCore import QAbstractListModel, Qt, QModelIndex, QByteArray
 from gi.repository import Gio
 
-from ui.models.pane_context import PaneContext
+from application.models.pane_context import PaneContext
 
 
 class TabListModel(QAbstractListModel):

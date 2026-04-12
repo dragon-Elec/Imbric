@@ -16,13 +16,13 @@ from core.backends.gio.backend import GIOBackend, GIOMetadataProvider
 from core.backends.gio.view_state import GIOViewStateProvider
 
 # UI Managers
-from ui.managers.action_manager import ActionManager
-from ui.managers.file_manager import FileManager
-from ui.managers.view_manager import ViewManager
-from ui.models.shortcuts import Shortcuts
+from application.managers.action_manager import ActionManager
+from application.managers.file_manager import FileManager
+from application.managers.view_manager import ViewManager
+from application.models.shortcuts import Shortcuts
 
-from ui.components.status_bar import StatusBar
-from ui.components.progress_overlay import ProgressOverlay
+from application.components.status_bar import StatusBar
+from application.components.progress_overlay import ProgressOverlay
 
 
 class MainWindow(QMainWindow):
@@ -83,14 +83,14 @@ class MainWindow(QMainWindow):
 
         # 2. Setup Unified Shell Manager
         # This replaces both Sidebar and TabManager
-        from ui.managers.shell_manager import ShellManager
+        from application.managers.shell_manager import ShellManager
 
         self.shell_manager = ShellManager(self)
 
         # 3. Setup UI Layout
         # Import CustomHeader only if needed (or generally)
         if self.use_csd:
-            from ui.components.custom_header import CustomHeader
+            from application.components.custom_header import CustomHeader
 
         self._setup_ui()
 

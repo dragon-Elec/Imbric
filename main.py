@@ -18,7 +18,7 @@ from PySide6.QtQuickControls2 import QQuickStyle
 # Add project root to path so imports work
 sys.path.append(str(Path(__file__).parent))
 
-from ui.main_window import MainWindow
+from application.main_window import MainWindow
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Imbric Photo Manager")
@@ -96,7 +96,7 @@ def main():
     
     # [FIX] Load Custom Configuration (Dense Variant)
     # Locate the config file relative to this script
-    conf_path = Path(__file__).parent / "ui" / "qtquickcontrols2.conf"
+    conf_path = Path(__file__).parent / "application" / "qtquickcontrols2.conf"
     if conf_path.exists():
         os.environ["QT_QUICK_CONTROLS_CONF"] = str(conf_path)
         print(f"Loaded QML Config: {conf_path}")
@@ -111,7 +111,7 @@ def main():
     # app.setStyle("Fusion")
 
     # 3. Apply Modern QSS Patches
-    qss_path = Path(__file__).parent / "ui" / "styles" / "modern.qss"
+    qss_path = Path(__file__).parent / "application" / "styles" / "modern.qss"
 
     def apply_styles():
         """Reads and applies the QSS file to the application."""

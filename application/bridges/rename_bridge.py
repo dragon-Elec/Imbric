@@ -1,6 +1,6 @@
 from PySide6.QtCore import QObject, Signal, Slot
-from ui.services.conflict_resolver import ConflictResolver
-from ui.dialogs.conflicts import ConflictAction
+from application.services.conflict_resolver import ConflictResolver
+from application.dialogs.conflicts import ConflictAction
 from core.threading.worker_pool import AsyncWorkerPool
 
 

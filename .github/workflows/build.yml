@@ -80,8 +80,8 @@ jobs:
             --enable-plugin=pyside6 \
             --enable-plugin=gi \
             --include-qt-plugins=qml \
-            --include-data-dir=ui=ui \
-            --linux-icon=ui/icon.svg \
+            --include-data-dir=application=application \
+            --linux-icon=application/icon.svg \
             --output-filename=imbric \
             main.py
             
@@ -149,7 +149,7 @@ jobs:
           chmod +x dist/imbric-launcher
           
           # Convert SVG to PNG for icon
-          rsvg-convert -w 256 -h 256 ui/icon.svg -o dist/imbric-256.png || true
+          rsvg-convert -w 256 -h 256 application/icon.svg -o dist/imbric-256.png || true
       
 
       - name: Generate NFPM Config
@@ -183,22 +183,22 @@ jobs:
               dst: "/usr/lib/imbric/core"
               type: tree
             
-            - src: "ui"
-              dst: "/usr/lib/imbric/ui"
+            - src: "application"
+              dst: "/usr/lib/imbric/application"
               type: tree
             
             - src: "main.py"
               dst: "/usr/lib/imbric/main.py"
             
             # Desktop integration
-            - src: "ui/imbric.desktop"
+            - src: "application/imbric.desktop"
               dst: "/usr/share/applications/imbric.desktop"
             
             # Icons
             - src: "dist/imbric-256.png"
               dst: "/usr/share/icons/hicolor/256x256/apps/imbric.png"
             
-            - src: "ui/icon.svg"
+            - src: "application/icon.svg"
               dst: "/usr/share/icons/hicolor/scalable/apps/imbric.svg"
             
             # Launcher script

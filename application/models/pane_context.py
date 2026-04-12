@@ -10,8 +10,8 @@ from core.backends.gio.desktop import (
     get_breadcrumb_segments,
 )
 from core.backends.gio.scanner import FileScanner
-from ui.services.row_builder import RowBuilder
-from ui.bridges.app_bridge import AppBridge
+from application.services.row_builder import RowBuilder
+from application.bridges.app_bridge import AppBridge
 
 
 class PaneContext(QObject):

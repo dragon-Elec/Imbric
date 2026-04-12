@@ -1,4 +1,4 @@
-Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/ui/managers
+Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/application/managers
 Routing layer for high-level UI coordination. Managers sit above the bridges and models to provide application-wide state (clipboard, navigation stacks, shell structure) and coordinate operations across tabs and core services.
 
 Rules:

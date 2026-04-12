@@ -1,4 +1,4 @@
-# Imbric/ui/services
+# Imbric/application/services
 
 Identity: Domain-specific logic controllers that bridge the gap between pure core systems and QML/UI presentation. These services handle stateful UI operations (like conflict resolution memory) and layout math (like RowBuilder) that are too complex for QML.
 
@@ -18,7 +18,7 @@ Role: Stateful helper for resolving file conflicts during batch ops, retaining '
 
 /DNA/: `[call:resolve() -> if(apply_all_cached) -> return action] + [show(ConflictDialog) -> cache(action) -> return action]`
 
-- SrcDeps: ui.dialogs.conflicts
+- SrcDeps: application.dialogs.conflicts
 - SysDeps: PySide6{QtCore}, threading
 
 API:
@@ -46,7 +46,7 @@ Role: Justified Grid Layout engine that streams items, calculates scaling/aspect
 
 /DNA/: `[em:appendFiles -> _calculate_thumbnail_cap -> _resolve_thumbnail_url -> _trigger_layout_update] + [QTimer(50) -> _build_rows() -> scale(aspect*ht) -> pack_or_wrap -> em:rowsChanged] + [setCurrentPath(path) -> read saved view_type from GVfs -> apply default from ViewConfig if none -> em:viewTypeChanged]`
 
-- SrcDeps: ui.services.sorter, ui.services.view_config, ui.models.row_model
+- SrcDeps: application.services.sorter, application.services.view_config, application.models.row_model
 - SysDeps: PySide6{QtCore}, hashlib, urllib.parse, pathlib, gi.repository.GLib
 
 API:
@@ -104,7 +104,7 @@ Role: Resolves PathCapabilities from core into presentation defaults (sort key, 
 
 /DNA/: `resolve(caps)` -> [lookup _CONFIGS by scheme] => ViewConfig | fallback to "file" preset
 
-- SrcDeps: ui.services.sorter
+- SrcDeps: application.services.sorter
 - SysDeps: dataclasses
 
 API:

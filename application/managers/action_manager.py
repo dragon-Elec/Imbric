@@ -9,7 +9,7 @@ from PySide6.QtGui import QAction, QKeySequence, QIcon
 from PySide6.QtWidgets import QWidget
 from typing import Dict, Callable, Optional, Tuple
 
-from ui.models.shortcuts import Shortcuts, ShortcutAction
+from application.models.shortcuts import Shortcuts, ShortcutAction
 
 class ActionManager(QObject):
     def __init__(self, parent=None):

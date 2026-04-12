@@ -1,5 +1,5 @@
 from PySide6.QtCore import QObject, Slot, Signal, Property
-from ui.services.sorter import SortKey
+from application.services.sorter import SortKey
 from core.models.view_state import ViewState
 
 
@@ -121,7 +121,7 @@ class ContextMenuViewModel(QObject):
         Generates a model (list of dicts) for GtkActionMenu.
         If paths is empty, returns background context menu.
         """
-        from ui.models.shortcuts import ShortcutAction
+        from application.models.shortcuts import ShortcutAction
 
         am = self.mw.action_manager
         fm = self.mw.file_manager
@@ -258,7 +258,7 @@ class ContextMenuViewModel(QObject):
         """
         Executes an action from GtkActionMenu.
         """
-        from ui.models.shortcuts import ShortcutAction
+        from application.models.shortcuts import ShortcutAction
         from core.backends.gio.desktop import open_with_default_app as _open_file
 
         if action_id == "OPEN_NATIVE" and paths:

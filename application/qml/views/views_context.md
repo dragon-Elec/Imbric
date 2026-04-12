@@ -1,4 +1,4 @@
-Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/ui/qml/views
+Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/application/qml/views
 Central views that assemble components into primary layouts (Main Layout, Tabs, File Grids).
 
 Rules:

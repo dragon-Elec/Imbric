@@ -1,9 +1,9 @@
 from PySide6.QtCore import QObject, Signal, Property, Slot
 
-from ui.bridges.search_bridge import SearchBridge
-from ui.bridges.rename_bridge import RenameBridge
-from ui.bridges.drag_bridge import DragBridge
-from ui.bridges.navigation_bridge import NavigationBridge
+from application.bridges.search_bridge import SearchBridge
+from application.bridges.rename_bridge import RenameBridge
+from application.bridges.drag_bridge import DragBridge
+from application.bridges.navigation_bridge import NavigationBridge
 
 
 class AppBridge(QObject):

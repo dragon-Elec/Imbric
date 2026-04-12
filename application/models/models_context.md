@@ -1,4 +1,4 @@
-Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/ui/models
+Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/application/models
 Data structures, ViewModel components, and Python models (e.g. QAbstractListModel) holding UI state to feed directly to QML Views.
 
 Rules:
@@ -119,7 +119,7 @@ Role: ViewModel handling state, data formatting, and action execution for Gtk-mi
 
 /DNA/: [call:getModelForPaths(paths)] -> if(!paths) -> [build_bg_model + sort_submenu] else -> [build_file_model] => list(dict) + [call:executeAction(id, paths)] -> if(SORT_*) -> call:sorter.set* | else -> am.get_action(id).trigger()
 
-- SrcDeps: .shortcuts.ShortcutAction, ui.services.sorter.SortKey, core.backends.gio.desktop.open_with_default_app
+- SrcDeps: .shortcuts.ShortcutAction, application.services.sorter.SortKey, core.backends.gio.desktop.open_with_default_app
 - SysDeps: PySide6.QtCore{QObject, Slot}
 
 API:

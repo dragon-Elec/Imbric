@@ -74,8 +74,8 @@ jobs:
             --enable-plugin=pyside6 \
             --enable-plugin=gi \
             --include-qt-plugins=qml \
-            --include-data-dir=ui=ui \
-            --linux-icon=ui/icon.svg \
+            --include-data-dir=application=application \
+            --linux-icon=application/icon.svg \
             --output-filename=imbric \
             main.py
             

@@ -12,7 +12,7 @@ This is a pure UI concern. Core classifies; UI decides presentation.
 """
 
 from dataclasses import dataclass
-from ui.services.sorter import SortKey
+from application.services.sorter import SortKey
 
 
 @dataclass(frozen=True)

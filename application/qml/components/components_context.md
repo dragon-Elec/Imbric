@@ -1,4 +1,4 @@
-Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/ui/qml/components
+Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/application/qml/components
 Reusable QML components used to construct the main views. Components here handle their own internal states (hover, physics, styling) and expose clean declarative APIs for the views to consume.
 
 Rules:

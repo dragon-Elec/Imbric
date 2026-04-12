@@ -1,7 +1,7 @@
 """ConflictResolver — Stateful helper for resolving file conflicts during batch ops."""
 
 from PySide6.QtCore import QObject, QMetaObject, Qt, Q_ARG, Q_RETURN_ARG
-from ui.dialogs.conflicts import ConflictDialog, ConflictAction
+from application.dialogs.conflicts import ConflictDialog, ConflictAction
 
 
 class ConflictResolver(QObject):

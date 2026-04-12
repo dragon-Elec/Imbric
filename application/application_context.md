@@ -1,4 +1,4 @@
-Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/ui
+Identity: /home/ray/Desktop/files/wrk/Imbric/Imbric/application
 Application UI entry point. Coordinates the main window lifecycle, global service wiring, and assembly of widgets into the primary shell.
 
 Rules:

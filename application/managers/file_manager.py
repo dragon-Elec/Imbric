@@ -9,8 +9,8 @@ Consolidates:
 
 from PySide6.QtCore import QObject, Signal, Slot, QMimeData, QUrl
 from PySide6.QtGui import QClipboard, QGuiApplication
-from ui.services.conflict_resolver import ConflictResolver
-from ui.dialogs.conflicts import ConflictAction
+from application.services.conflict_resolver import ConflictResolver
+from application.dialogs.conflicts import ConflictAction
 from core.backends.gio.helpers import ensure_uri
 from core.backends.gio.desktop import create_desktop_mime_data
 from core.utils.path_ops import build_dest_path
