@@ -4,14 +4,15 @@ Extracted from core/file_workers.py - GIO-specific operations.
 """
 
 import time
-from PySide6.QtCore import QRunnable
+from PySide6.QtCore import QRunnable, QMutex, QWaitCondition
 import gi
 
 gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib
 
 from core.models.file_job import FileJob, FileOperationSignals, InversePayload
-from core.backends.gio.helpers import _make_gfile, _gfile_path
+from core.logic.transfer_policy import TransferPolicy, ConflictResolution, SyncPolicy
+from core.backends.gio.helpers import _make_gfile, _gfile_path, to_unix_timestamp
 from core.backends.gio.metadata import get_file_info
 from core.utils.path_ops import generate_candidate_path, build_conflict_payload
 
@@ -19,6 +20,17 @@ from core.utils.path_ops import generate_candidate_path, build_conflict_payload
 # =============================================================================
 # BASE RUNNABLE
 # =============================================================================
+
+
+class ConflictEncountered(Exception):
+    """Special exception to signal a non-blocking conflict was encountered."""
+
+    def __init__(self, job_id: str, src: str, dest: str, data: dict):
+        self.job_id = job_id
+        self.src = src
+        self.dest = dest
+        self.data = data
+        super().__init__(f"Conflict encountered: {src}")
 
 
 class GIOOperationRunnable(QRunnable):
@@ -30,6 +42,67 @@ class GIOOperationRunnable(QRunnable):
         self.signals = signals
         self._last_progress_time = 0
         self.setAutoDelete(True)
+
+        # JIT Synchronization
+        self._mutex = QMutex()
+        self._resolution_cond = QWaitCondition()
+        self._current_resolution = None  # (action, new_dest)
+
+    def resolve(self, action: str, new_dest: str = "", apply_to_all: bool = False):
+        """Called from TransactionManager to resume a paused job."""
+        self._mutex.lock()
+        self._current_resolution = (action, new_dest)
+
+        if apply_to_all:
+            # Update the policy so future conflicts in this job (especially batches)
+            # follow this action automatically.
+            if self.job.policy is None:
+                self.job.policy = TransferPolicy.DEFAULT_POLICY.copy()
+
+            self.job.policy["collision_mode"] = ConflictResolution(action)
+            self.job.policy["always_copy"] = action == "overwrite"
+
+        self._resolution_cond.wakeAll()
+        self._mutex.unlock()
+
+    def wait_for_resolution(
+        self, op_type: str, path: str, conflict_data: dict
+    ) -> tuple[str, str]:
+        """
+        Pauses the worker thread and waits for UI resolution.
+        Returns: (action, new_dest)
+        """
+        print(f"[Worker] Pausing for conflict resolution: {path}")
+        self._mutex.lock()
+        self._current_resolution = None
+
+        # Emit signal to trigger UI dialog
+        self.signals.operationError.emit(
+            self.job.transaction_id,
+            self.job.id,
+            op_type,
+            path,
+            "exists",
+            conflict_data,
+        )
+
+        # Wait until resolve() is called
+        while self._current_resolution is None:
+            self._resolution_cond.wait(self._mutex)
+
+        res = self._current_resolution
+        self._mutex.unlock()
+        print(f"[Worker] Resuming with action: {res[0]}")
+        return res
+
+    def _info_to_metadata(self, info: Gio.FileInfo) -> dict:
+        """Helper to map GIO FileInfo to FileMetadata TypedDict."""
+        return {
+            "size": info.get_size(),
+            "mtime": to_unix_timestamp(info.get_modification_date_time()),
+            "is_dir": info.get_file_type() == Gio.FileType.DIRECTORY,
+            "is_symlink": info.get_file_type() == Gio.FileType.SYMBOLIC_LINK,
+        }
 
     def emit_started(self):
         self.job.status = "running"
@@ -170,7 +243,13 @@ class BatchTransferRunnable(GIOOperationRunnable):
 
             try:
                 final_dest = self._perform_single_transfer(
-                    src, dest, op_type, overwrite, auto_rename
+                    src,
+                    dest,
+                    op_type,
+                    overwrite,
+                    auto_rename,
+                    policy=item.get("policy"),
+                    job_id=job_id,
                 )
                 success_list.append(
                     {
@@ -180,6 +259,16 @@ class BatchTransferRunnable(GIOOperationRunnable):
                         "src": src,
                     }
                 )
+            except ConflictEncountered as e:
+                # Emit non-blocking conflict and move to next file
+                self.signals.batchConflictEncountered.emit(
+                    self.job.transaction_id,
+                    e.job_id,
+                    op_type,
+                    e.src,
+                    e.data,
+                )
+                continue
             except Exception as e:
                 failed_list.append(
                     {"job_id": job_id, "error": str(e), "op_type": op_type, "src": src}
@@ -199,7 +288,10 @@ class BatchTransferRunnable(GIOOperationRunnable):
         op_type: str,
         overwrite: bool,
         auto_rename: bool,
+        policy: SyncPolicy | None = None,
+        job_id: str = "",
     ) -> str:
+        policy = policy or self.job.policy or TransferPolicy.DEFAULT_POLICY
         counter = 0
         if _make_gfile(source).equal(_make_gfile(base_dest)):
             counter = 1
@@ -210,6 +302,45 @@ class BatchTransferRunnable(GIOOperationRunnable):
             final_dest = generate_candidate_path(base_dest, counter, style="copy")
             src_file = _make_gfile(source)
             dst_file = _make_gfile(final_dest)
+
+            # JIT Policy Check
+            dest_info = None
+            try:
+                dest_info = dst_file.query_info(
+                    "standard::size,standard::type,time::modified",
+                    Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+                    self.job.cancellable,
+                )
+            except GLib.Error:
+                pass
+
+            if dest_info:
+                src_info = src_file.query_info(
+                    "standard::size,standard::type,time::modified",
+                    Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+                    self.job.cancellable,
+                )
+
+                decision = TransferPolicy.decide(
+                    self._info_to_metadata(src_info),
+                    self._info_to_metadata(dest_info),
+                    policy,
+                )
+
+                match decision:
+                    case ConflictResolution.SKIP:
+                        return final_dest
+                    case ConflictResolution.RENAME:
+                        if auto_rename:
+                            counter += 1
+                            continue
+                    case ConflictResolution.OVERWRITE:
+                        overwrite = True
+                    case ConflictResolution.PROMPT:
+                        conflict_payload = build_conflict_payload(source, final_dest)
+                        raise ConflictEncountered(
+                            job_id, source, final_dest, conflict_payload
+                        )
 
             try:
                 skipped_files = []
@@ -276,6 +407,39 @@ class BatchTransferRunnable(GIOOperationRunnable):
                         counter += 1
                         continue
                     else:
+                        # TOCTOU Race: File appeared after our check.
+                        # Re-run policy one last time.
+                        dest_info = dst_file.query_info(
+                            "standard::size,standard::type,time::modified",
+                            Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+                            self.job.cancellable,
+                        )
+                        src_info = src_file.query_info(
+                            "standard::size,standard::type,time::modified",
+                            Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+                            self.job.cancellable,
+                        )
+                        decision = TransferPolicy.decide(
+                            self._info_to_metadata(src_info),
+                            self._info_to_metadata(dest_info),
+                            policy,
+                        )
+
+                        if decision == ConflictResolution.SKIP:
+                            return final_dest
+                        if decision == ConflictResolution.OVERWRITE:
+                            overwrite = True
+                            continue  # Retry with overwrite flag
+
+                        # Only prompt if policy demands it
+                        action, _ = self.wait_for_resolution(
+                            op_type,
+                            final_dest,
+                            build_conflict_payload(source, final_dest),
+                        )
+                        if action == "overwrite":
+                            overwrite = True
+                            continue
                         raise e
                 else:
                     raise e
@@ -351,12 +515,15 @@ class TransferRunnable(GIOOperationRunnable):
     """
 
     def run(self):
+
         try:
             self.emit_started()
 
             base_dest = self.job.dest
+            policy = self.job.policy or TransferPolicy.DEFAULT_POLICY
             counter = 0
 
+            # 1. Self-Copy check
             if _make_gfile(self.job.source).equal(_make_gfile(base_dest)):
                 counter = 1
 
@@ -364,10 +531,75 @@ class TransferRunnable(GIOOperationRunnable):
 
             while counter < max_retries:
                 final_dest = generate_candidate_path(base_dest, counter, style="copy")
-
                 src_file = _make_gfile(self.job.source)
                 dst_file = _make_gfile(final_dest)
 
+                # 2. Check for existence and apply Policy
+                dest_info = None
+                try:
+                    dest_info = dst_file.query_info(
+                        "standard::size,standard::type,time::modified",
+                        Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+                        self.job.cancellable,
+                    )
+                except GLib.Error:
+                    pass
+
+                if dest_info:
+                    # We have a conflict!
+                    src_info = src_file.query_info(
+                        "standard::size,standard::type,time::modified",
+                        Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+                        self.job.cancellable,
+                    )
+
+                    decision = TransferPolicy.decide(
+                        self._info_to_metadata(src_info),
+                        self._info_to_metadata(dest_info),
+                        policy,
+                    )
+
+                    match decision:
+                        case ConflictResolution.SKIP:
+                            self.emit_finished(True, "Skipped by policy")
+                            return
+                        case ConflictResolution.RENAME:
+                            if self.job.auto_rename:
+                                counter += 1
+                                continue
+                            # If not auto_rename, fall through to PROMPT or error
+                        case ConflictResolution.OVERWRITE:
+                            pass  # Continue to move/copy with overwrite=True
+                        case ConflictResolution.PROMPT:
+                            conflict_payload = build_conflict_payload(
+                                self.job.source, final_dest
+                            )
+                            action, new_name = self.wait_for_resolution(
+                                self.job.op_type, final_dest, conflict_payload
+                            )
+
+                            if action == "cancel":
+                                self.emit_finished(False, "Cancelled by user")
+                                return
+                            if action == "skip":
+                                self.emit_finished(True, "Skipped by user")
+                                return
+                            if action == "rename":
+                                if new_name:
+                                    # User provided specific name
+                                    from core.utils.path_ops import build_renamed_dest
+
+                                    base_dest = build_renamed_dest(final_dest, new_name)
+                                    counter = 0  # Restart with new base
+                                    continue
+                                else:
+                                    # User clicked "Rename" (Auto)
+                                    counter += 1
+                                    continue
+                            if action == "overwrite":
+                                self.job.overwrite = True
+
+                # 3. Perform Operation
                 try:
                     self.job.skipped_files = []
 
@@ -444,17 +676,41 @@ class TransferRunnable(GIOOperationRunnable):
 
                 except GLib.Error as e:
                     if e.code == Gio.IOErrorEnum.EXISTS:
-                        if self.job.auto_rename:
-                            counter += 1
-                            continue
-                        else:
-                            conflict_data = build_conflict_payload(
-                                self.job.source, final_dest
-                            )
-                            self._handle_gio_error(
-                                e, self.job.op_type, final_dest, conflict_data
-                            )
+                        # TOCTOU Race
+                        dest_info = dst_file.query_info(
+                            "standard::size,standard::type,time::modified",
+                            Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+                            self.job.cancellable,
+                        )
+                        src_info = src_file.query_info(
+                            "standard::size,standard::type,time::modified",
+                            Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+                            self.job.cancellable,
+                        )
+                        decision = TransferPolicy.decide(
+                            self._info_to_metadata(src_info),
+                            self._info_to_metadata(dest_info),
+                            policy,
+                        )
+
+                        if decision == ConflictResolution.SKIP:
+                            self.emit_finished(True, "Skipped by policy (race)")
                             return
+                        if decision == ConflictResolution.OVERWRITE:
+                            self.job.overwrite = True
+                            continue  # Retry with overwrite flag
+
+                        conflict_payload = build_conflict_payload(
+                            self.job.source, final_dest
+                        )
+                        action, _ = self.wait_for_resolution(
+                            self.job.op_type, final_dest, conflict_payload
+                        )
+                        if action == "overwrite":
+                            self.job.overwrite = True
+                            continue  # Retry current loop
+                        self.emit_finished(False, "Conflict detected")
+                        return
                     else:
                         self._handle_gio_error(e, self.job.op_type, final_dest)
                         return
