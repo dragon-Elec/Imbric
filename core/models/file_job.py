@@ -4,8 +4,12 @@ No GIO/Qt dependencies in the dataclass definition - those are injected in the r
 """
 
 from dataclasses import dataclass, field
-from typing import TypedDict, NotRequired
+from typing import TypedDict, NotRequired, TYPE_CHECKING
 from PySide6.QtCore import QObject, Signal
+
+if TYPE_CHECKING:
+    from core.logic.transfer_policy import SyncPolicy
+
 from core.interfaces.cancellation import CancellationToken
 
 
@@ -42,6 +46,7 @@ class FileJob:
     rename_to: str = ""  # Specific for Restore: if set, restore with this filename
     status: str = "pending"  # Lifecycle: pending → running → done/error/cancelled
     backend_id: str = ""  # The backend executing this job
+    policy: "SyncPolicy | None" = None  # Decisions on conflicts/sync
 
     # --- True Batch Specific Fields ---
     items: list[dict] = field(
@@ -78,3 +83,6 @@ class FileOperationSignals(QObject):
         str, int, int, str
     )  # (tid, completed_count, total_count, current_filename)
     batchFinished = Signal(str, list, list)  # (tid, successful_items, failed_items)
+    batchConflictEncountered = Signal(
+        str, str, str, str, object
+    )  # (tid, job_id, src, dest, conflict_data)

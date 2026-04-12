@@ -7,10 +7,19 @@ from __future__ import annotations
 
 from enum import StrEnum
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, Any
 
 if TYPE_CHECKING:
     from core.models.file_job import FileJob, InversePayload
+
+
+class FileMetadata(TypedDict):
+    """Standardized file metadata for backends."""
+
+    size: int
+    mtime: int  # Unix timestamp
+    is_dir: bool
+    is_symlink: bool
 
 
 class BackendFeature(StrEnum):
@@ -21,6 +30,19 @@ class BackendFeature(StrEnum):
     HARDLINK = "hardlink"
     PERMISSIONS = "permissions"
     SEARCH = "search"
+
+
+class BackendCapabilities(TypedDict):
+    """Standardized report of backend physical and protocol constraints."""
+
+    locality: str  # "local", "network", "virtual"
+    latency_profile: str  # "low", "high"
+    supports_preflight: bool  # Can scan many files efficiently
+    supports_jit: bool  # Can pause/resume mid-operation
+    reliable_mtime: bool  # Accurate timestamps
+    reliable_size: bool  # Accurate file sizes
+    fast_metadata_batching: bool  # Supports bulk children metadata fetch
+    case_sensitive: bool
 
 
 class IOBackend(ABC):
@@ -140,34 +162,58 @@ class IOBackend(ABC):
         pass
 
     @abstractmethod
+    def get_metadata(self, path: str) -> FileMetadata | None:
+        """Query basic metadata for a path."""
+        pass
+
+    @abstractmethod
+    def query_children_metadata(self, path: str) -> dict[str, FileMetadata]:
+        """Query metadata for all children of a directory."""
+        pass
+
+    @abstractmethod
+    def get_capabilities(self, path: str = "") -> BackendCapabilities:
+        """Report backend capabilities (latency, locality, etc.) for a specific path."""
+        pass
+
     def query_exists(self, path: str) -> bool:
         """Check if path exists."""
-        pass
+        return self.get_metadata(path) is not None
 
     @abstractmethod
     def is_same_file(self, path_a: str, path_b: str) -> bool:
         """Check if two paths refer to the same file."""
         pass
 
-    @abstractmethod
     def is_directory(self, path: str) -> bool:
         """Check if path is a directory."""
-        pass
+        meta = self.get_metadata(path)
+        return meta["is_dir"] if meta else False
 
-    @abstractmethod
     def is_symlink(self, path: str) -> bool:
         """Check if path is a symlink."""
-        pass
+        meta = self.get_metadata(path)
+        return meta["is_symlink"] if meta else False
 
-    @abstractmethod
     def is_regular_file(self, path: str) -> bool:
         """Check if path is a regular file."""
-        pass
+        meta = self.get_metadata(path)
+        return (not meta["is_dir"] and not meta["is_symlink"]) if meta else False
 
     @abstractmethod
     def get_local_path(self, path: str) -> str | None:
         """
         Get the local POSIX path if available.
         Returns None for virtual backends (e.g. MTP) or if not supported.
+        """
+        pass
+
+    @abstractmethod
+    def resolve_conflict(
+        self, job_id: str, action: str, new_dest: str = "", apply_to_all: bool = False
+    ) -> bool:
+        """
+        Resolve a conflict encountered during JIT execution.
+        Returns True if a paused job was found and resumed.
         """
         pass

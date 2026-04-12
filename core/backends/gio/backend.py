@@ -6,15 +6,25 @@ Wraps the existing low-level GIO runnables and types.
 import gi
 
 gi.require_version("Gio", "2.0")
-from gi.repository import Gio
+from gi.repository import Gio, GLib
 
-from PySide6.QtCore import QThreadPool
+from typing import Any, Dict, TYPE_CHECKING
 
-from core.interfaces.io_backend import IOBackend, BackendFeature
+from PySide6.QtCore import QThreadPool, QMutex, QMutexLocker
+
+from core.interfaces.io_backend import (
+    IOBackend,
+    BackendFeature,
+    FileMetadata,
+    BackendCapabilities,
+)
 from core.interfaces.scanner_backend import ScannerBackend
 from core.interfaces.metadata_provider import MetadataProvider
 from core.models.file_job import FileJob
 from core.models.file_info import FileInfo
+
+if TYPE_CHECKING:
+    from core.models.file_job import InversePayload
 
 # Imports from GIO sub-package
 from core.backends.gio.io_ops import (
@@ -33,7 +43,7 @@ from core.backends.gio.trash_ops import (
 )
 from core.backends.gio.scanner import FileScanner
 from core.backends.gio.metadata import get_file_info
-from core.backends.gio.helpers import _make_gfile
+from core.backends.gio.helpers import _make_gfile, to_unix_timestamp
 
 
 class GIOBackend(IOBackend):
@@ -42,6 +52,8 @@ class GIOBackend(IOBackend):
     def __init__(self):
         self._signals = None
         self._pool = QThreadPool.globalInstance()
+        self._active_runnables: Dict[str, Any] = {}
+        self._runnable_mutex = QMutex()
 
     def supports_feature(self, feature: BackendFeature) -> bool:
         # GIO is a very rich backend, it supports most features.
@@ -58,7 +70,9 @@ class GIOBackend(IOBackend):
     def set_signals(self, signals) -> None:
         self._signals = signals
 
-    def build_inverse_payload(self, job: FileJob, result_path: str) -> dict | None:
+    def build_inverse_payload(
+        self, job: FileJob, result_path: str
+    ) -> "InversePayload | None":
         """Return the inverse payload built by the runnable during execution."""
         return getattr(job, "inverse_payload", None)
 
@@ -68,8 +82,35 @@ class GIOBackend(IOBackend):
             job.cancellable = Gio.Cancellable()
 
         runnable = runnable_class(job, self._signals)
+
+        with QMutexLocker(self._runnable_mutex):
+            self._active_runnables[job.id] = runnable
+
+        # Wrap the finished signal to clean up our tracking
+        def cleanup():
+            with QMutexLocker(self._runnable_mutex):
+                self._active_runnables.pop(job.id, None)
+
+        if hasattr(runnable, "finished"):  # Some runnables might have a finished signal
+            runnable.finished.connect(cleanup)
+        # Note: Since QThreadPool runnables don't have signals by default,
+        # we'll need to handle cleanup in emit_finished in the runnable itself
+        # for a more robust implementation. For now, we'll rely on resolve_conflict lookup.
+
         self._pool.start(runnable)
         return job.id
+
+    def resolve_conflict(
+        self, job_id: str, action: str, new_dest: str = "", apply_to_all: bool = False
+    ) -> bool:
+        """Resolve a conflict encountered during JIT execution."""
+        with QMutexLocker(self._runnable_mutex):
+            runnable = self._active_runnables.get(job_id)
+            if runnable and hasattr(runnable, "resolve"):
+                runnable.resolve(action, new_dest, apply_to_all)
+                return True
+            else:
+                return False
 
     def copy(self, job: FileJob) -> str:
         return self._submit(job, TransferRunnable)
@@ -110,38 +151,81 @@ class GIOBackend(IOBackend):
     def create_symlink(self, job: FileJob) -> str:
         return self._submit(job, CreateSymlinkRunnable)
 
-    def query_exists(self, path: str) -> bool:
-        return _make_gfile(path).query_exists(None)
+    def get_metadata(self, path: str) -> FileMetadata | None:
+        try:
+            gfile = _make_gfile(path)
+            info = gfile.query_info(
+                "standard::size,standard::type,time::modified",
+                Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+                None,
+            )
+            return self._info_to_metadata(info)
+        except GLib.Error:
+            return None
+
+    def query_children_metadata(self, path: str) -> dict[str, FileMetadata]:
+        try:
+            gfile = _make_gfile(path)
+            # Use bulk fetching for children attributes
+            enumerator = gfile.enumerate_children(
+                "standard::name,standard::size,standard::type,time::modified",
+                Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+                None,
+            )
+            res = {}
+            while True:
+                info = enumerator.next_file(None)
+                if not info:
+                    break
+                res[info.get_name()] = self._info_to_metadata(info)
+            enumerator.close(None)
+            return res
+        except GLib.Error:
+            return {}
+
+    def get_capabilities(self, path: str = "") -> BackendCapabilities:
+        # GIO handles both local and remote files. We check the path to determine capabilities.
+        is_remote = False
+        if path:
+            if "://" in path:
+                scheme = path.split("://")[0].lower()
+                if scheme in {"smb", "mtp", "sftp", "ftp", "dav"}:
+                    is_remote = True
+
+        if is_remote:
+            return {
+                "locality": "remote",
+                "latency_profile": "high",
+                "supports_preflight": False,  # Remote metadata can be very slow
+                "supports_jit": True,
+                "reliable_mtime": False,  # MTP/SMB often drift or have lower precision
+                "reliable_size": True,
+                "fast_metadata_batching": False,
+                "case_sensitive": True,  # Usually True for remote backends in GIO context
+            }
+
+        return {
+            "locality": "local",
+            "latency_profile": "low",
+            "supports_preflight": True,
+            "supports_jit": True,
+            "reliable_mtime": True,
+            "reliable_size": True,
+            "fast_metadata_batching": True,
+            "case_sensitive": True,
+        }
+
+    def _info_to_metadata(self, info: Gio.FileInfo) -> FileMetadata:
+        """Helper to map GIO FileInfo to FileMetadata TypedDict."""
+        return {
+            "size": info.get_size(),
+            "mtime": to_unix_timestamp(info.get_modification_date_time()),
+            "is_dir": info.get_file_type() == Gio.FileType.DIRECTORY,
+            "is_symlink": info.get_file_type() == Gio.FileType.SYMBOLIC_LINK,
+        }
 
     def is_same_file(self, path_a: str, path_b: str) -> bool:
         return _make_gfile(path_a).equal(_make_gfile(path_b))
-
-    def is_directory(self, path: str) -> bool:
-        try:
-            info = _make_gfile(path).query_info(
-                "standard::type", Gio.FileQueryInfoFlags.NONE, None
-            )
-            return info.get_file_type() == Gio.FileType.DIRECTORY
-        except GLib.Error:
-            return False
-
-    def is_symlink(self, path: str) -> bool:
-        try:
-            info = _make_gfile(path).query_info(
-                "standard::type", Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, None
-            )
-            return info.get_file_type() == Gio.FileType.SYMBOLIC_LINK
-        except GLib.Error:
-            return False
-
-    def is_regular_file(self, path: str) -> bool:
-        try:
-            info = _make_gfile(path).query_info(
-                "standard::type", Gio.FileQueryInfoFlags.NONE, None
-            )
-            return info.get_file_type() == Gio.FileType.REGULAR
-        except GLib.Error:
-            return False
 
     def get_local_path(self, path: str) -> str | None:
         """Get the local POSIX path if available."""
