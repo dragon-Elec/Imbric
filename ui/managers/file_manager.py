@@ -125,6 +125,28 @@ class FileManager(QObject):
 
         self.mw.transaction_manager.commitTransaction(tid)
 
+    @Slot()
+    def sync_to_current(self):
+        """Perform a Smart Backup (Rsync-lite) from clipboard to current folder."""
+        tab = self._current_tab()
+        if not tab:
+            return
+
+        files = self.get_clipboard_files()
+        if not files:
+            return
+
+        from core.logic.transfer_policy import TransferPolicy
+
+        # We use JIT (skip_preflight=True) + Backup Policy
+        self.mw.transaction_manager.batchTransfer(
+            files,
+            tab.current_path,
+            mode="copy",
+            policy=TransferPolicy.BACKUP_POLICY,
+            skip_preflight=True,
+        )
+
     # --- Clipboard Logic (Ex-ClipboardManager) ---
 
     def _on_clipboard_and_emit(self):

@@ -36,6 +36,7 @@ class VolumesBridge(QObject):
     volumesChanged = Signal()
     mountSuccess = Signal(str)
     mountError = Signal(str)
+    unmountSuccess = Signal(str)
 
     @Property(str, constant=True)
     def title(self):
@@ -225,7 +226,7 @@ class VolumesBridge(QObject):
     def _on_unmount_finished(self, obj, res, ident):
         try:
             obj.unmount_with_operation_finish(res)
-            self.mountSuccess.emit(ident)
+            self.unmountSuccess.emit(ident)
             self.volumesChanged.emit()
         except GLib.Error as e:
             self.mountError.emit(e.message)

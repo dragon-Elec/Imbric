@@ -93,6 +93,8 @@ class ShellManager(QObject):
         # 8. Connect Shell Logic (Bridges -> QML)
         self.quick_access.itemsChanged.connect(self._rebuild_sidebar_model)
         self.volumes_bridge.volumesChanged.connect(self._rebuild_sidebar_model)
+        self.volumes_bridge.mountSuccess.connect(self._on_mount_success)
+        self.volumes_bridge.unmountSuccess.connect(self._on_unmount_success)
 
         if self.qml_view.rootObject():
             root = self.qml_view.rootObject()
@@ -139,6 +141,27 @@ class ShellManager(QObject):
         """Update internal state when user toggles a section."""
         self._section_states[title] = is_collapsed
         self.sidebar_model.set_section_collapsed(title, is_collapsed)
+
+    @Slot(str)
+    def _on_mount_success(self, identifier):
+        """Automatically navigate to a volume after it has been mounted."""
+        vol_items = self.volumes_bridge.get_volumes()
+        for item in vol_items:
+            if item.get("identifier") == identifier and item.get("path"):
+                self.navigate_to(item["path"])
+                break
+
+    @Slot(str)
+    def _on_unmount_success(self, identifier):
+        """Navigate to home when a volume has been unmounted."""
+        self.go_home()
+        # Clear selection highlight on the sidebar for the unmounted volume
+        if self.qml_view:
+            root = self.qml_view.rootObject()
+            if root:
+                sidebar = root.findChild(QObject, "sidebar")
+                if sidebar:
+                    sidebar.setProperty("currentSelectionIdentifier", "")
 
     @Slot(str)
     def _on_navigation_requested(self, path):

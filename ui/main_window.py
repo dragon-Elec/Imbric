@@ -21,8 +21,8 @@ from ui.managers.file_manager import FileManager
 from ui.managers.view_manager import ViewManager
 from ui.models.shortcuts import Shortcuts
 
-from ui.widgets.status_bar import StatusBar
-from ui.widgets.progress_overlay import ProgressOverlay
+from ui.components.status_bar import StatusBar
+from ui.components.progress_overlay import ProgressOverlay
 
 
 class MainWindow(QMainWindow):
@@ -90,7 +90,7 @@ class MainWindow(QMainWindow):
         # 3. Setup UI Layout
         # Import CustomHeader only if needed (or generally)
         if self.use_csd:
-            from ui.widgets.custom_header import CustomHeader
+            from ui.components.custom_header import CustomHeader
 
         self._setup_ui()
 

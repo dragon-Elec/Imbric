@@ -195,6 +195,7 @@ Control {
 
             Components.Sidebar {
                 id: sidebar
+                objectName: "sidebar"
                 SplitView.minimumWidth: 150
                 SplitView.maximumWidth: 400
                 width: 225 // Initial default, overridden by Settings if exists
