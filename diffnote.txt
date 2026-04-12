@@ -1,87 +1,95 @@
-## scanner.py [+39 -39]
-- REFACTOR: Replace scattered startswith() checks with classify() from path_classifier
-- SEMANTIC: is_native now comes from path_caps.is_native instead of gfile.is_native()
-- SEMANTIC: Check path type (native/recent/trash) using PathCapabilities instead of string prefix
-- STYLE: Reformat multi-line conditionals for readability
+## core/backends/gio/backend.py [+143 -~40]
+- FEAT: Add GIOBackend.runnable tracking with mutex for JIT conflict resolution
+- FEAT: Add resolve_conflict() method to inject resolutions into paused workers
+- FEAT: Add get_metadata() for single path FileMetadata queries
+- FEAT: Add query_children_metadata() for bulk directory scanning
+- FEAT: Add get_capabilities() returning BackendCapabilities (locality, latency, reliability)
+- FEAT: Add _info_to_metadata() helper mapping GIO FileInfo to FileMetadata
+- REFACTOR: Remove deprecated is_directory/is_symlink/is_regular_file methods (replaced by get_metadata)
+- REFACTOR: Rename return type hint to InversePayload (forward reference)
 
-## monitor.py [+1 -1]
-- BUGFIX: Remove trash:// from monitor exclusion — trash:// IS monitorable via gvfsd-trash
-- SEMANTIC: Only exclude recent:// from monitoring (trash was incorrectly excluded)
+## core/backends/gio/io_ops.py [+234 -~50]
+- FEAT: Add ConflictEncountered exception for non-blocking conflict signaling
+- FEAT: Add JIT synchronization (QMutex + QWaitCondition) for pause/resume conflict handling
+- FEAT: Add resolve() method to receive UI resolutions from TransactionManager
+- FEAT: Add wait_for_resolution() to pause worker thread and emit operationError signal
+- FEAT: Integrate TransferPolicy.decide() into BatchTransferRunnable._perform_single_transfer()
+- FEAT: Add non-blocking conflict flow - raises ConflictEncountered, catches in loop, continues to next file
+- FEAT: Add TOCTOU race handling in BatchTransferRunnable (line ~404) - re-query policy on EXISTS error
+- FEAT: Add TOCTOU race handling in TransferRunnable (line ~673) - re-query policy on EXISTS error
+- FEAT: Add policy parameter and job_id parameter to _perform_single_transfer()
+- REFACTOR: Move _info_to_metadata() to base GIOOperationRunnable
 
-## __init__.py [+5 -13]
-- DEPRECATION: Removed Sorter, SortKey exports (moved to ui/services/sorter.py)
-- CHORE: Updated docstring to reflect current scope (search, validation)
+## core/interfaces/io_backend.py [+59]
+- NEW: Add FileMetadata TypedDict (size, mtime, is_dir, is_symlink)
+- NEW: Add BackendCapabilities TypedDict (locality, latency_profile, supports_preflight, etc.)
+- NEW: Add get_metadata() abstract method
+- NEW: Add query_children_metadata() abstract method
+- NEW: Add get_capabilities() abstract method
+- NEW: Add resolve_conflict() abstract method
+- REFACTOR: Implement query_exists/is_directory/is_symlink/is_regular_file using get_metadata
 
-## row_builder.py [+76 -16]
-- NEW: Added path awareness via setCurrentPath() — auto-configures view based on path type
-- NEW: Import path_classifier for capability detection
-- NEW: Import view_config for presentation defaults per path type
-- NEW: Added _row_model (RowModel) for incremental QML updates
-- REFACTOR: _build_rows() now uses RowModel for incremental updates instead of raw list
-- PERF: During streaming, debounce row builds instead of rebuilding every batch
-- PERF: Added ViewConfig-aware thumbnail precompute skip for recent:// paths
-- UI: getAllItems() now returns from row_model.getAllItems() for consistency
+## core/transaction_manager.py [+~150 -~80]
+- FEAT: Add getTransferCapabilities() to merge source/dest backend capabilities
+- FEAT: Add policy parameter to executeBatchTransfer()
+- FEAT: Add skip_preflight param for direct JIT execution
+- FEAT: Add _transaction_policies dict to store per-TID policies
+- FEAT: Add _batch_ledger dict to track conflicted job_ids per transaction
+- FEAT: Add "Deferred" retry - when worker already moved on, starts fresh job after resolution
+- FEAT: addOperation now checks for existing PENDING operation to reuse (for retries)
+- FEAT: resolveConflict() now supports apply_to_all param and handles both paused/non-paused threads
+- REFACTOR: Simplified resolveConflict() - delegates to FileOps.resolve_conflict() first
+- REFACTOR: Legacy retry logic kept only for "restore" operations
+- REFACTOR: executeBatchTransfer() now passes policy through to assessBatch/transfer_batch
 
-## context_menu_model.py [+108]
-- NEW: Added Sort By submenu to directory context menu
-- NEW: Import SortKey from ui.services.sorter
-- NEW: _get_current_sorter() to retrieve active pane's sorter
-- NEW: _build_sort_submenu() to construct sort options model
-- UI: Sort options (Name, Date, Size, Type) as radio-style checkable items
-- UI: Sort direction toggle (Ascending/Descending)
-- UI: Folders First toggle
-- SIGNAL: Added action handlers for SORT_KEY_*, SORT_ASCENDING, SORT_FOLDERS_FIRST
+## core/models/file_job.py [+7]
+- FEAT: Add policy field (SyncPolicy | None) to FileJob dataclass
+- FEAT: Add batchConflictEncountered signal to FileOperationSignals (tid, job_id, src, dest, conflict_data)
 
-## FileDelegate.qml [+1 -1]
-- CLEANUP: Commented out debug console.log (reduces noise)
+## core/logic/transfer_policy.py [NEW FILE]
+- NEW: Add ConflictResolution StrEnum (PROMPT, OVERWRITE, SKIP, RENAME, UPDATE)
+- NEW: Add SyncPolicy TypedDict for transfer configuration
+- NEW: Add TransferPolicy class with DEFAULT_POLICY, BACKUP_POLICY
+- NEW: Add TransferPolicy.decide() - stateless conflict decision engine
 
-## GtkActionMenu.qml [+11]
-- NEW: Added sortKeyGroup ActionGroup for exclusive selection (radio behavior)
-- UI: Sort key actions added to exclusive group
-- DEBUG: Added console.log for action trigger debugging
+## ui/bridges/app_bridge.py [-244 +63]
+- REFACTOR: Split into delegated sub-bridges (search, rename, drag, navigation)
+- DELETION: Removed getThumbnailPath() (deprecated), startDrag() (now in DragBridge)
+- DELETION: Removed handleDrop() (now in DragBridge), openPath() (now in NavigationBridge)
+- DELETION: Removed renameFile() (now in RenameBridge), paste() (removed reference)
+- DELETION: Removed zoom() (now in NavigationBridge), targetCellWidth property
 
-## GtkMenu.qml [+17]
-- NEW: Added onClicked handler for MenuItem to fix binding and click handling
-- UI: Restore broken binding after user click
-- UI: Trigger action/close menu on click
+## ui/bridges/search_bridge.py [NEW FILE]
+- NEW: Extract search functionality from AppBridge
 
-## RowDelegate.qml [+4 -4]
-- REFACTOR: rowData now comes from model.rowData (QAbstractListModel role) instead of modelData
-- UI: Updated comment to reflect QML model binding
+## ui/bridges/rename_bridge.py [NEW FILE]
+- NEW: Extract rename functionality from AppBridge (background assessment)
 
-## JustifiedView.qml [+15 -22]
-- REFACTOR: Replace rows property with rowModel (QAbstractListModel)
-- NEW: rowModel from rowBuilder.getRowModel()
-- REMOVED: onRowsChanged handler — incremental updates via model
-- REMOVED: Component.onCompleted rows initialization — handled by model
+## ui/bridges/drag_bridge.py [NEW FILE]
+- NEW: Extract drag/drop functionality from AppBridge
 
-## ui/models/pane_context.py [+1]
-- BUGFIX: Call row_builder.setCurrentPath() on scan_current() so view config updates
+## ui/bridges/navigation_bridge.py [NEW FILE]
+- NEW: Extract navigation/zoom/cut-paths from AppBridge
 
-## ui/widgets/context_menu.py [DELETED]
-- DELETION: Widget-based context menu removed — replaced by QML GtkMenu approach
+## ui/qml/components/Sidebar.qml [+68]
+- FEAT: Add gridItemSize property with shrink/grow buttons
+- FEAT: Add currentSelectionIdentifier for non-path items (mounts)
+- FEAT: Add adjustGridSize() function with bounds (24-60px, 12px steps)
+- FEAT: Dynamic sizing: icon pixelSize = gridItemSize * 0.37, label = 60% of app font
+- FEAT: Dynamic spacing: radius = gridItemSize/5, spacing = gridItemSize * 0.03
+- FEAT: Mount handling now navigates to path after mount completes
 
-## core/services/sorter.py [DELETED]
-- DELETION: Moved to ui/services/sorter.py (UI is the only consumer)
+## ui/qml/components/SidebarItem.qml [+~92 -~20]
+- REFACTOR: Similar dynamic sizing adaptations for sidebar items
 
-## core/utils/path_classifier.py [NEW]
-- NEW: PathClassifier utility — pure string analysis for VFS capability classification
-- NEW: PathCapabilities dataclass with scheme, is_native, is_monitorable, is_writable, is_virtual
-- NEW: classify() function — replaces scattered startswith() checks across codebase
+## ui/main_window.py [+6 -2]
+- MINOR: Likely adapter changes for new bridge structure
 
-## ui/models/row_model.py [NEW]
-- NEW: RowModel — QAbstractListModel wrapper for row data
-- NEW: Incremental update API (setRows, appendRows, clear) for QML ListView performance
-- NEW: RowDataRole for QML access to row contents
+## ui/managers/file_manager.py [+22]
+- MINOR: Likely adapter for new bridge structure
 
-## ui/services/sorter.py [NEW]
-- NEW: Sorter moved from core/services/sorter.py
-- NEW: SortKey enum (NAME, DATE_MODIFIED, SIZE, TYPE)
-- NEW: Natural sorting support
-- NEW: Folders-first sorting option
-
-## ui/services/view_config.py [NEW]
-- NEW: ViewConfig dataclass — presentation defaults per path type
-- NEW: Presets for recent://, trash://, file:// schemes
-- NEW: resolve() to convert PathCapabilities to ViewConfig
-- CONFIG: Default sort key, direction, folders-first, thumbnail strategy per path type
+## DELETIONS
+- core/backends/backends_context.md: Documentation file deleted
+- ui/managers/navigation_manager.py: Replaced by NavigationBridge
+- ui/qml/components/Sidebar_Legacy.qml: Legacy component removed
+- ui/widgets/: Entire directory deleted (7 files: __init__, custom_header, drag_helper, navigation_bar, progress_overlay, status_bar, widgets_context.md)
