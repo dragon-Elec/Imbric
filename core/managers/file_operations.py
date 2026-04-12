@@ -17,6 +17,7 @@ from PySide6.QtCore import (
 from core.models import FileJob, FileOperationSignals, TrashItem
 from core.registry import BackendRegistry
 from core.backends.gio.metadata_workers import UniqueNameWorker, ExistenceWorker
+from core.logic.transfer_policy import TransferPolicy, SyncPolicy, ConflictResolution
 
 _MAX_RENAME_ATTEMPTS = 1000
 
@@ -82,6 +83,7 @@ class FileOperations(QObject):
         # True Batching Signals
         self._signals.batchProgress.connect(self.batchProgress)
         self._signals.batchFinished.connect(self._on_batch_finished)
+        self._signals.batchConflictEncountered.connect(self.operationError)
 
     # -------------------------------------------------------------------------
     # SIGNAL HANDLERS
@@ -166,6 +168,7 @@ class FileOperations(QObject):
         tid: str = "",
         overwrite: bool = False,
         rename_to: str = "",
+        policy: SyncPolicy | None = None,
     ) -> FileJob:
         # [FIX] Generate ID first, then register with TransactionManager
         job_id = str(uuid4())
@@ -181,6 +184,7 @@ class FileOperations(QObject):
             transaction_id=tid,
             overwrite=overwrite,
             rename_to=rename_to,
+            policy=policy,
         )
 
     def _submit(self, job: FileJob, backend_method) -> str:
@@ -190,7 +194,7 @@ class FileOperations(QObject):
             job.backend_id = self._registry.get_io_id(job.source)
         return backend_method(job)
 
-    @Slot(str, str, str, bool, bool, result=str)
+    @Slot(str, str, str, bool, bool, object, result=str)
     def copy(
         self,
         source_path: str,
@@ -198,31 +202,33 @@ class FileOperations(QObject):
         transaction_id: str = "",
         overwrite: bool = False,
         auto_rename: bool = False,
+        policy: SyncPolicy | None = None,
     ) -> str:
         assert self._registry
         job = self._create_job(
-            "copy", source_path, dest_path, transaction_id, overwrite
+            "copy", source_path, dest_path, transaction_id, overwrite, policy=policy
         )
         job.auto_rename = auto_rename
         backend = self._registry.get_io(source_path)
         return self._submit(job, backend.copy)
 
-    @Slot(str, str, str, bool, result=str)
+    @Slot(str, str, str, bool, object, result=str)
     def move(
         self,
         source_path: str,
         dest_path: str,
         transaction_id: str = "",
         overwrite: bool = False,
+        policy: SyncPolicy | None = None,
     ) -> str:
         assert self._registry
         job = self._create_job(
-            "move", source_path, dest_path, transaction_id, overwrite
+            "move", source_path, dest_path, transaction_id, overwrite, policy=policy
         )
         backend = self._registry.get_io(source_path)
         return self._submit(job, backend.move)
 
-    @Slot(str, str, str, str, bool, bool, result=str)
+    @Slot(str, str, str, str, bool, bool, object, result=str)
     def transfer(
         self,
         source_path: str,
@@ -231,6 +237,7 @@ class FileOperations(QObject):
         transaction_id: str = "",
         overwrite: bool = False,
         auto_rename: bool = False,
+        policy: SyncPolicy | None = None,
     ) -> str:
         """
         Generic transfer method.
@@ -242,7 +249,7 @@ class FileOperations(QObject):
             op_type = "move"
 
         job = self._create_job(
-            op_type, source_path, dest_path, transaction_id, overwrite
+            op_type, source_path, dest_path, transaction_id, overwrite, policy=policy
         )
         job.auto_rename = auto_rename
         backend = self._registry.get_io(source_path)
@@ -256,6 +263,7 @@ class FileOperations(QObject):
         items: list,
         ui_refresh_rate_ms: int = 100,
         halt_on_error: bool = False,
+        policy: SyncPolicy | None = None,
     ) -> str:
         """
         True batching: dispatch multiple files in a single background thread.
@@ -277,16 +285,30 @@ class FileOperations(QObject):
             items=items,
             ui_refresh_rate_ms=ui_refresh_rate_ms,
             halt_on_error=halt_on_error,
+            policy=policy,
         )
 
         backend = self._registry.get_io(first_source)
         return self._submit(job, backend.batch_transfer)
 
     def assessBatch(
-        self, tid: str, sources: list, dest_dir: str, mode: str, resolver=None
+        self,
+        tid: str,
+        sources: list,
+        dest_dir: str,
+        mode: str,
+        resolver=None,
+        policy: SyncPolicy | None = None,
     ):
         runnable = BatchAssessmentRunnable(
-            tid, sources, dest_dir, mode, self, self._signals, resolver=resolver
+            tid,
+            sources,
+            dest_dir,
+            mode,
+            self,
+            self._signals,
+            resolver=resolver,
+            policy=policy,
         )
         self._pool.start(runnable)
 
@@ -387,6 +409,19 @@ class FileOperations(QObject):
     def restore_from_trash(self, original_path_to_restore: str) -> str:
         """Alias for restore() for legacy compatibility."""
         return self.restore(original_path_to_restore)
+
+    @Slot(str, str, str, bool, result=bool)
+    def resolve_conflict(
+        self, job_id: str, action: str, new_dest: str = "", apply_to_all: bool = False
+    ) -> bool:
+        """Resolve a conflict encountered during JIT execution."""
+        found = False
+        if self._registry:
+            # We iterate through backends and tell them to resolve the job
+            for backend in self._registry._io_backends.values():
+                if backend.resolve_conflict(job_id, action, new_dest, apply_to_all):
+                    found = True
+        return found
 
     @Slot(result=str)
     def listTrash(self) -> str:
@@ -510,7 +545,17 @@ class BatchAssessmentRunnable(QRunnable):
     Runs in background thread to avoid freezing UI (especially on MTP).
     """
 
-    def __init__(self, tid, sources, dest_dir, mode, file_ops, signals, resolver=None):
+    def __init__(
+        self,
+        tid,
+        sources,
+        dest_dir,
+        mode,
+        file_ops,
+        signals,
+        resolver=None,
+        policy: SyncPolicy | None = None,
+    ):
         super().__init__()
         self.tid = tid
         self.sources = sources
@@ -519,6 +564,7 @@ class BatchAssessmentRunnable(QRunnable):
         self.file_ops = file_ops
         self.signals = signals
         self.resolver = resolver
+        self.policy = policy or TransferPolicy.DEFAULT_POLICY
         self.setAutoDelete(True)
 
     def run(self):
@@ -529,21 +575,60 @@ class BatchAssessmentRunnable(QRunnable):
         # If a resolver is provided, it is called from this thread (blocking it, but not UI).
 
         for src in self.sources:
-            if not self.file_ops.check_exists(src):
+            backend = self.file_ops._registry.get_io(src)
+            src_meta = backend.get_metadata(src)
+            if not src_meta:
                 continue
 
             from core.utils.path_ops import build_dest_path
 
             dest = build_dest_path(src, self.dest_dir)
 
-            if self.file_ops.is_same_file(src, dest):
+            if backend.is_same_file(src, dest):
                 if self.mode == "copy":
                     valid_items.append(
-                        {"src": src, "dest": dest, "mode": "copy", "auto_rename": True}
+                        {
+                            "src": src,
+                            "dest": dest,
+                            "mode": "copy",
+                            "overwrite": False,
+                            "auto_rename": True,
+                        }
                     )
                 continue
 
-            if self.file_ops.check_exists(dest):
+            dest_meta = backend.get_metadata(dest)
+
+            decision = TransferPolicy.decide(src_meta, dest_meta, self.policy)
+
+            if decision == ConflictResolution.SKIP:
+                continue
+
+            if decision == ConflictResolution.OVERWRITE:
+                valid_items.append(
+                    {
+                        "src": src,
+                        "dest": dest,
+                        "mode": self.mode,
+                        "overwrite": True,
+                        "auto_rename": False,
+                    }
+                )
+                continue
+
+            if decision == ConflictResolution.RENAME:
+                valid_items.append(
+                    {
+                        "src": src,
+                        "dest": dest,
+                        "mode": self.mode,
+                        "overwrite": False,
+                        "auto_rename": True,
+                    }
+                )
+                continue
+
+            if decision == ConflictResolution.PROMPT:
                 if self.resolver:
                     # RESOLVE IN BACKGROUND
                     # This calls ConflictResolver which handles thread-safe dialog execution.
@@ -580,9 +665,5 @@ class BatchAssessmentRunnable(QRunnable):
                             "conflict_data": conflict_data,
                         }
                     )
-            else:
-                valid_items.append(
-                    {"src": src, "dest": dest, "mode": self.mode, "auto_rename": False}
-                )
 
         self.signals.batchAssessmentReady.emit(self.tid, valid_items, conflicts)
