@@ -348,6 +348,9 @@ class TransactionManager(QObject):
             self._file_ops.operationFinished.connect(self.onOperationFinished)
             self._file_ops.operationProgress.connect(self.onOperationProgress)
             self._file_ops.operationError.connect(self.onOperationError)
+            self._file_ops.batchConflictEncountered.connect(
+                self.onBatchConflictEncountered
+            )
             self._file_ops.batchAssessmentReady.connect(self.onBatchAssessmentReady)
 
     def setTrashManager(self, trash_manager):
@@ -554,6 +557,33 @@ class TransactionManager(QObject):
             )
             self.historyCommitted.emit(tx)
             del self._active_transactions[tid]
+
+    @Slot(str, str, str, str, str, object)
+    def onBatchConflictEncountered(
+        self,
+        tid: str,
+        job_id: str,
+        op_type: str,
+        src: str,
+        dest: str,
+        conflict_data: object,
+    ):
+        """
+        Non-blocking conflict encountered during a batch operation.
+        The worker continues, but we record this for JIT resolution.
+        """
+        print(f"[TM] Batch Conflict Encountered: {src}")
+        if conflict_data and isinstance(conflict_data, dict):
+            # Store context for deferred resolution
+            data = cast(dict[str, object], conflict_data)
+            data["_context"] = {
+                "op_type": op_type,
+                "src": src,
+                "dest": dest,
+                "tid": tid,
+            }
+            self._pending_conflicts[job_id] = data
+            self.conflictDetected.emit(job_id, data)
 
     @Slot(str)
     def commitTransaction(self, tid: str):

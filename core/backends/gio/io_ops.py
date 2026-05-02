@@ -266,6 +266,7 @@ class BatchTransferRunnable(GIOOperationRunnable):
                     e.job_id,
                     op_type,
                     e.src,
+                    e.dest,
                     e.data,
                 )
                 continue

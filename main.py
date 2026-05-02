@@ -13,6 +13,7 @@ from pathlib import Path
 
 # Switch to QApplication for Widgets support
 from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtQuickControls2 import QQuickStyle
 
 # Add project root to path so imports work
@@ -20,37 +21,45 @@ sys.path.append(str(Path(__file__).parent))
 
 from application.main_window import MainWindow
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Imbric Photo Manager")
     parser.add_argument("path", nargs="?", help="Folder to open", default=None)
-    parser.add_argument("--profile", action="store_true", help="Enable cProfile performance profiling")
-    parser.add_argument("--monitor", "-m", action="store_true", help="Launch with resource monitor (TUI)")
+    parser.add_argument(
+        "--profile", action="store_true", help="Enable cProfile performance profiling"
+    )
+    parser.add_argument(
+        "--monitor",
+        "-m",
+        action="store_true",
+        help="Launch with resource monitor (TUI)",
+    )
     return parser.parse_args()
+
 
 def main():
     signal.signal(signal.SIGINT, signal.SIG_DFL)
-    
+
     # [DIAGNOSTICS] GLib Critical Interceptor — prints Python traceback on GIO errors
     # This identifies WHICH Python file triggered the C-level critical.
     import gi
-    gi.require_version('GLib', '2.0')
+
+    gi.require_version("GLib", "2.0")
     from gi.repository import GLib
-    
+
     def _gio_critical_handler(log_domain, log_level, message):
         # Print the GLib message
         print(f"\n[GIO-TRACE] {log_domain}: {message}")
         # Print the Python call stack that led here
         traceback.print_stack(limit=8)
         print()
-    
+
     GLib.log_set_handler(
-        "GLib-GIO",
-        GLib.LogLevelFlags.LEVEL_CRITICAL,
-        _gio_critical_handler
+        "GLib-GIO", GLib.LogLevelFlags.LEVEL_CRITICAL, _gio_critical_handler
     )
-    
+
     args = parse_args()
-    
+
     # [MONITOR] Launch app + dedicated gnome-terminal with `watch`
     if args.monitor:
         import subprocess as _sp
@@ -72,7 +81,16 @@ def main():
         live_cmd = f"python3 {diag_script} --monitor-live {app_proc.pid}"
 
         try:
-            _sp.Popen(["gnome-terminal", "--title=Imbric Monitor", "--", "bash", "-c", live_cmd])
+            _sp.Popen(
+                [
+                    "gnome-terminal",
+                    "--title=Imbric Monitor",
+                    "--",
+                    "bash",
+                    "-c",
+                    live_cmd,
+                ]
+            )
             print("[Monitor] Dashboard launched in new terminal window.")
         except FileNotFoundError:
             print("[Monitor] gnome-terminal not found. Run manually:")
@@ -89,11 +107,29 @@ def main():
     app.setOrganizationName("Antigravity")
     app.setApplicationName("Imbric")
 
+    # [NEW] Register Material Symbols Rounded font
+    font_path = (
+        Path(__file__).parent
+        / "application"
+        / "assets"
+        / "fonts"
+        / "MaterialSymbolsRounded.ttf"
+    )
+    if font_path.exists():
+        font_id = QFontDatabase.addApplicationFont(str(font_path))
+        if font_id != -1:
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            print(f"Loaded Font Family: {families[0]}")
+        else:
+            print(f"Error: Failed to load font from {font_path}")
+    else:
+        print(f"Warning: Material Symbols font not found at {font_path}")
+
     # 1. Force Material Style for QML (Environment Variable)
     # This must be done before QQuickStyle is effectively used, though confusingly
     # QQuickStyle.setStyle() also does this. We do both to be safe as per demo.
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
-    
+
     # [FIX] Load Custom Configuration (Dense Variant)
     # Locate the config file relative to this script
     conf_path = Path(__file__).parent / "application" / "qtquickcontrols2.conf"
@@ -128,9 +164,9 @@ def main():
 
     # Dynamic Reload: Listen for Palette changes (System Dark Mode toggle)
     app.paletteChanged.connect(lambda: apply_styles())
-    
+
     print(f"Effective QML Style: {QQuickStyle.name()}")
-    
+
     # Initialize Main Window
     window = MainWindow(start_path=args.path)
     window.show()
@@ -139,6 +175,7 @@ def main():
     if args.profile:
         import cProfile
         import pstats
+
         print("Profiling enabled...")
         profiler = cProfile.Profile()
         profiler.enable()
@@ -146,6 +183,7 @@ def main():
     # [NEW] Start Internal Memory Profiler (Tracemalloc)
     # This allows F12 diagnostics to work immediately without losing early history
     from scripts.diagnostics import MemoryProfiler
+
     MemoryProfiler.start()
 
     # [DIAGNOSTICS] Print final startup metrics just before handing off to the Qt Event Loop
@@ -154,7 +192,9 @@ def main():
     app_modules = total_modules - _BASE_MODULE_COUNT
     print(f"\n[Diagnostics] Imbric Engine Initialized:")
     print(f"  └─ Boot Time:  {startup_ms:.1f} ms")
-    print(f"  └─ Footprint:  {total_modules} total modules loaded into RAM ({app_modules} application-specific)")
+    print(
+        f"  └─ Footprint:  {total_modules} total modules loaded into RAM ({app_modules} application-specific)"
+    )
 
     ret_code = app.exec()
 
@@ -167,6 +207,7 @@ def main():
         print(f"Profile data saved to '{os.path.abspath('imbric.prof')}'")
 
     sys.exit(ret_code)
+
 
 if __name__ == "__main__":
     main()

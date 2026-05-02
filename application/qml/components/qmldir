@@ -16,3 +16,5 @@ GtkMenuSeparator 1.0 GtkMenuSeparator.qml
 AddressInput 1.0 AddressInput.qml
 BreadcrumbAddressBar 1.0 BreadcrumbAddressBar.qml
 Crumb 1.0 Crumb.qml
+AdvancedTransferDialog 1.0 AdvancedTransferDialog.qml
+MdIcon 1.0 MdIcon.qml

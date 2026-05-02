@@ -84,5 +84,5 @@ class FileOperationSignals(QObject):
     )  # (tid, completed_count, total_count, current_filename)
     batchFinished = Signal(str, list, list)  # (tid, successful_items, failed_items)
     batchConflictEncountered = Signal(
-        str, str, str, str, object
-    )  # (tid, job_id, src, dest, conflict_data)
+        str, str, str, str, str, object
+    )  # (tid, job_id, op_type, src, dest, conflict_data)

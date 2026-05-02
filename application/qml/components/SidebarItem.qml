@@ -67,12 +67,12 @@ ItemDelegate {
             Layout.preferredHeight: 24
             Layout.alignment: Qt.AlignVCenter
             
-            Label {
+            MdIcon {
                 anchors.centerIn: parent
-                text: control.iconSymbol
-                font.pixelSize: Math.round(Qt.application.font.pixelSize * 1.3)
+                name: control.iconSymbol
+                size: 20
                 color: control.isActive ? Material.accent : Material.foreground
-                Behavior on color { ColorAnimation { duration: 150 } }
+                filled: control.isActive
             }
         }
 

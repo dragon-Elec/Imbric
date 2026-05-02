@@ -65,26 +65,50 @@ Control {
                     spacing: 4
                     Layout.alignment: Qt.AlignVCenter
                     
-                    ToolButton {
-                        icon.name: (typeof actionManager !== 'undefined') ? actionManager.get_icon("GO_BACK") : "go-previous-symbolic"
-                        icon.width: 16; icon.height: 16
-                        width: 32; height: 32
+                    Button {
+                        flat: true
+                        implicitWidth: 38; implicitHeight: 38
+                        padding: 0
                         enabled: shellManager && shellManager.current_pane ? shellManager.current_pane.canGoBack : false
                         onClicked: if (shellManager) shellManager.go_back()
+                        contentItem: Components.MdIcon {
+                            anchors.centerIn: parent
+                            name: (typeof actionManager !== 'undefined') ? actionManager.get_md3_ligature("GO_BACK") : "arrow_back"
+                            size: 20
+                            color: parent.enabled ? sysPalette.windowText : Qt.alpha(sysPalette.windowText, 0.3)
+                            scale: parent.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuint } }
+                        }
                     }
-                    ToolButton {
-                        icon.name: (typeof actionManager !== 'undefined') ? actionManager.get_icon("GO_FORWARD") : "go-next-symbolic"
-                        icon.width: 16; icon.height: 16
-                        width: 32; height: 32
+                    Button {
+                        flat: true
+                        implicitWidth: 38; implicitHeight: 38
+                        padding: 0
                         enabled: shellManager && shellManager.current_pane ? shellManager.current_pane.canGoForward : false
                         onClicked: if (shellManager) shellManager.go_forward()
+                        contentItem: Components.MdIcon {
+                            anchors.centerIn: parent
+                            name: (typeof actionManager !== 'undefined') ? actionManager.get_md3_ligature("GO_FORWARD") : "arrow_forward"
+                            size: 20
+                            color: parent.enabled ? sysPalette.windowText : Qt.alpha(sysPalette.windowText, 0.3)
+                            scale: parent.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuint } }
+                        }
                     }
-                    ToolButton {
-                        icon.name: (typeof actionManager !== 'undefined') ? actionManager.get_icon("GO_UP") : "go-up-symbolic"
-                        icon.width: 16; icon.height: 16
-                        width: 32; height: 32
+                    Button {
+                        flat: true
+                        implicitWidth: 38; implicitHeight: 38
+                        padding: 0
                         enabled: shellManager && shellManager.current_pane ? shellManager.current_pane.canGoUp : false
                         onClicked: if (shellManager) shellManager.go_up()
+                        contentItem: Components.MdIcon {
+                            anchors.centerIn: parent
+                            name: (typeof actionManager !== 'undefined') ? actionManager.get_md3_ligature("GO_UP") : "arrow_upward"
+                            size: 20
+                            color: parent.enabled ? sysPalette.windowText : Qt.alpha(sysPalette.windowText, 0.3)
+                            scale: parent.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuint } }
+                        }
                     }
                 }
 
@@ -129,45 +153,57 @@ Control {
                     Layout.alignment: Qt.AlignVCenter
                     visible: !addressBar.isEditing
                     
-                    ToolButton {
-                        icon.name: (typeof actionManager !== 'undefined') ? actionManager.get_icon("ZOOM_OUT") : "zoom-out-symbolic"
-                        icon.width: 16; icon.height: 16
-                        width: 32; height: 32
+                    Button {
+                        flat: true
+                        implicitWidth: 38; implicitHeight: 38
+                        padding: 0
                         onClicked: {
                             if (shellManager && shellManager.current_pane) {
                                 shellManager.current_pane.appBridge.zoom(-1)
                             }
                         }
-                        background: Rectangle { 
-                            color: parent.down ? sysPalette.mid : (parent.hovered ? Qt.alpha(sysPalette.highlight, 0.1) : "transparent")
-                            radius: 4 
+                        contentItem: Components.MdIcon {
+                            anchors.centerIn: parent
+                            name: (typeof actionManager !== 'undefined') ? actionManager.get_md3_ligature("ZOOM_OUT") : "zoom_out"
+                            size: 20
+                            color: sysPalette.windowText
+                            scale: parent.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuint } }
                         }
                     }
                     
-                    ToolButton {
-                        icon.name: (typeof actionManager !== 'undefined') ? actionManager.get_icon("ZOOM_IN") : "zoom-in-symbolic"
-                        icon.width: 16; icon.height: 16
-                        width: 32; height: 32
+                    Button {
+                        flat: true
+                        implicitWidth: 38; implicitHeight: 38
+                        padding: 0
                         onClicked: {
                             if (shellManager && shellManager.current_pane) {
                                 shellManager.current_pane.appBridge.zoom(1)
                             }
                         }
-                        background: Rectangle { 
-                            color: parent.down ? sysPalette.mid : (parent.hovered ? Qt.alpha(sysPalette.highlight, 0.1) : "transparent")
-                            radius: 4 
+                        contentItem: Components.MdIcon {
+                            anchors.centerIn: parent
+                            name: (typeof actionManager !== 'undefined') ? actionManager.get_md3_ligature("ZOOM_IN") : "zoom_in"
+                            size: 20
+                            color: sysPalette.windowText
+                            scale: parent.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuint } }
                         }
                     }
 
-                    ToolButton {
-                        icon.name: (typeof actionManager !== 'undefined') ? actionManager.get_icon("EDIT") : "document-edit-symbolic"
-                        icon.width: 16; icon.height: 16
-                        width: 32; height: 32
+                    Button {
+                        flat: true
+                        implicitWidth: 38; implicitHeight: 38
+                        padding: 0
                         onClicked: addressBar.isEditing = true
-                        
-                        background: Rectangle { 
-                            color: parent.down ? sysPalette.mid : (parent.hovered ? Qt.alpha(sysPalette.highlight, 0.1) : "transparent")
-                            radius: 4 
+                        contentItem: Components.MdIcon {
+                            anchors.centerIn: parent
+                            name: (typeof actionManager !== 'undefined') ? actionManager.get_md3_ligature("EDIT") : "edit"
+                            size: 20
+                            color: sysPalette.windowText
+                            filled: parent.hovered
+                            scale: parent.pressed ? 0.9 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuint } }
                         }
                     }
                 }

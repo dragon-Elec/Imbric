@@ -1,0 +1,169 @@
+import React, { useState } from 'react';
+import { ArrowLeft, ArrowRight, Play, Camera } from 'lucide-react';
+
+const App = () => {
+  const [currentIndex, setCurrentIndex] = useState(2);
+
+  // Placeholder data replacing the photos
+  const cards = [
+    { id: 1, title: 'Mountains', gradient: 'from-blue-400 to-cyan-300', type: 'photo' },
+    { id: 2, title: 'Flight', gradient: 'from-orange-300 to-rose-400', type: 'video' },
+    { id: 3, title: 'Lake View', gradient: 'from-emerald-500 to-teal-700', type: 'photo' },
+    { id: 4, title: 'Camera Gear', gradient: 'from-indigo-400 to-purple-600', type: 'video' },
+    { id: 5, title: 'Explorer', gradient: 'from-sky-400 to-blue-600', type: 'photo' },
+    { id: 6, title: 'City Night', gradient: 'from-slate-700 to-gray-900', type: 'photo' },
+    { id: 7, title: 'Desert', gradient: 'from-amber-400 to-orange-600', type: 'video' },
+  ];
+
+  const tags = ['Italy', 'Dubai', 'London', 'Berlin', 'Rome', 'Lisbon', 'India', 'China', 'Japan'];
+
+  const nextCard = () => {
+    setCurrentIndex((prev) => Math.min(prev + 1, cards.length - 1));
+  };
+
+  const prevCard = () => {
+    setCurrentIndex((prev) => Math.max(prev - 1, 0));
+  };
+
+  const goToCard = (index) => {
+    setCurrentIndex(index);
+  };
+
+  return (
+    // Outer blurry background matching the image's vibe
+    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 sm:p-8 font-sans">
+      
+      {/* Main White App Window */}
+      <div className="bg-white rounded-[2rem] shadow-[0_0_60px_rgba(255,255,255,0.15)] w-full max-w-6xl overflow-hidden relative">
+        
+        {/* Subtle top border glow effect */}
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-300 via-purple-300 to-blue-300 opacity-50"></div>
+
+        <div className="px-6 py-12 md:px-12 md:py-16">
+          
+          {/* Header Section */}
+          <div className="text-center mb-10">
+            <p className="text-xs font-bold text-gray-500 tracking-[0.2em] mb-3 uppercase">Gallery</p>
+            <h1 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4 tracking-tight">My Visual Diary</h1>
+            <p className="text-gray-500 text-sm md:text-base max-w-sm mx-auto">
+              See the world through my lens: adventures in photos and videos
+            </p>
+          </div>
+
+          {/* Filter Tags */}
+          <div className="flex flex-wrap justify-center gap-3 mb-16 px-4">
+            {tags.map((tag, index) => (
+              <button
+                key={tag}
+                className={`px-5 py-2 rounded-full text-xs md:text-sm font-medium transition-colors ${
+                  index === 0
+                    ? 'bg-gray-900 text-white' // Active state (Italy)
+                    : 'bg-transparent border border-gray-300 text-gray-600 hover:border-gray-900 hover:text-gray-900'
+                }`}
+              >
+                {tag}
+              </button>
+            ))}
+            <button className="px-5 py-2 rounded-full text-xs md:text-sm font-semibold bg-transparent border border-gray-300 text-gray-900 flex items-center gap-1 hover:bg-gray-50 transition-colors">
+              View More <ArrowRight className="w-4 h-4 ml-1" />
+            </button>
+          </div>
+
+          {/* Perspective Carousel */}
+          <div className="relative h-[300px] md:h-[450px] w-full flex justify-center items-center overflow-hidden mb-12">
+            {cards.map((card, index) => {
+              // Calculate positional math for the 3D stack effect
+              const offset = index - currentIndex;
+              const absOffset = Math.abs(offset);
+              const direction = Math.sign(offset); // -1 for left, 1 for right, 0 for center
+
+              // Base styling for cards that are too far away (hidden)
+              let transform = `translateX(${direction * 800}px) scale(0.5)`;
+              let zIndex = 0;
+              let opacity = 0;
+              let filter = 'brightness(0.3)';
+
+              if (absOffset === 0) {
+                // Center Card
+                transform = `translateX(0px) scale(1)`;
+                zIndex = 30;
+                opacity = 1;
+                filter = 'brightness(1)';
+              } else if (absOffset === 1) {
+                // Adjacent Cards (Left 1, Right 1)
+                transform = `translateX(${direction * (window.innerWidth > 768 ? 260 : 150)}px) scale(0.85)`;
+                zIndex = 20;
+                opacity = 1;
+                filter = 'brightness(0.6)';
+              } else if (absOffset === 2) {
+                // Outer Cards (Left 2, Right 2)
+                transform = `translateX(${direction * (window.innerWidth > 768 ? 480 : 280)}px) scale(0.7)`;
+                zIndex = 10;
+                opacity = window.innerWidth > 768 ? 0.8 : 0; // Hide on mobile
+                filter = 'brightness(0.4)';
+              }
+
+              return (
+                <div
+                  key={card.id}
+                  onClick={() => goToCard(index)}
+                  className={`absolute w-[260px] h-[340px] md:w-[320px] md:h-[420px] rounded-2xl cursor-pointer shadow-2xl overflow-hidden transition-all duration-700 ease-[cubic-bezier(0.25,1,0.5,1)] ${
+                    absOffset === 0 ? 'shadow-[0_20px_50px_rgba(0,0,0,0.3)] pointer-events-none' : 'hover:-translate-y-2'
+                  }`}
+                  style={{
+                    transform,
+                    zIndex,
+                    opacity,
+                    filter,
+                  }}
+                >
+                  {/* Placeholder Content (Gradient) */}
+                  <div className={`w-full h-full bg-gradient-to-br ${card.gradient} flex flex-col items-center justify-center relative`}>
+                    
+                    {/* Placeholder Icon representing the subject */}
+                    <div className="absolute inset-0 flex items-center justify-center opacity-20">
+                       <Camera size={120} color="white" strokeWidth={1} />
+                    </div>
+
+                    {/* Media Type Indicator (Play button for videos) */}
+                    {card.type === 'video' && (
+                      <div className="absolute bottom-4 right-4 w-8 h-8 md:w-10 md:h-10 bg-white/30 backdrop-blur-md rounded-full flex items-center justify-center border border-white/50">
+                        <Play className="w-4 h-4 md:w-5 md:h-5 text-white ml-0.5" fill="white" />
+                      </div>
+                    )}
+                    
+                    {/* Title Overlay */}
+                    <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/60 to-transparent">
+                       <p className="text-white font-semibold text-lg drop-shadow-md">{card.title}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Navigation Controls */}
+          <div className="flex justify-center gap-4">
+            <button
+              onClick={prevCard}
+              disabled={currentIndex === 0}
+              className="w-10 h-10 rounded-full border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <button
+              onClick={nextCard}
+              disabled={currentIndex === cards.length - 1}
+              className="w-10 h-10 rounded-full border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+            >
+              <ArrowRight className="w-5 h-5" />
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;

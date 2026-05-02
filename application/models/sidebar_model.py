@@ -89,7 +89,7 @@ class SidebarModel(QAbstractListModel):
             },
             {
                 "title": "Devices",
-                "icon": "hard_drive",
+                "icon": "storage",
                 "type": "LIST",
                 "collapsed": False,
                 "actions": ["Refresh"],
@@ -98,10 +98,10 @@ class SidebarModel(QAbstractListModel):
         ]
 
         # [DEBUG] MOCK DATA FOR SCROLL TESTING (RETRY)
-        for i in range(3):
+        for i in range(1):
             mock_items = [
                 {"name": f"Mock Item {j}", "path": "", "icon": "folder"}
-                for j in range(5)
+                for j in range(2)
             ]
             self._sections.append(
                 {

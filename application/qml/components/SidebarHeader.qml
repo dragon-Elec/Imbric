@@ -109,19 +109,19 @@ Item {
                 spacing: 8
                 
                 // Arrow Icon
-                Label {
-                    text: root.collapsed ? "▸" : "▾"
-                    font.pointSize: 10 // roughly 12px
+                MdIcon {
+                    name: root.collapsed ? "chevron_right" : "expand_more"
+                    size: 18
                     color: Material.foreground
                     opacity: 0.6
                     Layout.alignment: Qt.AlignVCenter
                 }
                 
                 // Section Icon (Optional)
-                Label {
+                MdIcon {
                     visible: root.icon !== ""
-                    text: root.icon
-                    font.pixelSize: 14 // Keep icons pixel-perfect
+                    name: root.icon
+                    size: 16
                     color: Material.foreground
                     opacity: 0.7
                     Layout.alignment: Qt.AlignVCenter

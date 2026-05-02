@@ -45,6 +45,7 @@ class FileOperations(QObject):
     # True Batching
     batchProgress = Signal(str, int, int, str)
     batchFinished = Signal(str, list, list)
+    batchConflictEncountered = Signal(str, str, str, str, str, object)
 
     uniqueNameReady = Signal(str, str)  # (task_id, unique_path)
     existenceReady = Signal(str, bool)  # (task_id, exists)
@@ -83,7 +84,7 @@ class FileOperations(QObject):
         # True Batching Signals
         self._signals.batchProgress.connect(self.batchProgress)
         self._signals.batchFinished.connect(self._on_batch_finished)
-        self._signals.batchConflictEncountered.connect(self.operationError)
+        self._signals.batchConflictEncountered.connect(self.batchConflictEncountered)
 
     # -------------------------------------------------------------------------
     # SIGNAL HANDLERS
