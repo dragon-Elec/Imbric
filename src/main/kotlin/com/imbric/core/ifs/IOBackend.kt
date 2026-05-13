@@ -1,0 +1,96 @@
+package com.imbric.core.ifs
+
+import com.imbric.core.models.FileInfo
+import com.imbric.core.models.FileJob
+import com.imbric.core.models.TransferProgress
+import com.imbric.core.models.TrashItem
+import com.imbric.core.models.DiskUsage
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+/**
+ * Common exception for VFS conflicts.
+ */
+open class VfsConflictException(val code: Int, message: String) : Exception(message) {
+    companion object {
+        const val EXISTS = 1
+        const val NOT_FOUND = 2
+        const val WOULD_RECURSE = 25
+    }
+}
+
+interface IOBackend {
+
+    val scheme: String
+    val displayName: String
+
+    /**
+     * Contextual capabilities for a specific URI.
+     */
+    fun getCapabilities(uri: String): BackendCapabilities
+
+    /**
+     * Checks if a specific action is allowed on the given URI.
+     * This encapsulates complex native logic (Permissions, Quotas, Backend state).
+     */
+    suspend fun canPerform(action: FileAction, uri: String): Boolean
+
+    // Reads
+    fun list(uri: String): Flow<FileInfo>
+    suspend fun getMetadata(uri: String): Result<FileInfo>
+    
+    // Bulk metadata default implementation
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    suspend fun getMetadata(uris: List<String>): List<Result<FileInfo>> = withContext(Dispatchers.IO.limitedParallelism(10)) {
+        uris.map { uri -> async { getMetadata(uri) } }.awaitAll()
+    }
+    
+    fun exists(uri: String): Boolean
+
+    /**
+     * Reads a small chunk from the beginning of a file.
+     * Used for the "64KB Trick" to extract metadata without downloading the full file.
+     */
+    suspend fun readHeader(uri: String, size: Long): Result<ByteArray>
+
+    /**
+     * Enriches basic metadata with backend-specific heavy data (like image dimensions, desktop app parsing).
+     */
+    suspend fun enrichMetadata(info: FileInfo): FileInfo = info
+
+    /**
+     * Retrieves disk usage information for the filesystem containing the given URI.
+     */
+    suspend fun getUsage(uri: String): Result<DiskUsage?> = Result.success(null)
+
+    // Writes
+    suspend fun copy(job: FileJob): Flow<TransferProgress>
+    suspend fun move(job: FileJob): Flow<TransferProgress>
+    suspend fun trash(job: FileJob): Result<Unit>
+    suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String>
+    suspend fun delete(job: FileJob): Result<Unit>
+    suspend fun createFolder(parentUri: String, name: String): Result<String>
+    suspend fun createFile(parentUri: String, name: String): Result<String>
+    suspend fun rename(uri: String, newName: String): Result<String>
+
+    // Trash Operations
+    suspend fun listTrash(): Result<List<TrashItem>> = Result.failure(UnsupportedOperationException("Trash not supported"))
+    suspend fun emptyTrash(): Result<Int> = Result.failure(UnsupportedOperationException("Trash not supported"))
+    suspend fun isTrashEmpty(uri: String): Boolean = true
+
+    // Optional (default no-ops)
+    fun search(query: String, root: String, mimeFilter: String? = null): Flow<FileInfo> = emptyFlow()
+    fun watch(uri: String): Flow<FileEvent> = emptyFlow()
+
+    fun canHandle(uri: String): Boolean =
+        uri.startsWith("$scheme://") || (!uri.contains("://") && scheme == "file")
+
+    /**
+     * Helper to get the trash-capable backends for this FS.
+     */
+    suspend fun getTrashBackend(registry: BackendRegistry): IOBackend? {
+        val rootUri = "$scheme:///"
+        val backend = registry.getIo(rootUri)
+        return if (backend != null && backend.getCapabilities(rootUri).supportsTrash) backend else null
+    }
+}

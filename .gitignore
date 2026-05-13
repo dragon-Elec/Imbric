@@ -1,0 +1,15 @@
+.gradle/
+build/
+.kotlin/
+*.class
+*.log
+.DS_Store
+
+# IDE & Tooling
+.classpath
+.project
+.settings/
+bin/
+.opencode/
+.idea/
+*.iml
