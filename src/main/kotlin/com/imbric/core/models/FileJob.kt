@@ -9,19 +9,14 @@ import kotlin.uuid.ExperimentalUuidApi
  * Ported from Python file_job.py – describes a copy/move/trash/rename job.
  */
 data class FileJob(
-    val id: Uuid = Uuid.random(),
-    val opType: String, // "copy", "move", "trash", "restore", "rename"
+    val id: Uuid,
+    val opType: String, // "copy", "move", "trash", "delete", "rename", "undo"
     val source: String,
     val dest: String = "",
-    val transactionId: Uuid? = null,
-    val cancellable: CancellationToken? = null,
     val overwrite: Boolean = false,
-    val autoRename: Boolean = false,
-    val items: List<Map<String, Any>> = emptyList(), // For batch operations
-    val uiRefreshRateMs: Int = 100,
-    val haltOnError: Boolean = false,
     val inversePayload: InversePayload? = null
 )
+
 
 /**
  * Payload for undoing a completed operation.

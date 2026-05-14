@@ -18,6 +18,7 @@ import java.util.ArrayDeque
  */
 class UndoManager(
     private val backendRegistry: BackendRegistry,
+    private val transactionManager: TransactionManager,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) {
     private val undoStack: Deque<Transaction> = ArrayDeque()
@@ -65,72 +66,50 @@ class UndoManager(
 
     // --- Core Inversion Logic ---
     private suspend fun performInversion(tx: Transaction, isUndo: Boolean) {
-        val opsToProcess = if (isUndo) tx.ops.reversed() else tx.ops
-        var success = true
-        var message = ""
-        
-        for (op in opsToProcess) {
-            if (op.status != TransactionStatus.COMPLETED) continue
-            
-            try {
-                val result = if (isUndo) {
-                    val inverse = op.inversePayload ?: continue
-                    executeInversePayload(inverse)
-                } else {
-                    executeOriginalOperation(op)
-                }
+        val undoJobs = tx.ops
+            .filter { it.status == TransactionStatus.COMPLETED && it.inversePayload != null }
+            .reversed() // Undo in reverse order of original execution
+            .map { op ->
+                val payloadMap = op.inversePayload!!
+                val payload = InversePayload(
+                    action = payloadMap["action"] as? String ?: "",
+                    target = payloadMap["target"] as? String ?: "",
+                    dest = payloadMap["dest"] as? String,
+                    backendId = payloadMap["backendId"] as? String
+                )
                 
-                if (!result) {
-                    success = false
-                    message = "Failed to ${if (isUndo) "undo" else "redo"} operation: ${op.src}"
-                    break
-                }
-            } catch (e: Exception) {
-                success = false
-                message = e.message ?: "Unknown error"
-                break
+                FileJob(
+                    id = Uuid.random(),
+                    opType = if (isUndo) "undo" else op.opType,
+                    source = if (isUndo) payload.target else op.src,
+                    dest = if (isUndo) (payload.dest ?: "") else op.dest,
+                    inversePayload = if (isUndo) payload else null
+                )
             }
+
+        if (undoJobs.isEmpty()) {
+            setBusy(false)
+            onStackChanged?.invoke(canUndo(), canRedo())
+            return
         }
+
+        // Submit to TransactionManager to execute as a first-class transaction
+        val name = if (isUndo) "Undo: ${tx.description}" else "Redo: ${tx.description}"
+        transactionManager.submit(undoJobs, name, isReversible = true)
         
-        if (success) {
-            if (isUndo) {
-                redoStack.push(tx)
-            } else {
-                undoStack.push(tx)
-            }
+        if (isUndo) {
+            redoStack.push(tx)
+        } else {
+            undoStack.push(tx)
         }
         
         setBusy(false)
-        onOperationFinished?.invoke(success, message)
         onStackChanged?.invoke(canUndo(), canRedo())
     }
 
     private suspend fun executeInversePayload(payloadMap: Map<String, Any?>): Boolean {
-        val target = payloadMap["target"] as? String ?: return false
-        val backend = backendRegistry.getIo(target) ?: return false
-        
-        val payload = InversePayload(
-            action = payloadMap["action"] as? String ?: "",
-            target = target,
-            dest = payloadMap["dest"] as? String,
-            backendId = payloadMap["backendId"] as? String
-        )
-        
-        return backend.executeInverse(payload).isSuccess
-    }
-
-    private suspend fun executeOriginalOperation(op: TransactionOperation): Boolean {
-        val backend = backendRegistry.getIo(op.src) ?: return false
-        val job = FileJob(id = Uuid.random(), opType = op.opType, source = op.src, dest = op.dest)
-        
-        return when (op.opType) {
-            "copy" -> { backend.copy(job).collect { }; true }
-            "move" -> { backend.move(job).collect { }; true }
-            "trash" -> backend.trash(job).isSuccess
-            "delete" -> backend.delete(job).isSuccess
-            "rename" -> backend.rename(job.source, job.dest).isSuccess
-            else -> false
-        }
+        // Obsolete
+        return false
     }
 
     private fun setBusy(value: Boolean) {

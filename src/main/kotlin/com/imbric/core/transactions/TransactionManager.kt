@@ -59,6 +59,30 @@ class TransactionManager(
         ))
     }
 
+    fun submit(jobs: List<FileJob>, description: String, isReversible: Boolean = true): Uuid {
+        val tid = startTransaction(description, isReversible)
+        jobs.forEach { job ->
+            val op = TransactionOperation(
+                jobId = job.id,
+                opType = job.opType,
+                src = job.source,
+                dest = job.dest,
+                inversePayload = job.inversePayload?.let { mapOf(
+                    "action" to it.action,
+                    "target" to it.target,
+                    "dest" to it.dest,
+                    "backendId" to it.backendId
+                ) }
+            )
+            transactions[tid]?.addOperation(op)
+        }
+        
+        commitTransaction(tid) { op, _ ->
+            executeBatchJob(tid, op)
+        }
+        return tid
+    }
+
     // --- High-level Entry Point ---
     fun batchTransfer(
         sources: List<String>,
@@ -121,12 +145,18 @@ class TransactionManager(
                         source = currentOp.src,
                         dest = currentOp.dest,
                         overwrite = currentOp.overwrite,
-                        autoRename = currentOp.autoRename,
-                        transactionId = tid
+                        inversePayload = currentOp.inversePayload?.let { ip -> 
+                            InversePayload(
+                                action = ip["action"] as? String ?: "",
+                                target = ip["target"] as? String ?: "",
+                                dest = ip["dest"] as? String,
+                                backendId = ip["backendId"] as? String
+                            )
+                        }
                     )
                     
                     var actualDest: String? = null
-                    var inverse: com.imbric.core.models.InversePayload? = null
+                    var inverse: InversePayload? = null
                     when (currentOp.opType) {
                         "copy" -> backend.copy(job).collect { 
                             actualDest = it.actualDest
@@ -147,6 +177,11 @@ class TransactionManager(
                             actualDest = job.dest
                             inverse = InversePayload(action = "undo_rename", target = actualDest!!, dest = job.source, backendId = "gio")
                             updateProgress(tid, TransferProgress(job.id, job.source, actualDest, inverse, 1, 1, 0, 0)) 
+                        }
+                        "undo" -> {
+                            val payload = job.inversePayload ?: throw Exception("Undo payload missing")
+                            backend.executeInverse(payload).getOrThrow()
+                            updateProgress(tid, TransferProgress(job.id, job.source, null, null, 1, 1, 0, 0))
                         }
                     }
                     updateOperationStatus(tid, currentOp.jobId, TransactionStatus.COMPLETED, resultPath = actualDest, inversePayload = inverse)
