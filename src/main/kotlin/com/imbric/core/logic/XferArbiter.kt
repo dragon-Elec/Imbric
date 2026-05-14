@@ -81,6 +81,8 @@ class StandardPolicy : BaseSyncPolicy() {
  * Pure math: compares src vs dest and returns a decision.
  */
 object XferArbiter {
+    private val NAME_COUNTER_REGEX = Regex("""(.+)\s\((\d+)\)$""")
+
     fun decide(src: FileInfo, dest: FileInfo, policy: SyncPolicy): ConflictAction {
         // Special case: Directory merge - Core rule that applies before any policy
         if (src.isDirectory && dest.isDirectory) {
@@ -113,12 +115,24 @@ object XferArbiter {
     }
 
     internal fun generateNewName(original: String): String {
+        // 1. Find the extension boundary
         val dotIndex = original.lastIndexOf('.')
-        if (dotIndex <= 0) return "${original} (1)"
+        val (baseName, extension) = if (dotIndex > 0) {
+            original.substring(0, dotIndex) to original.substring(dotIndex)
+        } else {
+            original to ""
+        }
+
+        // 2. Check for existing (n) pattern
+        val match = NAME_COUNTER_REGEX.matchEntire(baseName)
         
-        val name = original.substring(0, dotIndex)
-        val ext = original.substring(dotIndex)
-        return "$name (1)$ext"
+        return if (match != null) {
+            val prefix = match.groupValues[1]
+            val count = match.groupValues[2].toIntOrNull() ?: 0
+            "$prefix (${count + 1})$extension"
+        } else {
+            "$baseName (1)$extension"
+        }
     }
 
     // --- Capability checks ---
