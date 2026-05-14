@@ -53,8 +53,7 @@ class XferArbiterTest {
     fun testAutoRenamePolicy() {
         val policy = SyncPolicy.AutoRename
         val result = XferArbiter.decide(srcInfo, destInfo, policy)
-        assertTrue(result is ConflictAction.Rename)
-        assertEquals("file (1).txt", (result as ConflictAction.Rename).newName)
+        assertTrue(result is ConflictAction.AutoRename)
     }
 
     @Test

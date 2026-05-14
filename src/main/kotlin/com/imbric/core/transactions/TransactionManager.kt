@@ -46,7 +46,8 @@ class TransactionManager(
         dest: String = "", 
         jobId: Uuid = Uuid.random(), 
         overwrite: Boolean = false,
-        autoRename: Boolean = false
+        autoRename: Boolean = false,
+        inversePayload: Map<String, Any?>? = null
     ) {
         val tx = transactions[tid] ?: return
         tx.addOperation(TransactionOperation(
@@ -55,32 +56,9 @@ class TransactionManager(
             src = src,
             dest = dest,
             overwrite = overwrite,
-            autoRename = autoRename
+            autoRename = autoRename,
+            inversePayload = inversePayload
         ))
-    }
-
-    fun submit(jobs: List<FileJob>, description: String, isReversible: Boolean = true): Uuid {
-        val tid = startTransaction(description, isReversible)
-        jobs.forEach { job ->
-            val op = TransactionOperation(
-                jobId = job.id,
-                opType = job.opType,
-                src = job.source,
-                dest = job.dest,
-                inversePayload = job.inversePayload?.let { mapOf(
-                    "action" to it.action,
-                    "target" to it.target,
-                    "dest" to it.dest,
-                    "backendId" to it.backendId
-                ) }
-            )
-            transactions[tid]?.addOperation(op)
-        }
-        
-        commitTransaction(tid) { op, _ ->
-            executeBatchJob(tid, op)
-        }
-        return tid
     }
 
     // --- High-level Entry Point ---
@@ -145,18 +123,20 @@ class TransactionManager(
                         source = currentOp.src,
                         dest = currentOp.dest,
                         overwrite = currentOp.overwrite,
-                        inversePayload = currentOp.inversePayload?.let { ip -> 
-                            InversePayload(
-                                action = ip["action"] as? String ?: "",
-                                target = ip["target"] as? String ?: "",
-                                dest = ip["dest"] as? String,
-                                backendId = ip["backendId"] as? String
-                            )
-                        }
+                        autoRename = currentOp.autoRename,
+                    inversePayload = currentOp.inversePayload?.let { InversePayload(
+                        action = it["action"] as? String ?: "",
+                        target = it["target"] as? String ?: "",
+                        dest = it["dest"] as? String,
+                        newName = it["newName"] as? String,
+                        renameTo = it["renameTo"] as? String,
+                        tid = (it["tid"] as? String)?.let { Uuid.parse(it) } ?: it["tid"] as? Uuid,
+                        backendId = it["backendId"] as? String
+                    )}
                     )
                     
                     var actualDest: String? = null
-                    var inverse: InversePayload? = null
+                    var inverse: com.imbric.core.models.InversePayload? = null
                     when (currentOp.opType) {
                         "copy" -> backend.copy(job).collect { 
                             actualDest = it.actualDest
@@ -245,11 +225,10 @@ class TransactionManager(
         
         var opIndex = tx.ops.indexOfFirst { it.jobId == jobId }
         
-        // Final fallback for identity stability
-        if (opIndex == -1) {
-            // We can't easily match without the source URI here, 
-            // but updateProgress should have already linked the jobId.
-        }
+        // Final fallback for identity stability:
+        // If the jobId was reassigned during execution (e.g. JIT conflict resolution),
+        // updateOperationStatus may not find it by jobId. The fuzzy match in updateProgress
+        // already handles re-linking by source URI, so this is a no-op safety net.
 
         if (opIndex != -1) {
             val op = tx.ops[opIndex]
@@ -261,6 +240,9 @@ class TransactionManager(
                     "action" to it.action,
                     "target" to it.target,
                     "dest" to it.dest,
+                    "newName" to it.newName,
+                    "renameTo" to it.renameTo,
+                    "tid" to it.tid,
                     "backendId" to it.backendId
                 ) } ?: op.inversePayload
             )
@@ -316,7 +298,12 @@ class TransactionManager(
         }
     }
 
-    // --- Capabilities ---
+    // --- Lookup ---
+    fun findOperation(tid: Uuid, jobId: Uuid): TransactionOperation? {
+        return transactions[tid]?.findOperation(jobId)
+    }
+
+     // --- Capabilities ---
     fun getTransferCapabilities(sources: List<String>, dest: String): Map<String, Int> {
         val capabilities = mutableMapOf<String, Int>()
         sources.forEach { src ->

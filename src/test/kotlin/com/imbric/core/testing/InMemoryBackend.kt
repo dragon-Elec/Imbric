@@ -74,7 +74,7 @@ open class InMemoryBackend(
             throw VfsConflictException(VfsConflictException.EXISTS, "Destination already exists: $destUri")
         }
         
-        emit(TransferProgress(jobId, srcUri, 0, 1, 0, 1))
+        emit(TransferProgress(jobId, srcUri, null, null, 0, 1, 0, 1))
         
         val newName = destUri.substringAfterLast("/")
         fs[destUri] = info.copy(
@@ -90,7 +90,7 @@ open class InMemoryBackend(
                 copyRecursive(child.uri, childDestUri, jobId, overwrite)
             }
         }
-        emit(TransferProgress(jobId, srcUri, 0, 1, 1, 1))
+        emit(TransferProgress(jobId, srcUri, destUri, null, 1, 1, 0, 0))
     }
 
     override suspend fun move(job: FileJob): Flow<TransferProgress> = flow {
@@ -110,7 +110,7 @@ open class InMemoryBackend(
             throw VfsConflictException(VfsConflictException.EXISTS, "Destination already exists: $destUri")
         }
         
-        emit(TransferProgress(jobId, srcUri, 0, 1, 0, 1))
+        emit(TransferProgress(jobId, srcUri, null, null, 0, 1, 0, 1))
         
         val newName = destUri.substringAfterLast("/")
         fs[destUri] = info.copy(
@@ -126,7 +126,7 @@ open class InMemoryBackend(
                 moveRecursive(child.uri, childDestUri, jobId, overwrite)
             }
         }
-        emit(TransferProgress(jobId, srcUri, 0, 1, 1, 1))
+        emit(TransferProgress(jobId, srcUri, destUri, null, 1, 1, 0, 0))
     }
 
     override suspend fun trash(job: FileJob): Result<Unit> {
@@ -207,6 +207,31 @@ open class InMemoryBackend(
         val newUri = "$parent/$newName"
         fs[newUri] = info.copy(uri = newUri, path = newUri, name = newName, displayName = newName)
         return Result.success(newUri)
+    }
+
+    override suspend fun executeInverse(payload: InversePayload): Result<Unit> {
+        return when (payload.action) {
+            "undo_copy" -> {
+                val target = payload.target.removeSuffix("/")
+                fs.remove(target)
+                Result.success(Unit)
+            }
+            "undo_move" -> {
+                val target = payload.target.removeSuffix("/")
+                val dest = payload.dest?.removeSuffix("/") ?: return Result.failure(Exception("Missing dest"))
+                val info = fs.remove(target) ?: return Result.failure(Exception("Source not found"))
+                val newName = dest.substringAfterLast("/")
+                fs[dest] = info.copy(uri = dest, path = dest, name = newName, displayName = newName)
+                Result.success(Unit)
+            }
+            "undo_trash" -> {
+                restoreFromTrash(payload.target, payload.dest ?: payload.target).map { Unit }
+            }
+            "undo_rename" -> {
+                rename(payload.target, (payload.dest ?: "").substringAfterLast("/")).map { Unit }
+            }
+            else -> Result.failure(UnsupportedOperationException("Action not supported in memory: ${payload.action}"))
+        }
     }
 
     override fun watch(uri: String): Flow<FileEvent> = callbackFlow { awaitClose { } }

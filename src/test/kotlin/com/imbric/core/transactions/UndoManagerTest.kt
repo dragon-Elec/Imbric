@@ -1,13 +1,16 @@
-@file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+@file:OptIn(kotlin.uuid.ExperimentalUuidApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 package com.imbric.core.transactions
 
 import com.imbric.core.ifs.BackendRegistry
+import com.imbric.core.logic.XferArbiter
 import com.imbric.core.testing.InMemoryBackend
-import com.imbric.core.transactions.models.Transaction
-import com.imbric.core.transactions.models.TransactionOperation
-import com.imbric.core.transactions.models.TransactionStatus
+import com.imbric.core.transactions.models.*
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -17,21 +20,30 @@ import kotlin.uuid.Uuid
 class UndoManagerTest {
 
     private lateinit var backend: InMemoryBackend
+    private lateinit var transactionManager: TransactionManager
     private lateinit var undoManager: UndoManager
 
     @BeforeTest
     fun setup() {
         backend = InMemoryBackend()
         BackendRegistry.registerIo("memory", backend)
-        undoManager = UndoManager(BackendRegistry)
+    }
+
+    private fun kotlinx.coroutines.test.TestScope.initManagers() {
+        transactionManager = TransactionManager(BackendRegistry, XferArbiter, this)
+        undoManager = UndoManager(BackendRegistry, transactionManager, this)
+        
+        // Connect them
+        undoManager.attach()
     }
 
     @Test
     fun testUndoCopy() = runTest {
+        initManagers()
         backend.createFolder("memory://", "dest")
         backend.createFile("memory://dest", "file1.txt") // Simulate already copied
 
-        val tx = Transaction(status = TransactionStatus.COMPLETED)
+        val tx = Transaction(status = TransactionStatus.COMPLETED, description = "Copy file1.txt", isReversible = true)
         tx.addOperation(TransactionOperation(
             jobId = Uuid.random(),
             opType = "copy",
@@ -46,14 +58,12 @@ class UndoManagerTest {
         assertTrue(backend.exists("memory://dest/file1.txt"))
         assertTrue(undoManager.canUndo())
         
-        var undoFinished = false
-        undoManager.onOperationFinished = { _, _ -> undoFinished = true }
-        undoManager.undo()
-        
-        val endTime = System.currentTimeMillis() + 2000
-        while (!undoFinished && System.currentTimeMillis() < endTime) {
-            delay(10)
+        val undoStarted = launch {
+            undoManager.undo()
         }
+        
+        // Wait for all coroutines to finish
+        advanceUntilIdle()
         
         assertFalse(backend.exists("memory://dest/file1.txt")) // Should be trashed
         assertTrue(undoManager.canRedo())
@@ -61,11 +71,12 @@ class UndoManagerTest {
 
     @Test
     fun testUndoRedoMove() = runTest {
+        initManagers()
         backend.createFolder("memory://", "src")
         backend.createFolder("memory://", "dest")
         backend.createFile("memory://dest", "file2.txt") // Simulate already moved
 
-        val tx = Transaction(status = TransactionStatus.COMPLETED)
+        val tx = Transaction(status = TransactionStatus.COMPLETED, description = "Move file2.txt", isReversible = true)
         tx.addOperation(TransactionOperation(
             jobId = Uuid.random(),
             opType = "move",
@@ -80,36 +91,17 @@ class UndoManagerTest {
         assertTrue(backend.exists("memory://dest/file2.txt"))
         assertFalse(backend.exists("memory://src/file2.txt"))
         
-        var undoFinished = false
-        var undoSuccess = false
-        undoManager.onOperationFinished = { success, _ -> 
-            undoFinished = true
-            undoSuccess = success
-        }
+        // UNDO
         undoManager.undo()
-        
-        var endTime = System.currentTimeMillis() + 2000
-        while (!undoFinished && System.currentTimeMillis() < endTime) {
-            delay(10)
-        }
-        println("Undo finished, success: $undoSuccess")
+        advanceUntilIdle()
         
         // Move undone: should be back at src
         assertTrue(backend.exists("memory://src/file2.txt"))
         assertFalse(backend.exists("memory://dest/file2.txt"))
         
-        undoFinished = false
-        var redoSuccess = false
-        undoManager.onOperationFinished = { success, _ -> 
-            undoFinished = true
-            redoSuccess = success
-        }
+        // REDO
         undoManager.redo()
-        endTime = System.currentTimeMillis() + 2000
-        while (!undoFinished && System.currentTimeMillis() < endTime) {
-            delay(10)
-        }
-        println("Redo finished, success: $redoSuccess")
+        advanceUntilIdle()
         
         // Move redone: should be back at dest
         assertFalse(backend.exists("memory://src/file2.txt"))

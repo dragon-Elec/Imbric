@@ -19,19 +19,16 @@ class FileJobTest {
 
     @Test
     fun testFileJobCreation() {
-        val token = CancellationToken()
         val job = FileJob(
             opType = "copy",
             source = "file:///src/file.txt",
-            dest = "file:///dest/file.txt",
-            cancellable = token
+            dest = "file:///dest/file.txt"
         )
 
         assertEquals("copy", job.opType)
         assertEquals("file:///src/file.txt", job.source)
         assertEquals("file:///dest/file.txt", job.dest)
         assertTrue(job.id != Uuid.NIL)
-        assertFalse(job.cancellable!!.isCancelled)
     }
 
     @Test

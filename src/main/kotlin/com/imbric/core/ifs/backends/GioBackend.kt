@@ -125,22 +125,23 @@ class GioBackend : IOBackend {
 
     override suspend fun copy(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.channelFlow {
         withContext(Dispatchers.IO) {
+            val finalDest = if (job.autoRename) resolveUniqueTarget(job.dest) else job.dest
             val src = File.newForUri(job.source)
-            val dest = File.newForUri(job.dest)
+            val dest = File.newForUri(finalDest)
             
             val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
             
             try {
                 src.copy(dest, flags, null) { current, total, _ ->
-                    trySend(TransferProgress(job.id, job.source, job.dest, null, 0, 1, current, total))
+                    trySend(TransferProgress(job.id, job.source, finalDest, null, 0, 1, current, total))
                 }
                 // Report success with dynamic InversePayload
                 val inverse = InversePayload(
                     action = "undo_copy",
-                    target = job.dest,
+                    target = finalDest,
                     backendId = "gio"
                 )
-                trySend(TransferProgress(job.id, job.source, job.dest, inverse, 1, 1, 0, 0))
+                trySend(TransferProgress(job.id, job.source, finalDest, inverse, 1, 1, 0, 0))
             } catch (e: org.javagi.base.GErrorException) {
                 // G_IO_ERROR_WOULD_RECURSE is 25 in GNOME 46
                 if (e.code == 25) { 
@@ -154,23 +155,24 @@ class GioBackend : IOBackend {
 
     override suspend fun move(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.channelFlow {
         withContext(Dispatchers.IO) {
+            val finalDest = if (job.autoRename) resolveUniqueTarget(job.dest) else job.dest
             val src = File.newForUri(job.source)
-            val dest = File.newForUri(job.dest)
+            val dest = File.newForUri(finalDest)
             
             val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
             
             try {
                 src.move(dest, flags, null) { current, total, _ ->
-                    trySend(TransferProgress(job.id, job.source, job.dest, null, 0, 1, current, total))
+                    trySend(TransferProgress(job.id, job.source, finalDest, null, 0, 1, current, total))
                 }
                 // Report success with dynamic InversePayload
                 val inverse = InversePayload(
                     action = "undo_move",
-                    target = job.dest,
+                    target = finalDest,
                     dest = job.source,
                     backendId = "gio"
                 )
-                trySend(TransferProgress(job.id, job.source, job.dest, inverse, 1, 1, 0, 0))
+                trySend(TransferProgress(job.id, job.source, finalDest, inverse, 1, 1, 0, 0))
             } catch (e: org.javagi.base.GErrorException) {
                 // G_IO_ERROR_WOULD_RECURSE is 25 in GNOME 46
                 if (e.code == 25) { 

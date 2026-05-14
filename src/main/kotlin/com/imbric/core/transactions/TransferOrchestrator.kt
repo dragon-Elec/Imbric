@@ -7,6 +7,8 @@ import com.imbric.core.models.FileInfo
 import com.imbric.core.transactions.models.TransactionEvent
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.Collections
 import kotlin.uuid.Uuid
 import kotlin.uuid.ExperimentalUuidApi
@@ -24,13 +26,14 @@ class TransferOrchestrator(
     ): Flow<TransactionEvent> = channelFlow {
         val tid = transactionManager.startTransaction("Batch $mode to $destDir")
         val stickyDecisions = mutableMapOf<ConflictType, ConflictAction>()
+        val mutex = Mutex()
         val validatedOps = Collections.synchronizedList(mutableListOf<ValidatedOp>())
 
         // 1. Parallel Pre-flight Planning
         withContext(Dispatchers.IO) {
             sources.map { src ->
                 async {
-                    planOperation(src, destDir, mode, policy, onManualConflict, stickyDecisions, validatedOps)
+                    planOperation(src, destDir, mode, policy, onManualConflict, stickyDecisions, mutex, validatedOps)
                 }
             }.awaitAll()
         }
@@ -59,15 +62,24 @@ class TransferOrchestrator(
         }
         
         val jitResolver: suspend (ConflictContext) -> ConflictResponse = { context ->
-            val action = stickyDecisions[context.type]
-            if (action != null) {
-                ConflictResponse(action)
+            val existing = mutex.withLock { stickyDecisions[context.type] }
+            if (existing != null) {
+                ConflictResponse(existing)
             } else {
                 val response = onManualConflict(context)
                 if (response.applyToAll) {
-                    stickyDecisions[context.type] = response.action
+                    mutex.withLock {
+                        val doubleCheck = stickyDecisions[context.type]
+                        if (doubleCheck == null) {
+                            stickyDecisions[context.type] = response.action
+                            response
+                        } else {
+                            ConflictResponse(doubleCheck)
+                        }
+                    }
+                } else {
+                    response
                 }
-                response
             }
         }
 
@@ -89,6 +101,7 @@ class TransferOrchestrator(
         policy: SyncPolicy,
         onManualConflict: suspend (ConflictContext) -> ConflictResponse,
         stickyDecisions: MutableMap<ConflictType, ConflictAction>,
+        mutex: Mutex,
         validatedOps: MutableList<ValidatedOp>
     ) {
         val fileName = src.uriName
@@ -108,15 +121,32 @@ class TransferOrchestrator(
         val destMeta = destBackend.getMetadata(dest).getOrNull() ?: return
         val conflictType = XferArbiter.classifyConflict(srcMeta, destMeta)
         
-        // Check sticky decisions first
-        var action = stickyDecisions[conflictType] ?: XferArbiter.decide(srcMeta, destMeta, policy)
+        // Check sticky decisions first under lock
+        var action: ConflictAction = mutex.withLock {
+            stickyDecisions[conflictType] ?: XferArbiter.decide(srcMeta, destMeta, policy)
+        }
         
         if (action is ConflictAction.Prompt) {
-            val response = onManualConflict(ConflictContext(src, dest, srcMeta, destMeta, conflictType))
-            action = response.action
-            if (response.applyToAll) {
-                stickyDecisions[conflictType] = action
+            val existing = mutex.withLock { stickyDecisions[conflictType] }
+            val response = if (existing != null) {
+                ConflictResponse(existing)
+            } else {
+                val res = onManualConflict(ConflictContext(src, dest, srcMeta, destMeta, conflictType))
+                if (res.applyToAll) {
+                    mutex.withLock {
+                        val doubleCheck = stickyDecisions[conflictType]
+                        if (doubleCheck == null) {
+                            stickyDecisions[conflictType] = res.action
+                            res
+                        } else {
+                            ConflictResponse(doubleCheck)
+                        }
+                    }
+                } else {
+                    res
+                }
             }
+            action = response.action
         }
         
         when (action) {
@@ -131,7 +161,7 @@ class TransferOrchestrator(
                 // Recursive Merge: plan all children of source into destination
                 val children = srcBackend.list(src).toList()
                 for (child in children) {
-                    planOperation(child.path, dest, mode, policy, onManualConflict, stickyDecisions, validatedOps)
+                    planOperation(child.path, dest, mode, policy, onManualConflict, stickyDecisions, mutex, validatedOps)
                 }
             }
             is ConflictAction.Skip -> { /* Do nothing */ }
