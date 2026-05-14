@@ -41,4 +41,28 @@ data class FileInfo(
 
     val isEmptyDirectory: Boolean
         get() = isDirectory && childCount == 0
+
+    val permissionsString: String
+        get() {
+            if (permissions.isEmpty()) return ""
+            val mode = permissions.toIntOrNull(8) ?: return ""
+            val type = if (isDirectory) 'd' else if (isSymlink) 'l' else '-'
+            
+            fun rwx(m: Int): String = buildString {
+                append(if (m and 4 != 0) 'r' else '-')
+                append(if (m and 2 != 0) 'w' else '-')
+                append(if (m and 1 != 0) 'x' else '-')
+            }
+            
+            return "$type${rwx(mode shr 6)}${rwx(mode shr 3)}${rwx(mode)}"
+        }
+
+    val humanReadableSize: String
+        get() {
+            if (isDirectory) return ""
+            if (size <= 0) return "0 B"
+            val units = arrayOf("B", "KB", "MB", "GB", "TB")
+            val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
+            return String.format("%.1f %s", size / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
+        }
 }

@@ -3,6 +3,7 @@ package com.imbric.core.ifs.backends
 
 import com.imbric.core.ifs.*
 import com.imbric.core.models.*
+import com.imbric.core.logic.XferArbiter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -88,6 +89,17 @@ class GioBackend : IOBackend {
 
     private val queryAttributes = "standard::*,time::*,unix::*,owner::*,access::*,trash::*"
 
+    private fun resolveUniqueTarget(uri: String): String {
+        var current = uri
+        while (exists(current)) {
+            val parent = current.uriParent
+            val name = current.uriName
+            val newName = XferArbiter.generateNewName(name)
+            current = parent.uriJoin(newName)
+        }
+        return current
+    }
+
     override fun list(uri: String): Flow<FileInfo> = flow {
         val gfile = File.newForUri(uri)
         val enumerator = gfile.enumerateChildren(queryAttributes, FileQueryInfoFlags.NONE, null)
@@ -113,14 +125,15 @@ class GioBackend : IOBackend {
 
     override suspend fun copy(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.channelFlow {
         withContext(Dispatchers.IO) {
+            val finalDest = if (job.autoRename) resolveUniqueTarget(job.dest) else job.dest
             val src = File.newForUri(job.source)
-            val dest = File.newForUri(job.dest)
+            val dest = File.newForUri(finalDest)
             
             val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
             
             try {
                 src.copy(dest, flags, null) { current, total, _ ->
-                    trySend(TransferProgress(job.id, job.source, 0, 1, current, total))
+                    trySend(TransferProgress(job.id, job.source, finalDest, 0, 1, current, total))
                 }
             } catch (e: org.javagi.base.GErrorException) {
                 // G_IO_ERROR_WOULD_RECURSE is 25 in GNOME 46
@@ -135,14 +148,15 @@ class GioBackend : IOBackend {
 
     override suspend fun move(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.channelFlow {
         withContext(Dispatchers.IO) {
+            val finalDest = if (job.autoRename) resolveUniqueTarget(job.dest) else job.dest
             val src = File.newForUri(job.source)
-            val dest = File.newForUri(job.dest)
+            val dest = File.newForUri(finalDest)
             
             val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
             
             try {
                 src.move(dest, flags, null) { current, total, _ ->
-                    trySend(TransferProgress(job.id, job.source, 0, 1, current, total))
+                    trySend(TransferProgress(job.id, job.source, finalDest, 0, 1, current, total))
                 }
             } catch (e: org.javagi.base.GErrorException) {
                 // G_IO_ERROR_WOULD_RECURSE is 25 in GNOME 46
@@ -183,7 +197,7 @@ class GioBackend : IOBackend {
         } else {
             val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
             src.copy(dest, flags, null) { current, total, _ ->
-                channel.trySend(TransferProgress(job.id, src.uri, 0, 1, current, total))
+                channel.trySend(TransferProgress(job.id, src.uri, dest.uri, 0, 1, current, total))
             }
         }
     }
@@ -216,8 +230,23 @@ class GioBackend : IOBackend {
         runCatching {
             val src = File.newForUri(trashPath)
             val dest = File.newForUri(originalPath)
-            src.move(dest, FileCopyFlags.NONE, null, null)
-            originalPath
+            
+            // 1. Ensure the destination parent directory exists
+            val parent = dest.parent
+            if (parent != null && !parent.queryExists(null)) {
+                parent.makeDirectoryWithParents(null)
+            }
+            
+            // 2. Resolve collisions if someone created a new file at the old path
+            val finalDestUri = if (dest.queryExists(null)) {
+                resolveUniqueTarget(originalPath)
+            } else {
+                originalPath
+            }
+            
+            val finalDest = File.newForUri(finalDestUri)
+            src.move(finalDest, FileCopyFlags.NONE, null, null)
+            finalDestUri
         }
     }
 

@@ -39,14 +39,23 @@ class TransactionManager(
         return tid
     }
 
-    fun addOperation(tid: Uuid, opType: String, src: String, dest: String = "", jobId: Uuid = Uuid.random(), overwrite: Boolean = false) {
+    fun addOperation(
+        tid: Uuid, 
+        opType: String, 
+        src: String, 
+        dest: String = "", 
+        jobId: Uuid = Uuid.random(), 
+        overwrite: Boolean = false,
+        autoRename: Boolean = false
+    ) {
         val tx = transactions[tid] ?: return
         tx.addOperation(TransactionOperation(
             jobId = jobId,
             opType = opType,
             src = src,
             dest = dest,
-            overwrite = overwrite
+            overwrite = overwrite,
+            autoRename = autoRename
         ))
     }
 
@@ -112,17 +121,28 @@ class TransactionManager(
                         source = currentOp.src,
                         dest = currentOp.dest,
                         overwrite = currentOp.overwrite,
+                        autoRename = currentOp.autoRename,
                         transactionId = tid
                     )
                     
+                    var actualDest: String? = null
                     when (currentOp.opType) {
-                        "copy" -> backend.copy(job).collect { updateProgress(tid, it) }
-                        "move" -> backend.move(job).collect { updateProgress(tid, it) }
-                        "trash" -> backend.trash(job).getOrThrow().also { updateProgress(tid, TransferProgress(job.id, job.source, 1, 1, 0, 0)) }
-                        "delete" -> backend.delete(job).getOrThrow().also { updateProgress(tid, TransferProgress(job.id, job.source, 1, 1, 0, 0)) }
-                        "rename" -> backend.rename(job.source, job.dest).getOrThrow().also { updateProgress(tid, TransferProgress(job.id, job.source, 1, 1, 0, 0)) }
+                        "copy" -> backend.copy(job).collect { 
+                            actualDest = it.actualDest
+                            updateProgress(tid, it) 
+                        }
+                        "move" -> backend.move(job).collect { 
+                            actualDest = it.actualDest
+                            updateProgress(tid, it) 
+                        }
+                        "trash" -> backend.trash(job).getOrThrow().also { updateProgress(tid, TransferProgress(job.id, job.source, null, 1, 1, 0, 0)) }
+                        "delete" -> backend.delete(job).getOrThrow().also { updateProgress(tid, TransferProgress(job.id, job.source, null, 1, 1, 0, 0)) }
+                        "rename" -> backend.rename(job.source, job.dest).getOrThrow().also { 
+                            actualDest = job.dest
+                            updateProgress(tid, TransferProgress(job.id, job.source, actualDest, 1, 1, 0, 0)) 
+                        }
                     }
-                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.COMPLETED)
+                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.COMPLETED, resultPath = actualDest)
                 } catch (e: Exception) {
                     val errorCode = (e as? VfsConflictException)?.code ?: -1
                     
@@ -171,24 +191,41 @@ class TransactionManager(
         }
     }
 
-    private fun updateOperationStatus(tid: Uuid, jobId: Uuid, status: TransactionStatus, error: String = "") {
+    private fun updateOperationStatus(tid: Uuid, jobId: Uuid, status: TransactionStatus, error: String = "", resultPath: String? = null) {
         val tx = transactions[tid] ?: return
         val opIndex = tx.ops.indexOfFirst { it.jobId == jobId }
         if (opIndex != -1) {
             val op = tx.ops[opIndex]
-            tx.ops[opIndex] = op.copy(
+            val updatedOp = op.copy(
                 status = status, 
                 error = error, 
-                inversePayload = if (status == TransactionStatus.COMPLETED && tx.isReversible) UndoFactory.createInverse(op) else null
+                resultPath = resultPath ?: op.resultPath,
+                inversePayload = if (status == TransactionStatus.COMPLETED && tx.isReversible) UndoFactory.createInverse(op.copy(resultPath = resultPath ?: op.resultPath)) else null
             )
-            updateProgress(tid, TransferProgress(jobId, op.src))
+            tx.ops[opIndex] = updatedOp
+            updateProgress(tid, TransferProgress(jobId, op.src, resultPath ?: op.resultPath))
         }
     }
 
     // --- Progress & Status ---
     private fun updateProgress(tid: Uuid, progress: TransferProgress) {
         val tx = transactions[tid] ?: return
-        val pct = tx.getProgress()
+        
+        // Update per-job progress for byte-level aggregation
+        val op = tx.ops.find { it.jobId == progress.jobId }
+        val pct = if (tx.totalOps > 0) {
+            val completedBase = tx.completedOps.toFloat()
+            
+            // Calculate fractional progress of currently running jobs
+            // (Simple version: factor in the current job's bytes if available)
+            val currentJobFraction = if (progress.totalSize > 0) {
+                progress.completedSize.toFloat() / progress.totalSize
+            } else if (progress.totalCount > 0) {
+                progress.completedCount.toFloat() / progress.totalCount
+            } else 0f
+            
+            (completedBase + currentJobFraction.coerceIn(0f, 0.99f)) / tx.totalOps
+        } else 0f
         
         onTransactionProgress?.invoke(tid, pct)
         _events.tryEmit(TransactionEvent.Progress(tid, pct))

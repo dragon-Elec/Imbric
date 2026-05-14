@@ -13,6 +13,7 @@ sealed class ConflictAction {
     object Merge : ConflictAction() // For directory collisions
     object Skip : ConflictAction()
     data class Rename(val newName: String) : ConflictAction()
+    object AutoRename : ConflictAction()
     object Prompt : ConflictAction()
     object Cancel : ConflictAction()
 }
@@ -63,7 +64,7 @@ class ModifiedOnlyPolicy : BaseSyncPolicy() {
 }
 
 class AutoRenamePolicy : BaseSyncPolicy() {
-    override fun decide(src: FileInfo, dest: FileInfo): ConflictAction = ConflictAction.Rename(XferArbiter.generateNewName(dest.name))
+    override fun decide(src: FileInfo, dest: FileInfo): ConflictAction = ConflictAction.AutoRename
 }
 
 class StandardPolicy : BaseSyncPolicy() {
@@ -114,7 +115,7 @@ object XferArbiter {
         return diff > 2000
     }
 
-    internal fun generateNewName(original: String): String {
+    fun generateNewName(original: String): String {
         // 1. Find the extension boundary
         val dotIndex = original.lastIndexOf('.')
         val (baseName, extension) = if (dotIndex > 0) {

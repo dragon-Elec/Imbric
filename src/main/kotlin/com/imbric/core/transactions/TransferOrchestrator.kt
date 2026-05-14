@@ -7,6 +7,7 @@ import com.imbric.core.models.FileInfo
 import com.imbric.core.transactions.models.TransactionEvent
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import java.util.Collections
 import kotlin.uuid.Uuid
 import kotlin.uuid.ExperimentalUuidApi
 
@@ -23,16 +24,27 @@ class TransferOrchestrator(
     ): Flow<TransactionEvent> = channelFlow {
         val tid = transactionManager.startTransaction("Batch $mode to $destDir")
         val stickyDecisions = mutableMapOf<ConflictType, ConflictAction>()
-        val validatedOps = mutableListOf<ValidatedOp>()
+        val validatedOps = Collections.synchronizedList(mutableListOf<ValidatedOp>())
 
-        // 1. Recursive Pre-flight Planning
-        for (src in sources) {
-            planOperation(src, destDir, mode, policy, onManualConflict, stickyDecisions, validatedOps)
+        // 1. Parallel Pre-flight Planning
+        withContext(Dispatchers.IO) {
+            sources.map { src ->
+                async {
+                    planOperation(src, destDir, mode, policy, onManualConflict, stickyDecisions, validatedOps)
+                }
+            }.awaitAll()
         }
         
         // 2. Dispatch to TransactionManager
         validatedOps.forEach { op ->
-            transactionManager.addOperation(tid, mode, op.src, op.dest, overwrite = op.overwrite)
+            transactionManager.addOperation(
+                tid, 
+                mode, 
+                op.src, 
+                op.dest, 
+                overwrite = op.overwrite, 
+                autoRename = op.autoRename
+            )
         }
         
         val collector = launch(start = CoroutineStart.UNDISPATCHED) {
@@ -109,6 +121,7 @@ class TransferOrchestrator(
         
         when (action) {
             is ConflictAction.Overwrite -> validatedOps.add(ValidatedOp(src, dest, true))
+            is ConflictAction.AutoRename -> validatedOps.add(ValidatedOp(src, dest, false, true))
             is ConflictAction.Rename -> {
                 val newName = action.newName
                 val newDest = destParent.uriJoin(newName)
@@ -127,5 +140,5 @@ class TransferOrchestrator(
         }
     }
     
-    private data class ValidatedOp(val src: String, val dest: String, val overwrite: Boolean)
+    private data class ValidatedOp(val src: String, val dest: String, val overwrite: Boolean, val autoRename: Boolean = false)
 }
