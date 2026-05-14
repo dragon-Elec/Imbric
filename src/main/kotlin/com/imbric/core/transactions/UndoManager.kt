@@ -3,6 +3,7 @@ package com.imbric.core.transactions
 
 import com.imbric.core.ifs.*
 import com.imbric.core.models.FileJob
+import com.imbric.core.models.InversePayload
 import com.imbric.core.transactions.models.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -104,26 +105,18 @@ class UndoManager(
         onStackChanged?.invoke(canUndo(), canRedo())
     }
 
-    private suspend fun executeInversePayload(payload: Map<String, Any?>): Boolean {
-        val action = payload["action"] as? String ?: return false
-        val target = payload["target"] as? String ?: return false
+    private suspend fun executeInversePayload(payloadMap: Map<String, Any?>): Boolean {
+        val target = payloadMap["target"] as? String ?: return false
         val backend = backendRegistry.getIo(target) ?: return false
         
-        return when (action) {
-            "undo_copy" -> {
-                backend.trash(FileJob(id = Uuid.random(), opType = "trash", source = target)).isSuccess
-            }
-            "undo_move" -> {
-                val dest = payload["dest"] as? String ?: return false
-                backend.move(FileJob(id = Uuid.random(), opType = "move", source = target, dest = dest)).collect { }
-                true
-            }
-            "undo_rename" -> {
-                val orig = payload["dest"] as? String ?: return false
-                backend.rename(target, orig.uriName).isSuccess
-            }
-            else -> true // Unknown action, skip
-        }
+        val payload = InversePayload(
+            action = payloadMap["action"] as? String ?: "",
+            target = target,
+            dest = payloadMap["dest"] as? String,
+            backendId = payloadMap["backendId"] as? String
+        )
+        
+        return backend.executeInverse(payload).isSuccess
     }
 
     private suspend fun executeOriginalOperation(op: TransactionOperation): Boolean {

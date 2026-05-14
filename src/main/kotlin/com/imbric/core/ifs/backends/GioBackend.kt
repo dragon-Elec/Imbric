@@ -133,8 +133,15 @@ class GioBackend : IOBackend {
             
             try {
                 src.copy(dest, flags, null) { current, total, _ ->
-                    trySend(TransferProgress(job.id, job.source, finalDest, 0, 1, current, total))
+                    trySend(TransferProgress(job.id, job.source, finalDest, null, 0, 1, current, total))
                 }
+                // Report success with dynamic InversePayload
+                val inverse = InversePayload(
+                    action = "undo_copy",
+                    target = finalDest,
+                    backendId = "gio"
+                )
+                trySend(TransferProgress(job.id, job.source, finalDest, inverse, 1, 1, 0, 0))
             } catch (e: org.javagi.base.GErrorException) {
                 // G_IO_ERROR_WOULD_RECURSE is 25 in GNOME 46
                 if (e.code == 25) { 
@@ -156,8 +163,16 @@ class GioBackend : IOBackend {
             
             try {
                 src.move(dest, flags, null) { current, total, _ ->
-                    trySend(TransferProgress(job.id, job.source, finalDest, 0, 1, current, total))
+                    trySend(TransferProgress(job.id, job.source, finalDest, null, 0, 1, current, total))
                 }
+                // Report success with dynamic InversePayload
+                val inverse = InversePayload(
+                    action = "undo_move",
+                    target = finalDest,
+                    dest = job.source,
+                    backendId = "gio"
+                )
+                trySend(TransferProgress(job.id, job.source, finalDest, inverse, 1, 1, 0, 0))
             } catch (e: org.javagi.base.GErrorException) {
                 // G_IO_ERROR_WOULD_RECURSE is 25 in GNOME 46
                 if (e.code == 25) { 
@@ -197,7 +212,7 @@ class GioBackend : IOBackend {
         } else {
             val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
             src.copy(dest, flags, null) { current, total, _ ->
-                channel.trySend(TransferProgress(job.id, src.uri, dest.uri, 0, 1, current, total))
+                channel.trySend(TransferProgress(job.id, src.uri, dest.uri, null, 0, 1, current, total))
             }
         }
     }
@@ -347,6 +362,34 @@ class GioBackend : IOBackend {
             val gfile = File.newForUri(uri)
             val newFile = gfile.setDisplayName(newName, null)
             newFile.uri
+        }
+    }
+
+    override suspend fun executeInverse(payload: InversePayload): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val target = File.newForUri(payload.target)
+            when (payload.action) {
+                "undo_copy" -> {
+                    target.trash(null)
+                }
+                "undo_move" -> {
+                    val dest = File.newForUri(payload.dest!!)
+                    target.move(dest, FileCopyFlags.NONE, null, null)
+                }
+                "undo_rename" -> {
+                    val originalName = payload.dest?.uriName ?: throw Exception("Original name missing in payload")
+                    target.setDisplayName(originalName, null)
+                }
+                "undo_trash" -> {
+                    val originalPath = payload.dest ?: throw Exception("Original path missing in payload")
+                    restoreFromTrash(payload.target, originalPath)
+                }
+                "undo_create" -> {
+                    target.trash(null)
+                }
+                else -> throw UnsupportedOperationException("Unknown inverse action: ${payload.action}")
+            }
+            Unit
         }
     }
 

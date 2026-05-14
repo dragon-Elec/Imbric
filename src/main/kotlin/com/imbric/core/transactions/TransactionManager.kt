@@ -126,23 +126,30 @@ class TransactionManager(
                     )
                     
                     var actualDest: String? = null
+                    var inverse: com.imbric.core.models.InversePayload? = null
                     when (currentOp.opType) {
                         "copy" -> backend.copy(job).collect { 
                             actualDest = it.actualDest
+                            inverse = it.inversePayload
                             updateProgress(tid, it) 
                         }
                         "move" -> backend.move(job).collect { 
                             actualDest = it.actualDest
+                            inverse = it.inversePayload
                             updateProgress(tid, it) 
                         }
-                        "trash" -> backend.trash(job).getOrThrow().also { updateProgress(tid, TransferProgress(job.id, job.source, null, 1, 1, 0, 0)) }
-                        "delete" -> backend.delete(job).getOrThrow().also { updateProgress(tid, TransferProgress(job.id, job.source, null, 1, 1, 0, 0)) }
+                        "trash" -> backend.trash(job).getOrThrow().also { 
+                            inverse = InversePayload(action = "undo_trash", target = job.source, dest = job.source, backendId = "gio")
+                            updateProgress(tid, TransferProgress(job.id, job.source, null, inverse, 1, 1, 0, 0)) 
+                        }
+                        "delete" -> backend.delete(job).getOrThrow().also { updateProgress(tid, TransferProgress(job.id, job.source, null, null, 1, 1, 0, 0)) }
                         "rename" -> backend.rename(job.source, job.dest).getOrThrow().also { 
                             actualDest = job.dest
-                            updateProgress(tid, TransferProgress(job.id, job.source, actualDest, 1, 1, 0, 0)) 
+                            inverse = InversePayload(action = "undo_rename", target = actualDest!!, dest = job.source, backendId = "gio")
+                            updateProgress(tid, TransferProgress(job.id, job.source, actualDest, inverse, 1, 1, 0, 0)) 
                         }
                     }
-                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.COMPLETED, resultPath = actualDest)
+                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.COMPLETED, resultPath = actualDest, inversePayload = inverse)
                 } catch (e: Exception) {
                     val errorCode = (e as? VfsConflictException)?.code ?: -1
                     
@@ -191,19 +198,39 @@ class TransactionManager(
         }
     }
 
-    private fun updateOperationStatus(tid: Uuid, jobId: Uuid, status: TransactionStatus, error: String = "", resultPath: String? = null) {
+    private fun updateOperationStatus(
+        tid: Uuid, 
+        jobId: Uuid, 
+        status: TransactionStatus, 
+        error: String = "", 
+        resultPath: String? = null,
+        inversePayload: InversePayload? = null
+    ) {
         val tx = transactions[tid] ?: return
-        val opIndex = tx.ops.indexOfFirst { it.jobId == jobId }
+        
+        var opIndex = tx.ops.indexOfFirst { it.jobId == jobId }
+        
+        // Final fallback for identity stability
+        if (opIndex == -1) {
+            // We can't easily match without the source URI here, 
+            // but updateProgress should have already linked the jobId.
+        }
+
         if (opIndex != -1) {
             val op = tx.ops[opIndex]
             val updatedOp = op.copy(
                 status = status, 
                 error = error, 
                 resultPath = resultPath ?: op.resultPath,
-                inversePayload = if (status == TransactionStatus.COMPLETED && tx.isReversible) UndoFactory.createInverse(op.copy(resultPath = resultPath ?: op.resultPath)) else null
+                inversePayload = inversePayload?.let { mapOf(
+                    "action" to it.action,
+                    "target" to it.target,
+                    "dest" to it.dest,
+                    "backendId" to it.backendId
+                ) } ?: op.inversePayload
             )
             tx.ops[opIndex] = updatedOp
-            updateProgress(tid, TransferProgress(jobId, op.src, resultPath ?: op.resultPath))
+            updateProgress(tid, TransferProgress(jobId, op.src, resultPath ?: op.resultPath, inversePayload))
         }
     }
 
@@ -211,8 +238,18 @@ class TransactionManager(
     private fun updateProgress(tid: Uuid, progress: TransferProgress) {
         val tx = transactions[tid] ?: return
         
-        // Update per-job progress for byte-level aggregation
-        val op = tx.ops.find { it.jobId == progress.jobId }
+        // --- Identity Stability (Fuzzy Matching) ---
+        var op = tx.ops.find { it.jobId == progress.jobId }
+        if (op == null) {
+            // Match by source URI if jobId is new/changed
+            val matchedIndex = tx.ops.indexOfFirst { it.src == progress.currentFile && it.status == TransactionStatus.PENDING }
+            if (matchedIndex != -1) {
+                val matchedOp = tx.ops[matchedIndex]
+                tx.ops[matchedIndex] = matchedOp.copy(jobId = progress.jobId)
+                op = tx.ops[matchedIndex]
+            }
+        }
+
         val pct = if (tx.totalOps > 0) {
             val completedBase = tx.completedOps.toFloat()
             

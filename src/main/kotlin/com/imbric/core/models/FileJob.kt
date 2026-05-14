@@ -54,6 +54,7 @@ data class TransferProgress(
     val jobId: Uuid,
     val currentFile: String,
     val actualDest: String? = null,
+    val inversePayload: InversePayload? = null,
     val completedCount: Int = 0,
     val totalCount: Int = 0,
     val completedSize: Long = 0L,
