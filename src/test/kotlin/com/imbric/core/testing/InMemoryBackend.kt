@@ -11,7 +11,8 @@ import kotlin.uuid.Uuid
 import kotlin.uuid.ExperimentalUuidApi
 
 open class InMemoryBackend(
-    override val scheme: String = "memory"
+    override val scheme: String = "memory",
+    private val latencyProfiler: LatencyProfiler = NoopLatencyProfiler()
 ) : IOBackend {
     override val displayName: String = "In-Memory Test Backend"
     

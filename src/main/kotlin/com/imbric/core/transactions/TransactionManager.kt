@@ -81,7 +81,8 @@ class TransactionManager(
     // --- Commit & Execute ---
     fun commitTransaction(
         tid: Uuid, 
-        conflictResolver: (suspend (ConflictContext) -> ConflictResponse)? = null
+        conflictResolver: (suspend (ConflictContext) -> ConflictResponse)? = null,
+        policy: SyncPolicy = SyncPolicy.Standard
     ) {
         val tx = transactions[tid] ?: return
         tx.status = TransactionStatus.RUNNING
@@ -97,7 +98,8 @@ class TransactionManager(
                 onProgress = { progress -> updateProgress(tid, progress) },
                 onStatusUpdate = { jobId, status, err, result, inv -> 
                     updateOperationStatus(tid, jobId, status, err, result, inv) 
-                }
+                },
+                policy = policy
             )
         }
         

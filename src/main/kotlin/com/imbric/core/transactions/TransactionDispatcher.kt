@@ -36,13 +36,18 @@ class TransactionDispatcher(
     /**
      * Dispatches a single job to the backend. 
      * Handles the execution, throttling, and JIT conflicts.
+     *
+     * @param policy  SyncPolicy evaluated JIT in the catch block before prompting the user.
+     *                On HIGH-latency backends (MTP, SMB) this prevents unnecessary network
+     *                round-trips during pre-flight — conflicts are resolved here instead.
      */
     fun dispatchJob(
         tid: Uuid,
         op: TransactionOperation,
         conflictResolver: (suspend (ConflictContext) -> ConflictResponse)?,
         onProgress: (TransferProgress) -> Unit,
-        onStatusUpdate: (Uuid, TransactionStatus, String, String?, InversePayload?) -> Unit
+        onStatusUpdate: (Uuid, TransactionStatus, String, String?, InversePayload?) -> Unit,
+        policy: SyncPolicy = SyncPolicy.Standard
     ) {
         val jobCoro = scope.launch {
             // 🔥 WAIT IN LINE: Coroutine pauses here until one of the 4 slots opens up
@@ -50,7 +55,7 @@ class TransactionDispatcher(
                 // Ensure we haven't been cancelled while waiting in line
                 if (!isActive) return@withPermit 
                 
-                executeSingleJob(tid, op, conflictResolver, onProgress, onStatusUpdate)
+                executeSingleJob(tid, op, conflictResolver, onProgress, onStatusUpdate, policy)
             }
         }
         
@@ -73,7 +78,8 @@ class TransactionDispatcher(
         initialOp: TransactionOperation,
         conflictResolver: (suspend (ConflictContext) -> ConflictResponse)?,
         onProgress: (TransferProgress) -> Unit,
-        onStatusUpdate: (Uuid, TransactionStatus, String, String?, InversePayload?) -> Unit
+        onStatusUpdate: (Uuid, TransactionStatus, String, String?, InversePayload?) -> Unit,
+        policy: SyncPolicy = SyncPolicy.Standard
     ) {
         var currentOp = initialOp
         var retry = true
@@ -149,45 +155,81 @@ class TransactionDispatcher(
                 onStatusUpdate(currentOp.jobId, TransactionStatus.COMPLETED, "", actualDest, inverse)
 
             } catch (e: Exception) {
-                // JIT CONFLICT RESOLUTION
+                // JIT CONFLICT RESOLUTION (also handles blind pre-flight from HIGH-latency backends)
                 val errorCode = (e as? VfsConflictException)?.code ?: -1
                 
-                if (errorCode == VfsConflictException.EXISTS && conflictResolver != null && (currentOp.opType == "copy" || currentOp.opType == "move")) {
-                    val srcBackend = backendRegistry.getIo(currentOp.src)!!
-                    val destBackend = backendRegistry.getIo(currentOp.dest)!!
-                    val srcMeta = srcBackend.getMetadata(currentOp.src).getOrNull()
-                    val destMeta = destBackend.getMetadata(currentOp.dest).getOrNull()
+                if (errorCode == VfsConflictException.EXISTS && (currentOp.opType == "copy" || currentOp.opType == "move")) {
+                    val srcBackend = backendRegistry.getIo(currentOp.src)
+                    val destBackend = backendRegistry.getIo(currentOp.dest)
                     
-                    if (srcMeta != null && destMeta != null) {
-                        val conflictType = XferArbiter.classifyConflict(srcMeta, destMeta)
-                        val context = ConflictContext(currentOp.src, currentOp.dest, srcMeta, destMeta, conflictType)
+                    if (srcBackend != null && destBackend != null) {
+                        val srcMeta = srcBackend.getMetadata(currentOp.src).getOrNull()
+                        val destMeta = destBackend.getMetadata(currentOp.dest).getOrNull()
                         
-                        // Wait for user to decide what to do
-                        val response = conflictResolver(context)
-                        
-                        when (val action = response.action) {
-                            is ConflictAction.Overwrite -> {
-                                currentOp = currentOp.copy(overwrite = true)
-                                retry = true // Loop runs again!
+                        if (srcMeta != null && destMeta != null) {
+                            val conflictType = XferArbiter.classifyConflict(srcMeta, destMeta)
+                            
+                            // 🔥 JIT POLICY: Apply SyncPolicy before bothering the user.
+                            // This is critical for HIGH-latency backends where pre-flight was
+                            // skipped — we only pay the metadata cost for files that ACTUALLY conflict.
+                            val policyAction = XferArbiter.decide(srcMeta, destMeta, policy)
+                            
+                            when (policyAction) {
+                                is ConflictAction.Overwrite -> {
+                                    currentOp = currentOp.copy(overwrite = true)
+                                    retry = true
+                                }
+                                is ConflictAction.AutoRename -> {
+                                    currentOp = currentOp.copy(autoRename = true)
+                                    retry = true
+                                }
+                                is ConflictAction.Skip -> {
+                                    onStatusUpdate(currentOp.jobId, TransactionStatus.COMPLETED, "", null, null)
+                                }
+                                is ConflictAction.Cancel -> {
+                                    onStatusUpdate(currentOp.jobId, TransactionStatus.CANCELLED, "", null, null)
+                                }
+                                // Merge, Rename(newName), Prompt — need user input
+                                else -> {
+                                    if (conflictResolver != null) {
+                                        val context = ConflictContext(currentOp.src, currentOp.dest, srcMeta, destMeta, conflictType)
+                                        val response = conflictResolver(context)
+                                        
+                                        when (val action = response.action) {
+                                            is ConflictAction.Overwrite -> {
+                                                currentOp = currentOp.copy(overwrite = true)
+                                                retry = true
+                                            }
+                                            is ConflictAction.Rename -> {
+                                                val destParent = currentOp.dest.uriParent
+                                                val newDest = if (destParent.isEmpty()) action.newName else destParent.uriJoin(action.newName)
+                                                currentOp = currentOp.copy(dest = newDest, overwrite = false)
+                                                retry = true
+                                            }
+                                            is ConflictAction.AutoRename -> {
+                                                currentOp = currentOp.copy(autoRename = true)
+                                                retry = true
+                                            }
+                                            is ConflictAction.Skip -> {
+                                                onStatusUpdate(currentOp.jobId, TransactionStatus.COMPLETED, "", null, null)
+                                            }
+                                            is ConflictAction.Cancel -> {
+                                                onStatusUpdate(currentOp.jobId, TransactionStatus.CANCELLED, "", null, null)
+                                            }
+                                            else -> {
+                                                onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, "Unresolved conflict after user prompt", null, null)
+                                            }
+                                        }
+                                    } else {
+                                        onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, "Unresolved conflict", null, null)
+                                    }
+                                }
                             }
-                            is ConflictAction.Rename -> {
-                                val destParent = currentOp.dest.uriParent
-                                val newDest = if (destParent.isEmpty()) action.newName else destParent.uriJoin(action.newName)
-                                currentOp = currentOp.copy(dest = newDest, overwrite = false)
-                                retry = true // Loop runs again!
-                            }
-                            is ConflictAction.Skip -> {
-                                onStatusUpdate(currentOp.jobId, TransactionStatus.COMPLETED, "", null, null)
-                            }
-                            is ConflictAction.Cancel -> {
-                                onStatusUpdate(currentOp.jobId, TransactionStatus.CANCELLED, "", null, null)
-                            }
-                            else -> {
-                                onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, "Unresolved conflict", null, null)
-                            }
+                        } else {
+                            onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, e.message ?: "Conflict metadata error", null, null)
                         }
                     } else {
-                        onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, e.message ?: "Conflict metadata error", null, null)
+                        onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, e.message ?: "Backend not found for conflict resolution", null, null)
                     }
                 } else {
                     onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, e.message ?: "Transfer failed", null, null)

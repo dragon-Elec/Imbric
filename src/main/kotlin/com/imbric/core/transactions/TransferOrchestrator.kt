@@ -83,7 +83,7 @@ class TransferOrchestrator(
             }
         }
 
-        transactionManager.commitTransaction(tid, jitResolver)
+        transactionManager.commitTransaction(tid, jitResolver, policy)
         
         try {
             collector.join()

@@ -32,6 +32,7 @@ class GioRecentBackend : IOBackend {
 
     override fun getCapabilities(uri: String) = BackendCapabilities(
         locality = Locality.VIRTUAL,
+        latencyProfile = LatencyProfile.LOW,
         supportsTrash = false,
         supportsSymlinks = false
     )

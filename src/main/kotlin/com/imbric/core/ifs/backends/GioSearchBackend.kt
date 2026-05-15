@@ -2,6 +2,7 @@ package com.imbric.core.ifs.backends
 
 import com.imbric.core.ifs.IOBackend
 import com.imbric.core.ifs.BackendCapabilities
+import com.imbric.core.ifs.LatencyProfile
 import com.imbric.core.ifs.Locality
 import com.imbric.core.ifs.FileAction
 import com.imbric.core.models.FileInfo
@@ -24,6 +25,7 @@ class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBack
     override fun getCapabilities(uri: String): BackendCapabilities {
         return BackendCapabilities(
             locality = Locality.VIRTUAL,
+            latencyProfile = LatencyProfile.LOW,
             supportsTrash = false,
             supportsSymlinks = false
         )

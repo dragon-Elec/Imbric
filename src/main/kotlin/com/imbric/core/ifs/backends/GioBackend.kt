@@ -31,8 +31,9 @@ import org.gnome.gdkpixbuf.GdkPixbuf
 import org.gnome.gdkpixbuf.PixbufLoader
 import org.gnome.glib.KeyFile
 import org.gnome.glib.KeyFileFlags
+import kotlin.system.measureTimeMillis
 
-class GioBackend : IOBackend {
+class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyProfiler()) : IOBackend {
     init {
         org.gnome.gio.Gio.`javagi$ensureInitialized`()
         GdkPixbuf.`javagi$ensureInitialized`()
@@ -42,18 +43,24 @@ class GioBackend : IOBackend {
     override val displayName: String = "GIO Unified Backend"
 
     override fun getCapabilities(uri: String): BackendCapabilities {
+        val scheme = uri.substringBefore("://", "file")
+        val latency = latencyProfiler.getLatency(scheme)
+
         return when {
             uri.startsWith("trash://") -> BackendCapabilities(
                 locality = Locality.VIRTUAL,
+                latencyProfile = latency,
                 supportsTrash = false, // already in trash
                 supportsSymlinks = false
             )
             uri.contains("://") && !uri.startsWith("file://") -> BackendCapabilities(
                 locality = Locality.NETWORK,
+                latencyProfile = latency,
                 supportsTrash = false // many remote mounts don't support trash
             )
             else -> BackendCapabilities(
                 locality = Locality.LOCAL,
+                latencyProfile = latency,
                 supportsTrash = true,
                 supportsSymlinks = true
             )
@@ -102,16 +109,24 @@ class GioBackend : IOBackend {
 
     override fun list(uri: String): Flow<FileInfo> = flow {
         val gfile = File.newForUri(uri)
-        val enumerator = gfile.enumerateChildren(queryAttributes, FileQueryInfoFlags.NONE, null)
-        
+        val scheme = uri.substringBefore("://", "file")
+
+        // Time only the GIO round-trip (enumerateChildren), not the emit loop
+        var enumerator: org.gnome.gio.FileEnumerator? = null
+        val timeTaken = measureTimeMillis {
+            enumerator = gfile.enumerateChildren(queryAttributes, FileQueryInfoFlags.NONE, null)
+        }
+        latencyProfiler.recordSample(scheme, timeTaken)
+
+        // Emit loop is outside the timer — consumer speed doesn't pollute the profile
         try {
-            var info = enumerator.nextFile(null)
+            var info = enumerator?.nextFile(null)
             while (info != null) {
                 emit(GioTypeMappers.toImbricFileInfo(gfile, info))
-                info = enumerator.nextFile(null)
+                info = enumerator?.nextFile(null)
             }
         } finally {
-            enumerator.close(null)
+            enumerator?.close(null)
         }
     }.flowOn(Dispatchers.IO)
 
