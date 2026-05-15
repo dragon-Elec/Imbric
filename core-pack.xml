@@ -1,5 +1,4 @@
 This file is a merged representation of the entire codebase, combined into a single document by Repomix.
-The content has been processed where content has been compressed (code blocks are separated by ⋮---- delimiter).
 
 <file_summary>
 This section contains a summary of this file.
@@ -15,10 +14,9 @@ The content is organized as follows:
 1. This summary section
 2. Repository information
 3. Directory structure
-4. Repository files (if enabled)
-5. Multiple file entries, each consisting of:
-  - File path as an attribute
-  - Full contents of the file
+4. Repository files, each consisting of:
+   - File path as a key
+   - Full contents of the file as the value
 </file_format>
 
 <usage_guidelines>
@@ -35,7 +33,6 @@ The content is organized as follows:
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
-- Content has been compressed - code blocks are separated by ⋮---- delimiter
 - Files are sorted by Git change count (files with more changes are at the bottom)
 </notes>
 
@@ -81,8 +78,6 @@ transactions/
 </directory_structure>
 
 <files>
-This section contains the contents of the repository's files.
-
 <file path="desktop/backends/GioDesktopEnvironment.kt">
 package com.imbric.core.desktop.backends
 
@@ -212,30 +207,9 @@ class GioDesktopEnvironment : DesktopEnvironment {
         }
     }
 
-    override fun getDefaultApp(mimeType: String): DesktopAppInfo? {
-        val gioApp = org.gnome.gio.AppInfo.getDefaultForType(mimeType, false) ?: return null
-        return DesktopAppInfo(
-            id = gioApp.id ?: "",
-            name = gioApp.name ?: "",
-            executable = gioApp.executable ?: "",
-            icon = gioApp.icon?.toString()
-        )
-    }
+    override fun getDefaultApp(mimeType: String): DesktopAppInfo? { \u22ee--- }
 
-    override fun getAllApps(mimeType: String): List<DesktopAppInfo> {
-        val gioApps = org.gnome.gio.AppInfo.getAllForType(mimeType)
-        val result = mutableListOf<DesktopAppInfo>()
-        for (i in 0 until gioApps.size) {
-            val gioApp = gioApps.get(i) as? org.gnome.gio.AppInfo ?: continue
-            result.add(DesktopAppInfo(
-                id = gioApp.id ?: "",
-                name = gioApp.name ?: "",
-                executable = gioApp.executable ?: "",
-                icon = gioApp.icon?.toString()
-            ))
-        }
-        return result
-    }
+    override fun getAllApps(mimeType: String): List<DesktopAppInfo> { \u22ee--- }
 
     override suspend fun openFile(uri: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
@@ -249,41 +223,9 @@ class GioDesktopEnvironment : DesktopEnvironment {
         awaitClose { }
     }
 
-    private fun mapDrive(gioDrive: org.gnome.gio.Drive): DesktopDrive {
-        val volume = gioDrive.volumes.firstOrNull()
-        val mount = volume?.mount
-        val mountUri = mount?.root?.uri
-        
-        var total = 0L
-        var free = 0L
-        
-        if (mountUri != null) {
-            try {
-                val gfile = org.gnome.gio.File.newForUri(mountUri)
-                val info = gfile.queryFilesystemInfo("filesystem::size,filesystem::free", null)
-                total = info.getAttributeUint64("filesystem::size")
-                free = info.getAttributeUint64("filesystem::free")
-            } catch (e: Exception) {
-                // Ignore FS info errors
-            }
-        }
-
-        val icon = gioDrive.icon
-        val iconName = if (icon is org.gnome.gio.ThemedIcon) icon.names?.firstOrNull() else null
-
-        return DesktopDrive(
-            id = gioDrive.getIdentifier("unix-device") ?: gioDrive.name ?: gioDrive.toString(),
-            name = gioDrive.name ?: "Unknown Drive",
-            icon = iconName,
-            isMounted = mount != null,
-            mountUri = mountUri,
-            totalBytes = total,
-            availableBytes = free
-        )
-    }
+    private fun mapDrive(gioDrive: org.gnome.gio.Drive): DesktopDrive { \u22ee--- }
 }
 </file>
-
 <file path="desktop/DesktopEnvironment.kt">
 package com.imbric.core.desktop
 
@@ -355,7 +297,6 @@ enum class ThemeMode {
     LIGHT, DARK, SYSTEM
 }
 </file>
-
 <file path="desktop/DeviceManager.kt">
 package com.imbric.core.desktop
 
@@ -381,19 +322,14 @@ class DeviceManager(
     /**
      * Request to mount a drive.
      */
-    suspend fun mount(drive: DesktopDrive): Result<String> {
-        return environment.mount(drive.id)
-    }
+    suspend fun mount(drive: DesktopDrive): Result<String> { \u22ee--- }
 
     /**
      * Request to unmount/eject a drive.
      */
-    suspend fun unmount(drive: DesktopDrive): Result<Unit> {
-        return environment.unmount(drive.id)
-    }
+    suspend fun unmount(drive: DesktopDrive): Result<Unit> { \u22ee--- }
 }
 </file>
-
 <file path="desktop/ImbricDesktop.kt">
 package com.imbric.core.desktop
 
@@ -407,25 +343,9 @@ import com.imbric.core.ifs.backends.GioSearchBackend
  * Consumers of the library should call [initialize] at startup.
  */
 object ImbricDesktop {
-    fun initialize() {
-        val gio = GioBackend()
-        
-        // Register standard VFS handlers
-        BackendRegistry.registerIo("file", gio)
-        BackendRegistry.registerIo("trash", gio)
-        BackendRegistry.registerIo("smb", gio)
-        BackendRegistry.registerIo("sftp", gio)
-        
-        // Register specialized Desktop handlers
-        BackendRegistry.registerIo("recent", GioRecentBackend())
-        BackendRegistry.registerIo("search", GioSearchBackend(gio))
-        
-        // Set fallback
-        BackendRegistry.setDefaultIo(gio)
-    }
+    fun initialize() { \u22ee--- }
 }
 </file>
-
 <file path="ifs/backends/GioBackend.kt">
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.ifs.backends
@@ -470,24 +390,7 @@ class GioBackend : IOBackend {
     override val scheme: String = "file"
     override val displayName: String = "GIO Unified Backend"
 
-    override fun getCapabilities(uri: String): BackendCapabilities {
-        return when {
-            uri.startsWith("trash://") -> BackendCapabilities(
-                locality = Locality.VIRTUAL,
-                supportsTrash = false, // already in trash
-                supportsSymlinks = false
-            )
-            uri.contains("://") && !uri.startsWith("file://") -> BackendCapabilities(
-                locality = Locality.NETWORK,
-                supportsTrash = false // many remote mounts don't support trash
-            )
-            else -> BackendCapabilities(
-                locality = Locality.LOCAL,
-                supportsTrash = true,
-                supportsSymlinks = true
-            )
-        }
-    }
+    override fun getCapabilities(uri: String): BackendCapabilities { \u22ee--- }
 
     override suspend fun canPerform(action: FileAction, uri: String): Boolean = withContext(Dispatchers.IO) {
         val gfile = File.newForUri(uri)
@@ -507,27 +410,11 @@ class GioBackend : IOBackend {
         }
     }
 
-    override fun canHandle(uri: String): Boolean {
-        val scheme = uri.substringBefore("://", "")
-        if (scheme.isEmpty() || scheme == "file" || scheme == "trash") return true
-        
-        // Dynamically ask GIO what it supports (e.g. smb, sftp, mtp)
-        val vfs = org.gnome.gio.Vfs.getDefault()
-        return vfs.supportedUriSchemes?.contains(scheme) == true
-    }
+    override fun canHandle(uri: String): Boolean { \u22ee--- }
 
     private val queryAttributes = "standard::*,time::*,unix::*,owner::*,access::*,trash::*"
 
-    private fun resolveUniqueTarget(uri: String): String {
-        var current = uri
-        while (exists(current)) {
-            val parent = current.uriParent
-            val name = current.uriName
-            val newName = XferArbiter.generateNewName(name)
-            current = parent.uriJoin(newName)
-        }
-        return current
-    }
+    private fun resolveUniqueTarget(uri: String): String { \u22ee--- }
 
     override fun list(uri: String): Flow<FileInfo> = flow {
         val gfile = File.newForUri(uri)
@@ -619,49 +506,9 @@ class GioBackend : IOBackend {
         dest: File, 
         job: FileJob, 
         channel: kotlinx.coroutines.channels.SendChannel<TransferProgress>
-    ) {
-        val info = src.queryInfo("standard::type", FileQueryInfoFlags.NONE, null)
-        if (info.fileType == FileType.DIRECTORY) {
-            if (!dest.queryExists(null)) {
-                dest.makeDirectory(null)
-            }
-            
-            val enumerator = src.enumerateChildren("standard::name", FileQueryInfoFlags.NONE, null)
-            try {
-                var childInfo = enumerator.nextFile(null)
-                while (childInfo != null) {
-                    val childSrc = src.getChild(childInfo.name!!)
-                    val childDest = dest.getChild(childInfo.name!!)
-                    copyRecursive(childSrc, childDest, job, channel)
-                    childInfo = enumerator.nextFile(null)
-                }
-            } finally {
-                enumerator.close(null)
-            }
-        } else {
-            val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
-            src.copy(dest, flags, null) { current, total, _ ->
-                channel.trySend(TransferProgress(job.id, src.uri, dest.uri, null, 0, 1, current, total))
-            }
-        }
-    }
+    ) { \u22ee--- }
 
-    private fun File.deleteRecursive() {
-        val info = queryInfo("standard::type", FileQueryInfoFlags.NONE, null)
-        if (info.fileType == FileType.DIRECTORY) {
-            val enumerator = enumerateChildren("standard::name", FileQueryInfoFlags.NONE, null)
-            try {
-                var childInfo = enumerator.nextFile(null)
-                while (childInfo != null) {
-                    getChild(childInfo.name!!).deleteRecursive()
-                    childInfo = enumerator.nextFile(null)
-                }
-            } finally {
-                enumerator.close(null)
-            }
-        }
-        delete(null)
-    }
+    private fun File.deleteRecursive() { \u22ee--- }
 
     override suspend fun trash(job: FileJob): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
@@ -1061,17 +908,9 @@ class GioBackend : IOBackend {
         }
     }
 
-    private fun translateError(e: org.javagi.base.GErrorException): Exception {
-        return when (e.code) {
-            2 -> VfsConflictException(VfsConflictException.EXISTS, e.message ?: "File exists")
-            1 -> VfsConflictException(VfsConflictException.NOT_FOUND, e.message ?: "File not found")
-            25 -> VfsConflictException(VfsConflictException.WOULD_RECURSE, e.message ?: "Directory operation would recurse")
-            else -> e
-        }
-    }
+    private fun translateError(e: org.javagi.base.GErrorException): Exception { \u22ee--- }
 }
 </file>
-
 <file path="ifs/backends/GioRecentBackend.kt">
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.ifs.backends
@@ -1134,9 +973,7 @@ class GioRecentBackend : IOBackend {
         }
     }.flowOn(Dispatchers.IO)
 
-    override suspend fun getMetadata(uri: String): Result<FileInfo> {
-        return Result.failure(UnsupportedOperationException("getMetadata not supported for recent:///"))
-    }
+    override suspend fun getMetadata(uri: String): Result<FileInfo> { \u22ee--- }
 
     override fun exists(uri: String): Boolean = uri.startsWith("recent://")
 
@@ -1152,7 +989,6 @@ class GioRecentBackend : IOBackend {
     override suspend fun rename(uri: String, newName: String): Result<String> = Result.failure(UnsupportedOperationException())
 }
 </file>
-
 <file path="ifs/backends/GioSearchBackend.kt">
 package com.imbric.core.ifs.backends
 
@@ -1177,34 +1013,13 @@ class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBack
     override val scheme: String = "search"
     override val displayName: String = "GNOME Tracker Search"
 
-    override fun getCapabilities(uri: String): BackendCapabilities {
-        return BackendCapabilities(
-            locality = Locality.VIRTUAL,
-            supportsTrash = false,
-            supportsSymlinks = false
-        )
-    }
+    override fun getCapabilities(uri: String): BackendCapabilities { \u22ee--- }
 
-    override suspend fun canPerform(action: FileAction, uri: String): Boolean {
-        return action == FileAction.READ || action == FileAction.LIST_CHILDREN
-    }
+    override suspend fun canPerform(action: FileAction, uri: String): Boolean { \u22ee--- }
 
-    override fun canHandle(uri: String): Boolean {
-        return uri.startsWith("search://")
-    }
+    override fun canHandle(uri: String): Boolean { \u22ee--- }
 
-    override fun list(uri: String): Flow<FileInfo> {
-        // search:///query?root=...&mime=...
-        val query = uri.substringAfter("search:///", "").substringBefore("?")
-        val params = uri.substringAfter("?", "").split("&").associate {
-            val parts = it.split("=")
-            if (parts.size == 2) parts[0] to parts[1] else it to ""
-        }
-        val root = params["root"]?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: "file:///"
-        val mime = params["mime"]
-        
-        return search(query, root, mime)
-    }
+    override fun list(uri: String): Flow<FileInfo> { \u22ee--- }
 
     override fun search(query: String, root: String, mimeFilter: String?): Flow<FileInfo> = flow {
         if (query.isBlank()) return@flow
@@ -1266,7 +1081,6 @@ class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBack
     override suspend fun rename(uri: String, newName: String): Result<String> = fallback.rename(uri, newName)
 }
 </file>
-
 <file path="ifs/backends/GioTypeMappers.kt">
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.ifs.backends
@@ -1288,66 +1102,9 @@ object GioTypeMappers {
         gfile: org.gnome.gio.File, 
         gioInfo: org.gnome.gio.FileInfo,
         backendId: String = "gio"
-    ): FileInfo {
-        val fileType = gioInfo.fileType
-        val name = gioInfo.name ?: ""
-        val displayName = gioInfo.displayName ?: name
-        val uri = gfile.uri
-        
-        val pathType = when {
-            uri.startsWith("trash://") || uri.startsWith("recent://") -> PathType.VIRTUAL
-            else -> PathType.PHYSICAL
-        }
-
-        val nativeId = gioInfo.getAttributeUint64("unix::inode").takeIf { it > 0 }?.toString() 
-            ?: gioInfo.getAttributeString("standard::name")
-
-        val icon = gioInfo.icon
-        val iconName = if (icon is org.gnome.gio.ThemedIcon) {
-            icon.names?.firstOrNull()
-        } else {
-            null
-        }
-
-        val attributeMap = mutableMapOf<String, Any?>()
-        gioInfo.listAttributes(null)?.forEach { attr ->
-            if (attr != null) {
-                attributeMap[attr] = gioInfo.getAttributeAsString(attr)
-            }
-        }
-
-        return FileInfo(
-            id = Uuid.random(),
-            nativeId = nativeId,
-            path = gfile.path ?: gfile.uri,
-            uri = gfile.uri,
-            pathType = pathType,
-            name = name,
-            displayName = displayName,
-            isDirectory = fileType == org.gnome.gio.FileType.DIRECTORY,
-            isSymlink = gioInfo.isSymlink,
-            symlinkTarget = if (gioInfo.isSymlink) gioInfo.symlinkTarget else null,
-            size = gioInfo.size,
-            mimeType = gioInfo.contentType ?: "application/octet-stream",
-            modifiedTime = gioInfo.modificationDateTime?.let { Instant.fromEpochSeconds(it.toUnix()) },
-            accessedTime = gioInfo.getAttributeUint64("time::access").takeIf { it > 0 }?.let { Instant.fromEpochSeconds(it) },
-            createdTime = gioInfo.getAttributeUint64("time::created").takeIf { it > 0 }?.let { Instant.fromEpochSeconds(it) },
-            isHidden = gioInfo.isHidden,
-            isReadable = gioInfo.getAttributeBoolean("access::can-read"),
-            isWritable = gioInfo.getAttributeBoolean("access::can-write"),
-            isExecutable = gioInfo.getAttributeBoolean("access::can-execute"),
-            permissions = gioInfo.getAttributeUint32("unix::mode").takeIf { it > 0 }?.toString(8) ?: "",
-            owner = gioInfo.getAttributeString("owner::user") ?: "",
-            group = gioInfo.getAttributeString("owner::group") ?: "",
-            iconName = iconName,
-            thumbnailPath = gioInfo.getAttributeString("standard::thumbnail-path"),
-            backendId = backendId,
-            attributes = attributeMap
-        )
-    }
+    ): FileInfo { \u22ee--- }
 }
 </file>
-
 <file path="ifs/provider/DirState.kt">
 @file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 package com.imbric.core.ifs.provider
@@ -1395,134 +1152,19 @@ class DirState(
     /**
      * Forces a full reload of the directory contents.
      */
-    fun refresh() {
-        scope.launch(ioDispatcher) {
-            _isLoading.value = true
-            _items.value = emptyMap()
-            _itemsList.value = emptyList()
-            enrichedUris.clear()
-            try {
-                backend.list(uri)
-                    .chunked(50)
-                    .collect { chunk ->
-                        _items.update { current ->
-                            val next = current + chunk.associateBy { it.uri }
-                            _itemsList.value = next.values.toList()
-                            next
-                        }
-                        // Start enrichment for this chunk
-                        chunk.forEach { enrichItem(it) }
-                        
-                        yield()
-                    }
-            } finally {
-                _isLoading.value = false
-            }
-        }
-    }
+    fun refresh() { \u22ee--- }
 
-    private fun startWatching() {
-        watchJob?.cancel()
-        watchJob = scope.launch(ioDispatcher) {
-            backend.watch(uri)
-                .buffer()
-                .collect { event ->
-                    handleEvent(event)
-                }
-        }
-    }
+    private fun startWatching() { \u22ee--- }
 
-    private suspend fun handleEvent(event: FileEvent) {
-        when (event) {
-            is FileEvent.Created -> {
-                backend.getMetadata(event.uri).onSuccess { info ->
-                    updateItem(event.uri, info)
-                    enrichItem(info)
-                }
-            }
-            is FileEvent.Deleted -> {
-                removeItem(event.uri)
-                enrichedUris.remove(event.uri)
-            }
-            is FileEvent.Modified -> {
-                backend.getMetadata(event.uri).onSuccess { info ->
-                    updateItem(event.uri, info)
-                    // Re-enrich on modification
-                    enrichedUris.remove(event.uri)
-                    enrichItem(info)
-                }
-            }
-            is FileEvent.Renamed -> {
-                _items.update { current ->
-                    val next = current - event.from
-                    _itemsList.value = next.values.toList()
-                    next
-                }
-                enrichedUris.remove(event.from)
-                backend.getMetadata(event.to).onSuccess { info ->
-                    updateItem(event.to, info)
-                    enrichItem(info)
-                }
-            }
-        }
-    }
+    private suspend fun handleEvent(event: FileEvent) { \u22ee--- }
 
-    private fun enrichItem(info: FileInfo) {
-        if (!enrichedUris.add(info.uri)) return
+    private fun enrichItem(info: FileInfo) { \u22ee--- }
 
-        // Fast synchronous enrichment (Emblems)
-        val emblems = mutableListOf<String>()
-        if (info.isSymlink) emblems.add("emblem-symbolic-link")
-        if (!info.isWritable) emblems.add("emblem-readonly")
-        
-        val customEmblems = info.attributes["metadata::emblems"] as? List<*>
-        customEmblems?.filterIsInstance<String>()?.let { emblems.addAll(it) }
+    private fun updateItem(uri: String, info: FileInfo) { \u22ee--- }
 
-        var currentInfo = info
-        if (emblems.isNotEmpty()) {
-            currentInfo = currentInfo.copy(
-                attributes = currentInfo.attributes + mapOf("std::emblems" to emblems)
-            )
-            updateItem(currentInfo.uri, currentInfo)
-        }
+    private fun removeItem(uri: String) { \u22ee--- }
 
-        scope.launch(ioDispatcher) {
-            // Asynchronous backend enrichment (Pixbuf, .desktop files, etc.)
-            val enrichedInfo = backend.enrichMetadata(currentInfo)
-            if (enrichedInfo != currentInfo) {
-                updateItem(enrichedInfo.uri, enrichedInfo)
-                currentInfo = enrichedInfo
-            }
-
-            if (currentInfo.isDirectory) {
-                val caps = backend.getCapabilities(currentInfo.uri)
-                // Latency Guard: skip deep counting on remote backends
-                if (caps.locality != Locality.NETWORK && caps.locality != Locality.VIRTUAL) {
-                    // Future: recursive count logic
-                }
-            }
-        }
-    }
-
-    private fun updateItem(uri: String, info: FileInfo) {
-        _items.update { current ->
-            val next = current + (uri to info)
-            _itemsList.value = next.values.toList()
-            next
-        }
-    }
-
-    private fun removeItem(uri: String) {
-        _items.update { current ->
-            val next = current - uri
-            _itemsList.value = next.values.toList()
-            next
-        }
-    }
-
-    fun stop() {
-        watchJob?.cancel()
-    }
+    fun stop() { \u22ee--- }
 }
 
 /**
@@ -1542,7 +1184,6 @@ private fun <T> Flow<T>.chunked(size: Int): Flow<List<T>> = flow {
     }
 }
 </file>
-
 <file path="ifs/BackendCapabilities.kt">
 package com.imbric.core.ifs
 
@@ -1563,7 +1204,6 @@ data class BackendCapabilities(
     val caseSensitive: Boolean = true
 )
 </file>
-
 <file path="ifs/BackendRegistry.kt">
 package com.imbric.core.ifs
 
@@ -1574,36 +1214,11 @@ object BackendRegistry {
     private val ioBackends = mutableMapOf<String, IOBackend>()
     private var defaultIo: IOBackend? = null
 
-    fun registerIo(scheme: String, backend: IOBackend) {
-        ioBackends[scheme] = backend
-    }
+    fun registerIo(scheme: String, backend: IOBackend) { \u22ee--- }
 
-    fun setDefaultIo(backend: IOBackend) {
-        defaultIo = backend
-    }
+    fun setDefaultIo(backend: IOBackend) { \u22ee--- }
 
-    fun getIo(pathOrUri: String): IOBackend? {
-        // 1. If it's a raw path (no scheme), prefer defaultIo if it exists
-        if (!pathOrUri.contains("://") && defaultIo != null) {
-            return defaultIo
-        }
-
-        val scheme = pathOrUri.substringBefore("://", "")
-        
-        // 2. Try exact scheme match
-        if (scheme.isNotEmpty()) {
-            val exactMatch = ioBackends[scheme]
-            if (exactMatch != null && exactMatch.canHandle(pathOrUri)) return exactMatch
-        }
-
-        // 3. Try all backends with canHandle (smart routing)
-        ioBackends.values.forEach { backend ->
-            if (backend.canHandle(pathOrUri)) return backend
-        }
-
-        // 4. Fallback to default ONLY if it's a file scheme or raw path
-        return if (scheme.isEmpty() || scheme == "file") defaultIo else null
-    }
+    fun getIo(pathOrUri: String): IOBackend? { \u22ee--- }
 
     fun getRegisteredSchemes(): List<String> = ioBackends.keys.toList()
 
@@ -1612,7 +1227,6 @@ object BackendRegistry {
     suspend fun getMetadata(uri: String): Result<FileInfo>? = getIo(uri)?.getMetadata(uri)
 }
 </file>
-
 <file path="ifs/FileAction.kt">
 package com.imbric.core.ifs
 
@@ -1632,7 +1246,6 @@ enum class FileAction {
     WATCH
 }
 </file>
-
 <file path="ifs/FileEvent.kt">
 package com.imbric.core.ifs
 
@@ -1643,7 +1256,6 @@ sealed class FileEvent {
     data class Renamed(val from: String, val to: String) : FileEvent()
 }
 </file>
-
 <file path="ifs/IfsUri.kt">
 package com.imbric.core.ifs
 
@@ -1651,47 +1263,24 @@ package com.imbric.core.ifs
 value class IfsUri(val uriString: String) {
 
     val scheme: String
-        get() {
-            val idx = uriString.indexOf("://")
-            return if (idx != -1) uriString.substring(0, idx) else "file"
-        }
+        get() { \u22ee--- }
 
     val isNative: Boolean
         get() = scheme == "file" || scheme == "trash" || scheme == "recent"
 
     val name: String
-        get() {
-            val cleanUri = uriString.trimEnd('/')
-            if (cleanUri.endsWith("://")) return "/"
-            if (cleanUri.isEmpty()) return "/"
-            return cleanUri.substringAfterLast("/")
-        }
+        get() { \u22ee--- }
 
     val parent: IfsUri
-        get() {
-            val cleanUri = uriString.trimEnd('/')
-            val schemeSplit = cleanUri.indexOf("://")
-            if (schemeSplit != -1 && cleanUri.length <= schemeSplit + 3) return this
-            val lastSlash = cleanUri.lastIndexOf('/')
-            if (lastSlash <= schemeSplit + 2) return IfsUri("$scheme:///")
-            return IfsUri(cleanUri.substring(0, lastSlash).ifEmpty { "/" })
-        }
+        get() { \u22ee--- }
 
     val extension: String
         get() = name.substringAfterLast('.', "")
 
     val nameWithoutExtension: String
-        get() {
-            val n = name
-            val dotIdx = n.lastIndexOf('.')
-            return if (dotIdx > 0) n.substring(0, dotIdx) else n
-        }
+        get() { \u22ee--- }
 
-    fun join(child: String): IfsUri {
-        val base = uriString.trimEnd('/')
-        val safeChild = child.trimStart('/')
-        return if (base.endsWith("://")) IfsUri("$base$safeChild") else IfsUri("$base/$safeChild")
-    }
+    fun join(child: String): IfsUri { \u22ee--- }
 
     fun renameTarget(newName: String): IfsUri = parent.join(newName)
 
@@ -1702,7 +1291,6 @@ val String.uriName: String get() = IfsUri(this).name
 val String.uriParent: String get() = IfsUri(this).parent.uriString
 fun String.uriJoin(child: String): String = IfsUri(this).join(child).uriString
 </file>
-
 <file path="ifs/IOBackend.kt">
 package com.imbric.core.ifs
 
@@ -1800,14 +1388,9 @@ interface IOBackend {
     /**
      * Helper to get the trash-capable backends for this FS.
      */
-    suspend fun getTrashBackend(registry: BackendRegistry): IOBackend? {
-        val rootUri = "$scheme:///"
-        val backend = registry.getIo(rootUri)
-        return if (backend != null && backend.getCapabilities(rootUri).supportsTrash) backend else null
-    }
+    suspend fun getTrashBackend(registry: BackendRegistry): IOBackend? { \u22ee--- }
 }
 </file>
-
 <file path="ifs/PathCapabilities.kt">
 package com.imbric.core.ifs
 
@@ -1824,17 +1407,8 @@ data class PathCapabilities(
 private val NATIVE_SCHEMES = setOf("file", "trash", "recent")
 private val READONLY_SCHEMES = setOf("recent")
 
-fun classifyPath(uri: String): PathCapabilities {
-    val scheme = uri.substringBefore("://", "").ifEmpty { "file" }
-    return PathCapabilities(
-        scheme = scheme,
-        isNative = scheme in NATIVE_SCHEMES,
-        isWritable = scheme !in READONLY_SCHEMES,
-        isVirtual = scheme == "recent"
-    )
-}
+fun classifyPath(uri: String): PathCapabilities { \u22ee--- }
 </file>
-
 <file path="logic/XferArbiter.kt">
 package com.imbric.core.logic
 
@@ -1896,9 +1470,7 @@ class AlwaysSkipPolicy : BaseSyncPolicy() {
 }
 
 class ModifiedOnlyPolicy : BaseSyncPolicy() {
-    override fun decide(src: FileInfo, dest: FileInfo): ConflictAction {
-        return if (XferArbiter.isModified(src, dest)) ConflictAction.Overwrite else ConflictAction.Skip
-    }
+    override fun decide(src: FileInfo, dest: FileInfo): ConflictAction { \u22ee--- }
 }
 
 class AutoRenamePolicy : BaseSyncPolicy() {
@@ -1906,13 +1478,7 @@ class AutoRenamePolicy : BaseSyncPolicy() {
 }
 
 class StandardPolicy : BaseSyncPolicy() {
-    override fun decide(src: FileInfo, dest: FileInfo): ConflictAction {
-        return if (XferArbiter.isSameFolder(src, dest)) {
-            ConflictAction.Rename(XferArbiter.generateNewName(dest.name))
-        } else {
-            ConflictAction.Prompt
-        }
-    }
+    override fun decide(src: FileInfo, dest: FileInfo): ConflictAction { \u22ee--- }
 }
 
 /**
@@ -1922,76 +1488,20 @@ class StandardPolicy : BaseSyncPolicy() {
 object XferArbiter {
     private val NAME_COUNTER_REGEX = Regex("""(.+)\s\((\d+)\)$""")
 
-    fun decide(src: FileInfo, dest: FileInfo, policy: SyncPolicy): ConflictAction {
-        // Special case: Directory merge - Core rule that applies before any policy
-        if (src.isDirectory && dest.isDirectory) {
-            return ConflictAction.Merge
-        }
+    fun decide(src: FileInfo, dest: FileInfo, policy: SyncPolicy): ConflictAction { \u22ee--- }
 
-        return policy.decide(src, dest)
-    }
+    internal fun isSameFolder(src: FileInfo, dest: FileInfo): Boolean { \u22ee--- }
 
-    internal fun isSameFolder(src: FileInfo, dest: FileInfo): Boolean {
-        val srcParent = src.path.uriParent
-        val destParent = dest.path.uriParent
-        return srcParent == destParent && srcParent.isNotEmpty()
-    }
+    internal fun isModified(src: FileInfo, dest: FileInfo): Boolean { \u22ee--- }
 
-    internal fun isModified(src: FileInfo, dest: FileInfo): Boolean {
-        // Size check
-        if (src.size != dest.size) return true
-        
-        // Modification time check (if available)
-        val srcTime = src.modifiedTime ?: return true
-        val destTime = dest.modifiedTime ?: return true
-        
-        // If source is newer or times differ significantly
-        if (srcTime > destTime) return true
-        
-        // Tolerance: if within 2 seconds, consider same (filesystem rounding)
-        val diff = kotlin.math.abs(srcTime.toEpochMilliseconds() - destTime.toEpochMilliseconds())
-        return diff > 2000
-    }
-
-    fun generateNewName(original: String): String {
-        // 1. Find the extension boundary
-        val dotIndex = original.lastIndexOf('.')
-        val (baseName, extension) = if (dotIndex > 0) {
-            original.substring(0, dotIndex) to original.substring(dotIndex)
-        } else {
-            original to ""
-        }
-
-        // 2. Check for existing (n) pattern
-        val match = NAME_COUNTER_REGEX.matchEntire(baseName)
-        
-        return if (match != null) {
-            val prefix = match.groupValues[1]
-            val count = match.groupValues[2].toIntOrNull() ?: 0
-            "$prefix (${count + 1})$extension"
-        } else {
-            "$baseName (1)$extension"
-        }
-    }
+    fun generateNewName(original: String): String { \u22ee--- }
 
     // --- Capability checks ---
-    fun classifyConflict(src: FileInfo, dest: FileInfo): ConflictType {
-        return when {
-            src.isDirectory && dest.isDirectory -> ConflictType.DIRECTORY_MERGE
-            src.isDirectory && !dest.isDirectory -> ConflictType.FOLDER_REPLACE_FILE
-            !src.isDirectory && dest.isDirectory -> ConflictType.FILE_REPLACE_FOLDER
-            isSameContent(src, dest) -> ConflictType.IDENTICAL_FILE
-            else -> ConflictType.DIFFERENT_FILE
-        }
-    }
+    fun classifyConflict(src: FileInfo, dest: FileInfo): ConflictType { \u22ee--- }
 
-    fun canOverwrite(src: FileInfo, dest: FileInfo): Boolean {
-        return dest.isWritable && src.size > 0
-    }
+    fun canOverwrite(src: FileInfo, dest: FileInfo): Boolean { \u22ee--- }
 
-    fun isSameContent(src: FileInfo, dest: FileInfo): Boolean {
-        return src.size == dest.size && !isModified(src, dest)
-    }
+    fun isSameContent(src: FileInfo, dest: FileInfo): Boolean { \u22ee--- }
 }
 
 /**
@@ -2024,7 +1534,6 @@ data class ConflictContext(
     val type: ConflictType
 )
 </file>
-
 <file path="models/DiskUsage.kt">
 package com.imbric.core.models
 
@@ -2035,7 +1544,6 @@ data class DiskUsage(
     val percentUsed: Double = if (totalBytes > 0) (usedBytes.toDouble() / totalBytes) else 0.0
 )
 </file>
-
 <file path="models/FileInfo.kt">
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.models
@@ -2082,31 +1590,12 @@ data class FileInfo(
         get() = isDirectory && childCount == 0
 
     val permissionsString: String
-        get() {
-            if (permissions.isEmpty()) return ""
-            val mode = permissions.toIntOrNull(8) ?: return ""
-            val type = if (isDirectory) 'd' else if (isSymlink) 'l' else '-'
-            
-            fun rwx(m: Int): String = buildString {
-                append(if (m and 4 != 0) 'r' else '-')
-                append(if (m and 2 != 0) 'w' else '-')
-                append(if (m and 1 != 0) 'x' else '-')
-            }
-            
-            return "$type${rwx(mode shr 6)}${rwx(mode shr 3)}${rwx(mode)}"
-        }
+        get() { \u22ee--- }
 
     val humanReadableSize: String
-        get() {
-            if (isDirectory) return ""
-            if (size <= 0) return "0 B"
-            val units = arrayOf("B", "KB", "MB", "GB", "TB")
-            val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
-            return String.format("%.1f %s", size / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
-        }
+        get() { \u22ee--- }
 }
 </file>
-
 <file path="models/FileJob.kt">
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.models
@@ -2168,7 +1657,6 @@ data class TransferProgress(
     val totalSize: Long = 0L
 )
 </file>
-
 <file path="models/PathType.kt">
 package com.imbric.core.models
 
@@ -2184,7 +1672,6 @@ enum class PathType {
     SYNTHETIC
 }
 </file>
-
 <file path="models/TrashItem.kt">
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.models
@@ -2204,7 +1691,6 @@ data class TrashItem(
     val size: Long = 0L
 )
 </file>
-
 <file path="transactions/models/Transaction.kt">
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.transactions.models
@@ -2283,21 +1769,13 @@ data class Transaction(
     val completedOps: Int get() = ops.count { it.status == TransactionStatus.COMPLETED }
     val finishedOps: Int get() = ops.count { it.status == TransactionStatus.COMPLETED || it.status == TransactionStatus.FAILED || it.status == TransactionStatus.CANCELLED }
     
-    fun addOperation(op: TransactionOperation) {
-        ops.add(op)
-    }
+    fun addOperation(op: TransactionOperation) { \u22ee--- }
     
-    fun getProgress(): Float {
-        if (totalOps == 0) return 0f
-        return completedOps.toFloat() / totalOps
-    }
+    fun getProgress(): Float { \u22ee--- }
     
-    fun findOperation(jobId: Uuid): TransactionOperation? {
-        return ops.find { it.jobId == jobId }
-    }
+    fun findOperation(jobId: Uuid): TransactionOperation? { \u22ee--- }
 }
 </file>
-
 <file path="transactions/TransactionManager.kt">
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.transactions
@@ -2330,15 +1808,7 @@ class TransactionManager(
     var onHistoryCommitted: ((Transaction) -> Unit)? = null
 
     // --- Transaction Lifecycle ---
-    fun startTransaction(description: String, isReversible: Boolean = true): Uuid {
-        val tid = Uuid.random()
-        transactions[tid] = Transaction(
-            id = tid,
-            description = description,
-            isReversible = isReversible
-        )
-        return tid
-    }
+    fun startTransaction(description: String, isReversible: Boolean = true): Uuid { \u22ee--- }
 
     fun addOperation(
         tid: Uuid, 
@@ -2349,167 +1819,27 @@ class TransactionManager(
         overwrite: Boolean = false,
         autoRename: Boolean = false,
         inversePayload: Map<String, Any?>? = null
-    ) {
-        val tx = transactions[tid] ?: return
-        tx.addOperation(TransactionOperation(
-            jobId = jobId,
-            opType = opType,
-            src = src,
-            dest = dest,
-            overwrite = overwrite,
-            autoRename = autoRename,
-            inversePayload = inversePayload
-        ))
-    }
+    ) { \u22ee--- }
 
     // --- High-level Entry Point ---
     fun batchTransfer(
         sources: List<String>,
         destDir: String,
         mode: String = "auto"
-    ): Uuid {
-        val tid = startTransaction("Batch transfer to $destDir")
-        sources.forEach { src ->
-            val fileName = src.uriName
-            val fullDest = destDir.uriJoin(fileName)
-            addOperation(tid, if (mode == "move") "move" else "copy", src, fullDest)
-        }
-        
-        commitTransaction(tid) { op, _ ->
-            executeBatchJob(tid, op)
-        }
-        return tid
-    }
+    ): Uuid { \u22ee--- }
 
     // --- Commit & Execute ---
     fun commitTransaction(
         tid: Uuid, 
         conflictResolver: (suspend (ConflictContext) -> ConflictResponse)? = null,
         executor: (TransactionOperation, (suspend (ConflictContext) -> ConflictResponse)?) -> kotlinx.coroutines.Job
-    ) {
-        val tx = transactions[tid] ?: return
-        tx.status = TransactionStatus.RUNNING
-        
-        onTransactionStarted?.invoke(tid, tx.description)
-        _events.tryEmit(TransactionEvent.Started(tid, tx.description))
-        
-        tx.ops.forEach { op ->
-            val job = executor(op, conflictResolver)
-            activeJobs[op.jobId] = job
-        }
-        
-        if (tx.ops.isEmpty()) {
-            tx.status = TransactionStatus.COMPLETED
-            _events.tryEmit(TransactionEvent.Finished(tid, tx.status))
-            onTransactionFinished?.invoke(tid, tx.status)
-        }
-    }
+    ) { \u22ee--- }
 
     internal fun executeBatchJob(
         tid: Uuid,
         op: TransactionOperation,
         conflictResolver: (suspend (ConflictContext) -> ConflictResponse)? = null
-    ): kotlinx.coroutines.Job {
-        return scope.launch {
-            var currentOp = op
-            var retry = true
-            
-            while (retry) {
-                retry = false
-                try {
-                    val backend = backendRegistry.getIo(currentOp.src) ?: return@launch
-                    val job = FileJob(
-                        id = currentOp.jobId,
-                        opType = currentOp.opType,
-                        source = currentOp.src,
-                        dest = currentOp.dest,
-                        overwrite = currentOp.overwrite,
-                        autoRename = currentOp.autoRename,
-                        inversePayload = currentOp.inversePayload?.let { InversePayload(
-                            action = it["action"] as? String ?: "",
-                            target = it["target"] as? String ?: "",
-                            dest = it["dest"] as? String,
-                            backendId = it["backendId"] as? String
-                        )}
-                    )
-                    
-                    var actualDest: String? = null
-                    var inverse: com.imbric.core.models.InversePayload? = null
-                    when (currentOp.opType) {
-                        "copy" -> backend.copy(job).collect { 
-                            actualDest = it.actualDest
-                            inverse = it.inversePayload
-                            updateProgress(tid, it) 
-                        }
-                        "move" -> backend.move(job).collect { 
-                            actualDest = it.actualDest
-                            inverse = it.inversePayload
-                            updateProgress(tid, it) 
-                        }
-                        "trash" -> backend.trash(job).getOrThrow().also { 
-                            inverse = InversePayload(action = "undo_trash", target = job.source, dest = job.source, backendId = "gio")
-                            updateProgress(tid, TransferProgress(job.id, job.source, null, inverse, 1, 1, 0, 0)) 
-                        }
-                        "delete" -> backend.delete(job).getOrThrow().also { updateProgress(tid, TransferProgress(job.id, job.source, null, null, 1, 1, 0, 0)) }
-                        "rename" -> backend.rename(job.source, job.dest).getOrThrow().also { 
-                            actualDest = job.dest
-                            inverse = InversePayload(action = "undo_rename", target = actualDest!!, dest = job.source, backendId = "gio")
-                            updateProgress(tid, TransferProgress(job.id, job.source, actualDest, inverse, 1, 1, 0, 0)) 
-                        }
-                        "undo" -> {
-                            val payload = job.inversePayload ?: throw Exception("Undo payload missing")
-                            backend.executeInverse(payload).getOrThrow()
-                            updateProgress(tid, TransferProgress(job.id, job.source, null, null, 1, 1, 0, 0))
-                        }
-                    }
-                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.COMPLETED, resultPath = actualDest, inversePayload = inverse)
-                } catch (e: Exception) {
-                    val errorCode = (e as? VfsConflictException)?.code ?: -1
-                    
-                    if (errorCode == VfsConflictException.EXISTS && conflictResolver != null && (currentOp.opType == "copy" || currentOp.opType == "move")) {
-                        val srcBackend = backendRegistry.getIo(currentOp.src)!!
-                        val destBackend = backendRegistry.getIo(currentOp.dest)!!
-                        val srcMeta = srcBackend.getMetadata(currentOp.src).getOrNull()
-                        val destMeta = destBackend.getMetadata(currentOp.dest).getOrNull()
-                        
-                        if (srcMeta != null && destMeta != null) {
-                            val conflictType = XferArbiter.classifyConflict(srcMeta, destMeta)
-                            val context = ConflictContext(currentOp.src, currentOp.dest, srcMeta, destMeta, conflictType)
-                            
-                            _events.tryEmit(TransactionEvent.Conflict(tid, currentOp.jobId, context.src, context.dest, context.srcMeta, context.destMeta))
-                            
-                            val response = conflictResolver(context)
-                            when (val action = response.action) {
-                                is ConflictAction.Overwrite -> {
-                                    currentOp = currentOp.copy(overwrite = true)
-                                    retry = true
-                                }
-                                is ConflictAction.Rename -> {
-                                    val destParent = currentOp.dest.uriParent
-                                    val newDest = if (destParent.isEmpty()) action.newName else destParent.uriJoin(action.newName)
-                                    currentOp = currentOp.copy(dest = newDest, overwrite = false)
-                                    retry = true
-                                }
-                                is ConflictAction.Skip -> {
-                                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.COMPLETED)
-                                }
-                                is ConflictAction.Cancel -> {
-                                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.CANCELLED)
-                                }
-                                else -> {
-                                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.FAILED, "Unresolved conflict")
-                                }
-                            }
-                        } else {
-                            updateOperationStatus(tid, currentOp.jobId, TransactionStatus.FAILED, e.message ?: "Conflict metadata error")
-                        }
-                    } else {
-                        updateOperationStatus(tid, currentOp.jobId, TransactionStatus.FAILED, e.message ?: "Transfer failed")
-                    }
-                }
-            }
-        }
-    }
+    ): kotlinx.coroutines.Job { \u22ee--- }
 
     private fun updateOperationStatus(
         tid: Uuid, 
@@ -2518,111 +1848,21 @@ class TransactionManager(
         error: String = "", 
         resultPath: String? = null,
         inversePayload: InversePayload? = null
-    ) {
-        val tx = transactions[tid] ?: return
-        
-        var opIndex = tx.ops.indexOfFirst { it.jobId == jobId }
-        
-// Final fallback for identity stability:
-         // If the jobId was reassigned during execution (e.g. JIT conflict resolution),
-         // updateOperationStatus may not find it by jobId. The fuzzy match in updateProgress
-         // already handles re-linking by source URI, so this is a no-op safety net.
-
-        if (opIndex != -1) {
-            val op = tx.ops[opIndex]
-            val updatedOp = op.copy(
-                status = status, 
-                error = error, 
-                resultPath = resultPath ?: op.resultPath,
-                inversePayload = inversePayload?.let { mapOf(
-                    "action" to it.action,
-                    "target" to it.target,
-                    "dest" to it.dest,
-                    "backendId" to it.backendId
-                ) } ?: op.inversePayload
-            )
-            tx.ops[opIndex] = updatedOp
-            updateProgress(tid, TransferProgress(jobId, op.src, resultPath ?: op.resultPath, inversePayload))
-        }
-    }
+    ) { \u22ee--- }
 
     // --- Progress & Status ---
-    private fun updateProgress(tid: Uuid, progress: TransferProgress) {
-        val tx = transactions[tid] ?: return
-        
-        // --- Identity Stability (Fuzzy Matching) ---
-        var op = tx.ops.find { it.jobId == progress.jobId }
-        if (op == null) {
-            // Match by source URI if jobId is new/changed
-            val matchedIndex = tx.ops.indexOfFirst { it.src == progress.currentFile && it.status == TransactionStatus.PENDING }
-            if (matchedIndex != -1) {
-                val matchedOp = tx.ops[matchedIndex]
-                tx.ops[matchedIndex] = matchedOp.copy(jobId = progress.jobId)
-                op = tx.ops[matchedIndex]
-            }
-        }
-
-        val pct = if (tx.totalOps > 0) {
-            val completedBase = tx.completedOps.toFloat()
-            
-            // Calculate fractional progress of currently running jobs
-            // (Simple version: factor in the current job's bytes if available)
-            val currentJobFraction = if (progress.totalSize > 0) {
-                progress.completedSize.toFloat() / progress.totalSize
-            } else if (progress.totalCount > 0) {
-                progress.completedCount.toFloat() / progress.totalCount
-            } else 0f
-            
-            (completedBase + currentJobFraction.coerceIn(0f, 0.99f)) / tx.totalOps
-        } else 0f
-        
-        onTransactionProgress?.invoke(tid, pct)
-        _events.tryEmit(TransactionEvent.Progress(tid, pct))
-        _events.tryEmit(TransactionEvent.FileProgress(tid, progress))
-        
-        if (tx.finishedOps == tx.totalOps) {
-            val hasFailures = tx.ops.any { it.status == TransactionStatus.FAILED }
-            tx.status = if (hasFailures) TransactionStatus.PARTIAL else TransactionStatus.COMPLETED
-            
-            onTransactionFinished?.invoke(tid, tx.status)
-            _events.tryEmit(TransactionEvent.Finished(tid, tx.status))
-            
-            if (tx.isReversible && !hasFailures) {
-                onHistoryCommitted?.invoke(tx)
-            }
-        }
-    }
+    private fun updateProgress(tid: Uuid, progress: TransferProgress) { \u22ee--- }
 
     // --- Lookup ---
-     fun findOperation(tid: Uuid, jobId: Uuid): TransactionOperation? {
-         return transactions[tid]?.findOperation(jobId)
-     }
+    fun findOperation(tid: Uuid, jobId: Uuid): TransactionOperation? { \u22ee--- }
 
      // --- Capabilities ---
-    fun getTransferCapabilities(sources: List<String>, dest: String): Map<String, Int> {
-        val capabilities = mutableMapOf<String, Int>()
-        sources.forEach { src ->
-            backendRegistry.getIo(src)?.let { backend ->
-                capabilities[backend.scheme] = (capabilities[backend.scheme] ?: 0) + 1
-            }
-        }
-        return capabilities
-    }
+    fun getTransferCapabilities(sources: List<String>, dest: String): Map<String, Int> { \u22ee--- }
 
     // --- Cleanup ---
-    fun cancelTransaction(tid: Uuid) {
-        val tx = transactions[tid] ?: return
-        tx.ops.forEach { op ->
-            activeJobs[op.jobId]?.cancel()
-            activeJobs.remove(op.jobId)
-        }
-        tx.status = TransactionStatus.CANCELLED
-        _events.tryEmit(TransactionEvent.Finished(tid, TransactionStatus.CANCELLED))
-        onTransactionFinished?.invoke(tid, TransactionStatus.CANCELLED)
-    }
+    fun cancelTransaction(tid: Uuid) { \u22ee--- }
 }
 </file>
-
 <file path="transactions/TransferOrchestrator.kt">
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.transactions
@@ -2688,15 +1928,22 @@ class TransferOrchestrator(
         }
         
         val jitResolver: suspend (ConflictContext) -> ConflictResponse = { context ->
-            mutex.withLock {
-                val action = stickyDecisions[context.type]
-                if (action != null) {
-                    ConflictResponse(action)
-                } else {
-                    val response = onManualConflict(context)
-                    if (response.applyToAll) {
-                        stickyDecisions[context.type] = response.action
+            val existing = mutex.withLock { stickyDecisions[context.type] }
+            if (existing != null) {
+                ConflictResponse(existing)
+            } else {
+                val response = onManualConflict(context)
+                if (response.applyToAll) {
+                    mutex.withLock {
+                        val doubleCheck = stickyDecisions[context.type]
+                        if (doubleCheck == null) {
+                            stickyDecisions[context.type] = response.action
+                            response
+                        } else {
+                            ConflictResponse(doubleCheck)
+                        }
                     }
+                } else {
                     response
                 }
             }
@@ -2722,71 +1969,11 @@ class TransferOrchestrator(
         stickyDecisions: MutableMap<ConflictType, ConflictAction>,
         mutex: Mutex,
         validatedOps: MutableList<ValidatedOp>
-    ) {
-        val fileName = src.uriName
-        val dest = destParent.uriJoin(fileName)
-        
-        val srcBackend = backendRegistry.getIo(src) ?: return
-        val destBackend = backendRegistry.getIo(dest) ?: return
-        
-        val srcMeta = srcBackend.getMetadata(src).getOrNull() ?: return
-        val destExists = destBackend.exists(dest)
-        
-        if (!destExists) {
-            validatedOps.add(ValidatedOp(src, dest, false))
-            return
-        }
-
-        val destMeta = destBackend.getMetadata(dest).getOrNull() ?: return
-        val conflictType = XferArbiter.classifyConflict(srcMeta, destMeta)
-        
-        // Check sticky decisions first under lock
-        var action: ConflictAction = mutex.withLock {
-            stickyDecisions[conflictType] ?: XferArbiter.decide(srcMeta, destMeta, policy)
-        }
-        
-        if (action is ConflictAction.Prompt) {
-            val response = mutex.withLock {
-                // Double check if someone else resolved it while we were waiting for the lock
-                val existing = stickyDecisions[conflictType]
-                if (existing != null) {
-                    ConflictResponse(existing)
-                } else {
-                    val res = onManualConflict(ConflictContext(src, dest, srcMeta, destMeta, conflictType))
-                    if (res.applyToAll) {
-                        stickyDecisions[conflictType] = res.action
-                    }
-                    res
-                }
-            }
-            action = response.action
-        }
-        
-        when (action) {
-            is ConflictAction.Overwrite -> validatedOps.add(ValidatedOp(src, dest, true))
-            is ConflictAction.AutoRename -> validatedOps.add(ValidatedOp(src, dest, false, true))
-            is ConflictAction.Rename -> {
-                val newName = action.newName
-                val newDest = destParent.uriJoin(newName)
-                validatedOps.add(ValidatedOp(src, newDest, false))
-            }
-            is ConflictAction.Merge -> {
-                // Recursive Merge: plan all children of source into destination
-                val children = srcBackend.list(src).toList()
-                for (child in children) {
-                    planOperation(child.path, dest, mode, policy, onManualConflict, stickyDecisions, mutex, validatedOps)
-                }
-            }
-            is ConflictAction.Skip -> { /* Do nothing */ }
-            is ConflictAction.Cancel -> throw CancellationException("Operation cancelled by user")
-            else -> { /* Prompt already handled or unexpected action */ }
-        }
-    }
+    ) { \u22ee--- }
     
     private data class ValidatedOp(val src: String, val dest: String, val overwrite: Boolean, val autoRename: Boolean = false)
 }
 </file>
-
 <file path="transactions/TrashManager.kt">
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.transactions
@@ -2817,104 +2004,25 @@ class TrashManager(
     val isTrashEmpty: StateFlow<Boolean> = _isTrashEmpty.asStateFlow()
 
     // --- Trash Operations ---
-    suspend fun trashFiles(paths: List<String>): Result<List<String>> {
-        val results = mutableListOf<String>()
-        var hasError = false
-        
-        for (path in paths) {
-            val backend = backendRegistry.getIo(path) ?: continue
-            val job = FileJob(id = Uuid.random(), opType = "trash", source = path)
-            val result = backend.trash(job)
-            if (result.isSuccess) {
-                results.add(path)
-                invalidateCache()
-            } else {
-                hasError = true
-            }
-        }
-        
-        if (hasError) {
-            return Result.failure(Exception("Some files could not be trashed"))
-        }
-        return Result.success(results)
-    }
+    suspend fun trashFiles(paths: List<String>): Result<List<String>> { \u22ee--- }
 
-    suspend fun restoreFromTrash(trashItem: TrashItem): Result<String> {
-        val backend = backendRegistry.getIo(trashItem.originalPath) ?: return Result.failure(Exception("No backend for ${trashItem.originalPath}"))
-        return backend.restoreFromTrash(trashItem.trashPath, trashItem.originalPath)
-    }
+    suspend fun restoreFromTrash(trashItem: TrashItem): Result<String> { \u22ee--- }
 
-    suspend fun emptyTrash(): Result<Unit> {
-        var hasError = false
-        
-        for (scheme in backendRegistry.getRegisteredSchemes()) {
-            val backend = backendRegistry.getIo("$scheme:///") ?: continue
-            backend.getTrashBackend(backendRegistry)?.let { trashBackend ->
-                val result = trashBackend.emptyTrash()
-                if (!result.isSuccess) {
-                    hasError = true
-                }
-            }
-        }
-        
-        invalidateCache()
-        return if (hasError) Result.failure(Exception("Some items could not be deleted")) else Result.success(Unit)
-    }
+    suspend fun emptyTrash(): Result<Unit> { \u22ee--- }
 
     // --- Listing & Status ---
-    suspend fun listTrashItems(forceRefresh: Boolean = false): List<TrashItem> {
-        val now = System.currentTimeMillis()
-        if (!forceRefresh && trashItemsCache != null && (now - lastScanTime) < cacheValidityMs) {
-            return trashItemsCache!!
-        }
-        
-        val items = mutableListOf<TrashItem>()
-        for (scheme in backendRegistry.getRegisteredSchemes()) {
-            val backend = backendRegistry.getIo("$scheme:///") ?: continue
-            backend.getTrashBackend(backendRegistry)?.let { trashBackend ->
-                val result = trashBackend.listTrash()
-                if (result.isSuccess) {
-                    items.addAll(result.getOrThrow())
-                }
-            }
-        }
-        
-        trashItemsCache = items
-        lastScanTime = now
-        _isTrashEmpty.value = items.isEmpty()
-        return items
-    }
+    suspend fun listTrashItems(forceRefresh: Boolean = false): List<TrashItem> { \u22ee--- }
 
     fun getTrashSize(): Long = trashItemsCache?.sumOf { it.size } ?: 0L
     
-    suspend fun isTrashEmpty(): Boolean {
-        if (trashItemsCache != null) return trashItemsCache!!.isEmpty()
-        
-        for (scheme in backendRegistry.getRegisteredSchemes()) {
-            val backend = backendRegistry.getIo("$scheme:///") ?: continue
-            backend.getTrashBackend(backendRegistry)?.let { trashBackend ->
-                if (!trashBackend.isTrashEmpty("$scheme:///")) return false
-            }
-        }
-        return true
-    }
+    suspend fun isTrashEmpty(): Boolean { \u22ee--- }
 
     // --- Utility ---
-    private fun invalidateCache() {
-        trashItemsCache = null
-        // Trigger a background refresh to update the StateFlow
-        scope.launch {
-            _isTrashEmpty.value = isTrashEmpty()
-        }
-    }
+    private fun invalidateCache() { \u22ee--- }
 
-    fun canTrash(path: String): Boolean {
-        val backend = backendRegistry.getIo(path) ?: return false
-        return backend.exists(path) && backend.getCapabilities(path).supportsTrash
-    }
+    fun canTrash(path: String): Boolean { \u22ee--- }
 }
 </file>
-
 <file path="transactions/UndoManager.kt">
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.transactions
@@ -2947,148 +2055,22 @@ class UndoManager(
     var onStackChanged: ((Boolean, Boolean) -> Unit)? = null
     var onBusyChanged: ((Boolean) -> Unit)? = null
 
-    init {
-        // Automatically capture completed transactions into undo stack
-        transactionManager.onHistoryCommitted = { commitTransaction(it) }
-    }
+    fun attach() { \u22ee--- }
 
     // --- Stack State ---
     fun canUndo(): Boolean = !busy && undoStack.isNotEmpty()
     fun canRedo(): Boolean = !busy && redoStack.isNotEmpty()
 
     // --- History Commit ---
-    fun commitTransaction(tx: Transaction) {
-        if (tx.status != TransactionStatus.COMPLETED) return
-        // We only add to undo stack if it's a "fresh" transaction, not an undo/redo result
-        // (This is a simplified check; more complex logic might be needed to avoid loops)
-        undoStack.push(tx)
-        redoStack.clear()
-        onStackChanged?.invoke(canUndo(), canRedo())
-    }
+    fun commitTransaction(tx: Transaction) { \u22ee--- }
 
     // --- Undo ---
-    fun undo(): Boolean {
-        if (!canUndo()) return false
-        val tx = undoStack.pop()
-        
-        // Prepare inverse operations
-        val undoOps = tx.ops
-            .filter { it.status == TransactionStatus.COMPLETED && it.inversePayload != null }
-            .reversed()
-            .map { op ->
-                val payloadMap = op.inversePayload!!
-                TransactionOperation(
-                    jobId = Uuid.random(),
-                    opType = "undo",
-                    src = payloadMap["target"] as? String ?: "",
-                    dest = payloadMap["dest"] as? String ?: "",
-                    inversePayload = payloadMap
-                )
-            }
-
-        if (undoOps.isEmpty()) return true
-
-        scope.launch {
-            setBusy(true)
-            try {
-                val tid = transactionManager.startTransaction("Undo: ${tx.description}", isReversible = false)
-                undoOps.forEach { op ->
-                    transactionManager.addOperation(
-                        tid, 
-                        op.opType, 
-                        op.src, 
-                        op.dest, 
-                        jobId = op.jobId, 
-                        inversePayload = op.inversePayload
-                    )
-                }
-                
-                // 1. Prepare the flow collection BEFORE committing
-                val finishedFlow = transactionManager.events
-                    .filter { it.tid == tid }
-                    .filterIsInstance<TransactionEvent.Finished>()
-
-                // 2. Commit the transaction
-                transactionManager.commitTransaction(tid) { op, _ ->
-                    transactionManager.executeBatchJob(tid, op)
-                }
-
-                // 3. Wait for completion
-                val finalEvent = finishedFlow.first()
-
-                if (finalEvent.status == TransactionStatus.COMPLETED) {
-                    redoStack.push(tx)
-                } else {
-                    undoStack.push(tx)
-                }
-            } catch (e: Exception) {
-                undoStack.push(tx)
-            } finally {
-                setBusy(false)
-                onStackChanged?.invoke(canUndo(), canRedo())
-            }
-        }
-        return true
-    }
+    fun undo(): Boolean { \u22ee--- }
 
 // --- Redo ---
-     fun redo(): Boolean {
-         if (!canRedo()) return false
-         val tx = redoStack.pop()
+     fun redo(): Boolean { \u22ee--- }
 
-         scope.launch {
-             setBusy(true)
-             try {
-                 val tid = transactionManager.startTransaction("Redo: ${tx.description}", isReversible = false)
-                 tx.ops.forEach { op ->
-                     transactionManager.addOperation(
-                         tid,
-                         op.opType,
-                         op.src,
-                         op.dest,
-                         overwrite = op.overwrite,
-                         autoRename = op.autoRename
-                     )
-                 }
-
-                 val finishedFlow = transactionManager.events
-                     .filter { it.tid == tid }
-                     .filterIsInstance<TransactionEvent.Finished>()
-
-                 transactionManager.commitTransaction(tid) { op, _ ->
-                     transactionManager.executeBatchJob(tid, op)
-                 }
-
-                 val finalEvent = finishedFlow.first()
-
-                 if (finalEvent.status == TransactionStatus.COMPLETED) {
-                     // Capture fresh inverse payloads generated during redo execution
-                     // so that a subsequent undo will use the correct DNA.
-                     tx.ops.forEachIndexed { idx, op ->
-                         val freshOp = transactionManager.findOperation(tid, op.jobId)
-                         if (freshOp != null && freshOp.inversePayload != null) {
-                             tx.ops[idx] = op.copy(inversePayload = freshOp.inversePayload)
-                         }
-                     }
-                     undoStack.push(tx)
-                 } else {
-                     redoStack.push(tx)
-                 }
-             } catch (e: Exception) {
-                 redoStack.push(tx)
-             } finally {
-                 setBusy(false)
-                 onStackChanged?.invoke(canUndo(), canRedo())
-             }
-         }
-         return true
-     }
-
-    private fun setBusy(value: Boolean) {
-        busy = value
-        onBusyChanged?.invoke(value)
-    }
+    private fun setBusy(value: Boolean) { \u22ee--- }
 }
 </file>
-
 </files>

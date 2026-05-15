@@ -24,7 +24,8 @@ class TransactionManagerTest {
     fun setup() {
         backend = InMemoryBackend()
         BackendRegistry.registerIo("memory", backend)
-        tm = TransactionManager(BackendRegistry, XferArbiter)
+        val dispatcher = TransactionDispatcher(BackendRegistry)
+        tm = TransactionManager(BackendRegistry, XferArbiter, dispatcher)
     }
 
     @Test
@@ -43,9 +44,7 @@ class TransactionManagerTest {
         tm.addOperation(tid, "copy", "memory://src/file1.txt", "memory://dest/file1.txt")
         tm.addOperation(tid, "copy", "memory://src/file2.txt", "memory://dest/file2.txt")
         tm.addOperation(tid, "copy", "memory://src/file3.txt", "memory://dest/file3.txt")
-        tm.commitTransaction(tid) { op, resolver -> 
-            tm.executeBatchJob(tid, op, resolver)
-        }
+        tm.commitTransaction(tid)
         
         // Wait for coroutines to finish
         val endTime = System.currentTimeMillis() + 2000

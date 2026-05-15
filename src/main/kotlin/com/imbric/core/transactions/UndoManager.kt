@@ -93,9 +93,7 @@ class UndoManager(
                     .filterIsInstance<TransactionEvent.Finished>()
 
                 // 2. Commit the transaction
-                transactionManager.commitTransaction(tid) { op, _ ->
-                    transactionManager.executeBatchJob(tid, op)
-                }
+                transactionManager.commitTransaction(tid)
 
                 // 3. Wait for completion
                 val finalEvent = finishedFlow.first()
@@ -139,9 +137,7 @@ class UndoManager(
                      .filter { it.tid == tid }
                      .filterIsInstance<TransactionEvent.Finished>()
 
-                 transactionManager.commitTransaction(tid) { op, _ ->
-                     transactionManager.executeBatchJob(tid, op)
-                 }
+                 transactionManager.commitTransaction(tid)
 
                  val finalEvent = finishedFlow.first()
 

@@ -24,7 +24,8 @@ class HardeningIntegrationTest {
     fun setup() {
         backend = JITSimulatingBackend()
         BackendRegistry.registerIo("memory", backend)
-        manager = TransactionManager(BackendRegistry, XferArbiter)
+        val dispatcher = TransactionDispatcher(BackendRegistry)
+        manager = TransactionManager(BackendRegistry, XferArbiter, dispatcher)
         orchestrator = TransferOrchestrator(BackendRegistry, manager)
     }
 

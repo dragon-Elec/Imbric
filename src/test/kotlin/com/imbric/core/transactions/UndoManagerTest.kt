@@ -30,7 +30,8 @@ class UndoManagerTest {
     }
 
     private fun kotlinx.coroutines.test.TestScope.initManagers() {
-        transactionManager = TransactionManager(BackendRegistry, XferArbiter, this)
+        val dispatcher = TransactionDispatcher(BackendRegistry, this)
+        transactionManager = TransactionManager(BackendRegistry, XferArbiter, dispatcher, this)
         undoManager = UndoManager(BackendRegistry, transactionManager, this)
         
         // Connect them

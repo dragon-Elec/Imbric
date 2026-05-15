@@ -14,10 +14,10 @@ import kotlin.uuid.ExperimentalUuidApi
 class TransactionManager(
     private val backendRegistry: BackendRegistry,
     private val xferArbiter: XferArbiter,
+    private val dispatcher: TransactionDispatcher,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) {
     private val transactions = ConcurrentHashMap<Uuid, Transaction>()
-    private val activeJobs = ConcurrentHashMap<Uuid, kotlinx.coroutines.Job>()
     
     private val _events = MutableSharedFlow<TransactionEvent>(extraBufferCapacity = 128)
     val events: SharedFlow<TransactionEvent> = _events.asSharedFlow()
@@ -74,17 +74,14 @@ class TransactionManager(
             addOperation(tid, if (mode == "move") "move" else "copy", src, fullDest)
         }
         
-        commitTransaction(tid) { op, _ ->
-            executeBatchJob(tid, op)
-        }
+        commitTransaction(tid)
         return tid
     }
 
     // --- Commit & Execute ---
     fun commitTransaction(
         tid: Uuid, 
-        conflictResolver: (suspend (ConflictContext) -> ConflictResponse)? = null,
-        executor: (TransactionOperation, (suspend (ConflictContext) -> ConflictResponse)?) -> kotlinx.coroutines.Job
+        conflictResolver: (suspend (ConflictContext) -> ConflictResponse)? = null
     ) {
         val tx = transactions[tid] ?: return
         tx.status = TransactionStatus.RUNNING
@@ -93,123 +90,21 @@ class TransactionManager(
         _events.tryEmit(TransactionEvent.Started(tid, tx.description))
         
         tx.ops.forEach { op ->
-            val job = executor(op, conflictResolver)
-            activeJobs[op.jobId] = job
+            dispatcher.dispatchJob(
+                tid = tid,
+                op = op,
+                conflictResolver = conflictResolver,
+                onProgress = { progress -> updateProgress(tid, progress) },
+                onStatusUpdate = { jobId, status, err, result, inv -> 
+                    updateOperationStatus(tid, jobId, status, err, result, inv) 
+                }
+            )
         }
         
         if (tx.ops.isEmpty()) {
             tx.status = TransactionStatus.COMPLETED
             _events.tryEmit(TransactionEvent.Finished(tid, tx.status))
             onTransactionFinished?.invoke(tid, tx.status)
-        }
-    }
-
-    internal fun executeBatchJob(
-        tid: Uuid,
-        op: TransactionOperation,
-        conflictResolver: (suspend (ConflictContext) -> ConflictResponse)? = null
-    ): kotlinx.coroutines.Job {
-        return scope.launch {
-            var currentOp = op
-            var retry = true
-            
-            while (retry) {
-                retry = false
-                try {
-                    val backend = backendRegistry.getIo(currentOp.src) ?: return@launch
-                    val job = FileJob(
-                        id = currentOp.jobId,
-                        opType = currentOp.opType,
-                        source = currentOp.src,
-                        dest = currentOp.dest,
-                        overwrite = currentOp.overwrite,
-                        autoRename = currentOp.autoRename,
-                    inversePayload = currentOp.inversePayload?.let { InversePayload(
-                        action = it["action"] as? String ?: "",
-                        target = it["target"] as? String ?: "",
-                        dest = it["dest"] as? String,
-                        newName = it["newName"] as? String,
-                        renameTo = it["renameTo"] as? String,
-                        tid = (it["tid"] as? String)?.let { Uuid.parse(it) } ?: it["tid"] as? Uuid,
-                        backendId = it["backendId"] as? String
-                    )}
-                    )
-                    
-                    var actualDest: String? = null
-                    var inverse: com.imbric.core.models.InversePayload? = null
-                    when (currentOp.opType) {
-                        "copy" -> backend.copy(job).collect { 
-                            actualDest = it.actualDest
-                            inverse = it.inversePayload
-                            updateProgress(tid, it) 
-                        }
-                        "move" -> backend.move(job).collect { 
-                            actualDest = it.actualDest
-                            inverse = it.inversePayload
-                            updateProgress(tid, it) 
-                        }
-                        "trash" -> backend.trash(job).getOrThrow().also { 
-                            inverse = InversePayload(action = "undo_trash", target = job.source, dest = job.source, backendId = "gio")
-                            updateProgress(tid, TransferProgress(job.id, job.source, null, inverse, 1, 1, 0, 0)) 
-                        }
-                        "delete" -> backend.delete(job).getOrThrow().also { updateProgress(tid, TransferProgress(job.id, job.source, null, null, 1, 1, 0, 0)) }
-                        "rename" -> backend.rename(job.source, job.dest).getOrThrow().also { 
-                            actualDest = job.dest
-                            inverse = InversePayload(action = "undo_rename", target = actualDest!!, dest = job.source, backendId = "gio")
-                            updateProgress(tid, TransferProgress(job.id, job.source, actualDest, inverse, 1, 1, 0, 0)) 
-                        }
-                        "undo" -> {
-                            val payload = job.inversePayload ?: throw Exception("Undo payload missing")
-                            backend.executeInverse(payload).getOrThrow()
-                            updateProgress(tid, TransferProgress(job.id, job.source, null, null, 1, 1, 0, 0))
-                        }
-                    }
-                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.COMPLETED, resultPath = actualDest, inversePayload = inverse)
-                } catch (e: Exception) {
-                    val errorCode = (e as? VfsConflictException)?.code ?: -1
-                    
-                    if (errorCode == VfsConflictException.EXISTS && conflictResolver != null && (currentOp.opType == "copy" || currentOp.opType == "move")) {
-                        val srcBackend = backendRegistry.getIo(currentOp.src)!!
-                        val destBackend = backendRegistry.getIo(currentOp.dest)!!
-                        val srcMeta = srcBackend.getMetadata(currentOp.src).getOrNull()
-                        val destMeta = destBackend.getMetadata(currentOp.dest).getOrNull()
-                        
-                        if (srcMeta != null && destMeta != null) {
-                            val conflictType = XferArbiter.classifyConflict(srcMeta, destMeta)
-                            val context = ConflictContext(currentOp.src, currentOp.dest, srcMeta, destMeta, conflictType)
-                            
-                            _events.tryEmit(TransactionEvent.Conflict(tid, currentOp.jobId, context.src, context.dest, context.srcMeta, context.destMeta))
-                            
-                            val response = conflictResolver(context)
-                            when (val action = response.action) {
-                                is ConflictAction.Overwrite -> {
-                                    currentOp = currentOp.copy(overwrite = true)
-                                    retry = true
-                                }
-                                is ConflictAction.Rename -> {
-                                    val destParent = currentOp.dest.uriParent
-                                    val newDest = if (destParent.isEmpty()) action.newName else destParent.uriJoin(action.newName)
-                                    currentOp = currentOp.copy(dest = newDest, overwrite = false)
-                                    retry = true
-                                }
-                                is ConflictAction.Skip -> {
-                                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.COMPLETED)
-                                }
-                                is ConflictAction.Cancel -> {
-                                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.CANCELLED)
-                                }
-                                else -> {
-                                    updateOperationStatus(tid, currentOp.jobId, TransactionStatus.FAILED, "Unresolved conflict")
-                                }
-                            }
-                        } else {
-                            updateOperationStatus(tid, currentOp.jobId, TransactionStatus.FAILED, e.message ?: "Conflict metadata error")
-                        }
-                    } else {
-                        updateOperationStatus(tid, currentOp.jobId, TransactionStatus.FAILED, e.message ?: "Transfer failed")
-                    }
-                }
-            }
         }
     }
 
@@ -317,10 +212,7 @@ class TransactionManager(
     // --- Cleanup ---
     fun cancelTransaction(tid: Uuid) {
         val tx = transactions[tid] ?: return
-        tx.ops.forEach { op ->
-            activeJobs[op.jobId]?.cancel()
-            activeJobs.remove(op.jobId)
-        }
+        dispatcher.cancelJobs(tx.ops.map { it.jobId })
         tx.status = TransactionStatus.CANCELLED
         _events.tryEmit(TransactionEvent.Finished(tid, TransactionStatus.CANCELLED))
         onTransactionFinished?.invoke(tid, TransactionStatus.CANCELLED)

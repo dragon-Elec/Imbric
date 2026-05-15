@@ -44,6 +44,7 @@ dependencies {
     // Logging
     implementation("io.github.microutils:kotlin-logging-jvm:3.0.5")
     implementation("org.java-gi:gtk:0.15.0")
+
     
     // Java-GI base annotations
     compileOnly("org.jspecify:jspecify:1.0.0")
@@ -67,5 +68,6 @@ tasks.test {
 compose.desktop {
     application {
         mainClass = "com.imbric.app.bootstrap.MainKt"
+        jvmArgs += "--enable-native-access=ALL-UNNAMED"
     }
 }

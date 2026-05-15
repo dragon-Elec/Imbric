@@ -83,9 +83,7 @@ class TransferOrchestrator(
             }
         }
 
-        transactionManager.commitTransaction(tid, jitResolver) { op, resolver ->
-            transactionManager.executeBatchJob(tid, op, resolver)
-        }
+        transactionManager.commitTransaction(tid, jitResolver)
         
         try {
             collector.join()
