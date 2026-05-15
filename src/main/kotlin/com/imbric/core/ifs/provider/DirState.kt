@@ -8,6 +8,8 @@ import com.imbric.core.ifs.Locality
 import com.imbric.core.models.FileInfo
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import java.util.Collections
 
 /**
@@ -73,47 +75,87 @@ class DirState(
     private fun startWatching() {
         watchJob?.cancel()
         watchJob = scope.launch(ioDispatcher) {
-            backend.watch(uri)
-                .buffer()
-                .collect { event ->
-                    handleEvent(event)
+            // A boundless bucket to catch the GIO signal storm
+            val eventChannel = Channel<FileEvent>(Channel.UNLIMITED)
+            
+            // 1. PRODUCER: Listen to GIO and throw events into the bucket instantly
+            launch {
+                backend.watch(uri).collect { event ->
+                    eventChannel.send(event)
                 }
+            }
+            
+            // 2. CONSUMER: The 200ms Storm Catcher
+            launch {
+                while (isActive) {
+                    // Wait until the very first event hits (Suspends efficiently)
+                    val firstEvent = eventChannel.receive() 
+                    val batch = mutableListOf(firstEvent)
+                    
+                    // 🔥 THE DEBOUNCE: Wait 200ms to see if a "storm" follows
+                    delay(200)
+                    
+                    // Scoop up all remaining events that arrived during the 200ms
+                    while (true) {
+                        val nextEvent = eventChannel.tryReceive().getOrNull() ?: break
+                        batch.add(nextEvent)
+                    }
+                    
+                    // Process the whole batch in one shot!
+                    handleEventBatch(batch)
+                }
+            }
         }
     }
 
-    private suspend fun handleEvent(event: FileEvent) {
-        when (event) {
-            is FileEvent.Created -> {
-                backend.getMetadata(event.uri).onSuccess { info ->
-                    updateItem(event.uri, info)
-                    enrichItem(info)
+    private suspend fun handleEventBatch(events: List<FileEvent>) {
+        // 1. Separate events into categories
+        val urisToFetch = mutableSetOf<String>()
+        val urisToRemove = mutableSetOf<String>()
+        
+        events.forEach { event ->
+            when (event) {
+                is FileEvent.Created -> urisToFetch.add(event.uri)
+                is FileEvent.Modified -> {
+                    urisToFetch.add(event.uri)
+                    enrichedUris.remove(event.uri) // Force re-enrichment
                 }
-            }
-            is FileEvent.Deleted -> {
-                removeItem(event.uri)
-                enrichedUris.remove(event.uri)
-            }
-            is FileEvent.Modified -> {
-                backend.getMetadata(event.uri).onSuccess { info ->
-                    updateItem(event.uri, info)
-                    // Re-enrich on modification
+                is FileEvent.Deleted -> {
+                    urisToRemove.add(event.uri)
                     enrichedUris.remove(event.uri)
-                    enrichItem(info)
                 }
-            }
-            is FileEvent.Renamed -> {
-                _items.update { current ->
-                    val next = current - event.from
-                    _itemsList.value = next.values.toList()
-                    next
-                }
-                enrichedUris.remove(event.from)
-                backend.getMetadata(event.to).onSuccess { info ->
-                    updateItem(event.to, info)
-                    enrichItem(info)
+                is FileEvent.Renamed -> {
+                    urisToRemove.add(event.from)
+                    enrichedUris.remove(event.from)
+                    urisToFetch.add(event.to)
                 }
             }
         }
+
+        // 2. Do a BULK fetch for all new/modified files (Way faster than 500 individual fetches)
+        val fetchedInfos = if (urisToFetch.isNotEmpty()) {
+            backend.getMetadata(urisToFetch.toList()).mapNotNull { it.getOrNull() }
+        } else {
+            emptyList()
+        }
+
+        // 3. Update the StateFlow exactly ONCE for the whole batch
+        _items.update { current ->
+            var nextMap = current
+            
+            // Remove deleted/renamed
+            urisToRemove.forEach { uri -> nextMap = nextMap - uri }
+            
+            // Add new/modified
+            fetchedInfos.forEach { info -> nextMap = nextMap + (info.uri to info) }
+            
+            // Trigger the Compose UI update
+            _itemsList.value = nextMap.values.toList()
+            nextMap
+        }
+
+        // 4. Trigger enrichment in the background for the new files
+        fetchedInfos.forEach { enrichItem(it) }
     }
 
     private fun enrichItem(info: FileInfo) {
