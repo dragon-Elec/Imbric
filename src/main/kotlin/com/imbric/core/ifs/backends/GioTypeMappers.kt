@@ -90,6 +90,16 @@ object GioTypeMappers {
             canUnmount = gioInfo.getAttributeBoolean("access::can-unmount"),
             canEject = gioInfo.getAttributeBoolean("access::can-eject"),
             
+            // Virtual timestamps
+            trashTime = gioInfo.getAttributeString("trash::deletion-date")?.let {
+                try { Instant.parse(it) } catch (_: Exception) { null }
+            },
+            recency = gioInfo.getAttributeUint64("recent::modified").takeIf { it > 0 }
+                ?.let { Instant.fromEpochSeconds(it) },
+            
+            // Activation URI (from metadata or .desktop file)
+            activationUri = gioInfo.getAttributeString("metadata::activation-uri"),
+            
             attributes = attributeMap
         )
     }

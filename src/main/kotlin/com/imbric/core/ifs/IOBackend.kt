@@ -5,6 +5,7 @@ import com.imbric.core.models.FileJob
 import com.imbric.core.models.TransferProgress
 import com.imbric.core.models.TrashItem
 import com.imbric.core.models.DiskUsage
+import com.imbric.core.models.DeepCount
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
@@ -62,6 +63,66 @@ interface IOBackend {
      * Retrieves disk usage information for the filesystem containing the given URI.
      */
     suspend fun getUsage(uri: String): Result<DiskUsage?> = Result.success(null)
+
+    /**
+     * Recursively counts all items (files + directories) and total size under the given URI.
+     * Default implementation composes [list()] — backends can override with native implementations
+     * (e.g., Tracker3 SPARQL index, SMB get_folder_size RPC).
+     *
+     * @param uri The directory URI to count recursively
+     * @param maxDepth Maximum recursion depth (default: unlimited)
+     * @return Flow of intermediate [DeepCount] results, final result has [DeepCount.isComplete]=true
+     */
+    fun deepCount(uri: String, maxDepth: Int = Int.MAX_VALUE): Flow<DeepCount> = flow {
+        var dirs = 0; var files = 0; var totalSize = 0L
+        val stack = ArrayDeque<Pair<String, Int>>()
+        stack.add(uri to 0)
+        while (stack.isNotEmpty()) {
+            val (dirUri, depth) = stack.removeLast()
+            if (depth > maxDepth) {
+                kotlinx.coroutines.yield()
+                continue
+            }
+            
+            try {
+                list(dirUri).collect { info ->
+                    if (info.isDirectory) {
+                        dirs++
+                        stack.add(info.uri to depth + 1)
+                    } else {
+                        files++
+                        totalSize += info.size
+                    }
+                    if ((files + dirs) % 100 == 0) {
+                        emit(DeepCount(dirs, files, totalSize, isComplete = false))
+                        kotlinx.coroutines.yield()
+                    }
+                }
+                kotlinx.coroutines.yield()
+            } catch (e: Exception) {
+                // Skip directories we can't list (permissions, etc.) instead of crashing
+                // We could optionally emit an error state here if DeepCount supported it
+            }
+        }
+        emit(DeepCount(dirs, files, totalSize, isComplete = true))
+    }.flowOn(kotlinx.coroutines.Dispatchers.IO)
+
+    /**
+     * Returns the path to a thumbnail for the given URI, if available.
+     * Default implementation reads the `thumbnailPath` from [getMetadata].
+     * Backends can override with native thumbnail cache lookups.
+     */
+    suspend fun getThumbnailPath(uri: String): String? {
+        return getMetadata(uri).getOrNull()?.thumbnailPath
+    }
+
+    /**
+     * Triggers asynchronous thumbnail generation for the given URI.
+     * Default is a no-op. Backends with native thumbnailers (GIO, Tracker3) override this.
+     *
+     * @return The path to the generated thumbnail, or null if generation is not supported
+     */
+    suspend fun generateThumbnail(uri: String): Result<String?> = Result.success(null)
 
     // Writes
     suspend fun copy(job: FileJob): Flow<TransferProgress>

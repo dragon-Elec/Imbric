@@ -89,7 +89,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         return vfs.supportedUriSchemes?.contains(scheme) == true
     }
 
-    private val queryAttributes = "standard::*,time::*,unix::*,owner::*,access::*,trash::*"
+    private val queryAttributes = "standard::*,time::*,unix::*,owner::*,access::*,trash::*,recent::modified,metadata::activation-uri"
 
     private fun resolveUniqueTarget(uri: String): String {
         var current = uri
@@ -649,7 +649,6 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     override fun search(query: com.imbric.core.models.VfsQuery): Flow<FileInfo> = flow {
         val rootFile = File.newForUri(query.rootUri)
         val queryLower = query.text.lowercase()
-        val queryAttrs = "standard::*,time::*,unix::*,owner::*,access::*"
         
         val stack = ArrayDeque<Pair<File, Int>>()
         stack.add(rootFile to 0)
@@ -659,7 +658,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
             if (depth > query.maxDepth) continue
 
             val enumerator = try {
-                dir.enumerateChildren(queryAttrs, FileQueryInfoFlags.NONE, null)
+                dir.enumerateChildren(queryAttributes, FileQueryInfoFlags.NONE, null)
             } catch (e: Exception) {
                 continue
             }
@@ -795,6 +794,56 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         }
         
         currentInfo.copy(attributes = attrs)
+    }
+
+    /**
+     * GIO-native thumbnail path lookup.
+     * Queries the GIO thumbnail attributes directly instead of going through getMetadata().
+     */
+    override suspend fun getThumbnailPath(uri: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val gfile = File.newForUri(uri)
+            val info = gfile.queryInfo(
+                "thumbnail::path,standard::thumbnail-path",
+                FileQueryInfoFlags.NONE,
+                null
+            )
+            info?.getAttributeString("thumbnail::path")
+                ?: info?.getAttributeString("standard::thumbnail-path")
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * GIO-native thumbnail generation.
+     * Uses async queryInfo to trigger GIO's built-in thumbnailer.
+     */
+    override suspend fun generateThumbnail(uri: String): Result<String?> = withContext(Dispatchers.IO) {
+        try {
+            val gfile = File.newForUri(uri)
+            val info = GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    gfile.queryInfoAsync(
+                        "thumbnail::path,standard::thumbnail-path",
+                        FileQueryInfoFlags.NONE,
+                        GLib.PRIORITY_LOW,
+                        cancellable,
+                        callback
+                    )
+                },
+                finish = { result ->
+                    gfile.queryInfoFinish(result)
+                }
+            )
+            val path = info?.getAttributeString("thumbnail::path")
+                ?: info?.getAttributeString("standard::thumbnail-path")
+            Result.success(path)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     override suspend fun getUsage(uri: String): Result<DiskUsage?> = withContext(Dispatchers.IO) {

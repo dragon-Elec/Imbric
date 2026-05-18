@@ -47,6 +47,7 @@ com.imbric
 
 ### Key Design Decisions
 
+- **No Auto-Commits:** Do NOT commit, amend, or push changes unless explicitly requested by the user.
 - **core = The Engine, app = The Product:** The `core` package (`com.imbric.core`) is a headless, unopinionated library. It could be published as a standalone JAR for CLI tools, servers, or automated scripts. It knows about files, backends, transactions, and hardware sensors, but it does **not** know what a "sidebar" or a "view model" is. The `app` package (`com.imbric.app`) is the actual desktop file manager product. It owns UI state, cross-data aggregation (e.g., merging drives + bookmarks → sidebar), user preferences, and the Compose Desktop entry point. The app depends on the core; the core never depends on the app.
 - **Aggregation lives in app, not core:** If the product needs to combine data from multiple core sources (e.g., `DeviceManager.drives` + bookmark files → `SidebarItem`), that mapping code lives in `app/aggregators/`. The core simply provides the raw signals; it does not model what a sidebar is.
 - **UI state is app-only:** Which folder is the user looking at? What's selected? Grid or list view? These are application-layer concerns. The core provides `DirState` (a live folder watcher), but the `FileBrowserViewModel` that wraps it with back/forward history and selection state lives in `app/viewmodel/`.
@@ -62,6 +63,11 @@ com.imbric
 - **"Does it require a URI?" Rule:** This is the core boundary between the Virtual File System (`ifs`) and the Desktop Environment.
   - **VFS (IOBackend):** Anything tied to a specific file, path, or URI MUST be implemented here. This includes Thumbnails, Search, Directory Monitoring, Trash, and Recents. This allows multiple backends (e.g., GIO and OneDrive) to each provide their own native optimizations for these features.
   - **Desktop Environment:** Global system states WITHOUT a URI MUST be handled by a separate `DesktopEnvironment` interface. This includes Hardware Mounts/Volumes (event of plugging in a USB), Default Application launching, and System Theme preferences.
+- **What Is a "Service"?** A service is a **state coordinator** that wraps IOBackend calls and adds observable state for the UI. Services live in `core/ifs/services/`. They are NOT backend capabilities — they are higher-level wrappers that track cross-cutting concerns like loading state, failure state, or progress. The distinction:
+  - **IOBackend method:** A per-URI VFS operation. Each backend can implement it differently (GIO native, SMB RPC, etc.). Examples: `deepCount()`, `getThumbnailPath()`, `generateThumbnail()`.
+  - **Service:** A state coordinator that wraps IOBackend methods and exposes `StateFlow` for UI observation. Examples: `ThumbnailStateTracker` wraps `IOBackend.getThumbnailPath()` and tracks `thumbnailingInProgress`/`thumbnailingFailed` sets.
+  - **Desktop singleton:** System-wide state without a URI. Examples: `TrashMonitor`, `StarredManager`, `SettingsProvider`.
+  - **Rule of thumb:** If it's a per-URI file operation → IOBackend. If it has state the UI observes → Service wrapping IOBackend. If it's global system state → Desktop singleton.
 
 ## Kotlin 2.3.x Features (Relevant)
 
@@ -151,6 +157,7 @@ Before ending a session, update `HANDOVER.md` with the current status, bugs foun
 
 ## Notes
 
+- Always use `rg` (ripgrep) instead of `grep` for codebase searches. OpenCode has its own internal `grep` tool — use that for quick searches; fall back to `rg` via bash for advanced patterns.
 - Prototyping approach = interpreted iteration (like Python dev). Production path = GraalVM AOT bytecode for first stable release.
 - Avoid platform-specific libs (`java.util.UUID`) in core logic.
 - `java-gi` library uses JEP 454 FFM API (JDK 22+ required).

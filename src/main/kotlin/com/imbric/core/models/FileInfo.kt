@@ -34,6 +34,16 @@ data class FileInfo(
     val thumbnailPath: String? = null,
     val backendId: String? = null,
     
+    // Virtual timestamps
+    val trashTime: Instant? = null,
+    val recency: Instant? = null,
+
+    // Behavioral flags
+    val isStarred: Boolean = false,
+
+    // Activation
+    val activationUri: String? = null,
+    
     // Location Flags
     val isInTrash: Boolean = false,
     val isInRecent: Boolean = false,
@@ -83,6 +93,36 @@ data class FileInfo(
     val isEmptyDirectory: Boolean
         get() = isDirectory && childCount == 0
 
+    /** Computed property — derived from mimeType. True if file is an archive (zip, tar, 7z, etc.). */
+    val isArchive: Boolean
+        get() {
+            if (isDirectory) return false
+            val m = mimeType.lowercase()
+            return m.startsWith("application/zip") ||
+                   m.startsWith("application/x-tar") ||
+                   m.startsWith("application/x-7z") ||
+                   m.startsWith("application/x-rar") ||
+                   m.startsWith("application/x-xz") ||
+                   m.startsWith("application/gzip") ||
+                   m.startsWith("application/x-bzip2") ||
+                   m.startsWith("application/x-compressed-tar") ||
+                   m.endsWith("+zip") ||
+                   m.endsWith("+tar") ||
+                   m.endsWith("+xz") ||
+                   m.endsWith("+bzip2") ||
+                   m.endsWith("+gzip") ||
+                   m.endsWith("+rar") ||
+                   m.endsWith("+7z")
+        }
+
+    /** Computed property — derived from mimeType + activationUri. True if file can be launched/executed. */
+    val isLaunchable: Boolean
+        get() = !isDirectory && (
+                mimeType == "application/x-desktop" ||
+                mimeType == "application/x-executable" ||
+                isExecutable ||
+                activationUri != null)
+
     val permissionsString: String
         get() {
             if (permissions.isEmpty()) return ""
@@ -107,6 +147,24 @@ data class FileInfo(
             return String.format("%.1f %s", size / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
         }
 
+    // --- Metadata accessors (Phase 5) ---
+    
+    /** Gets a string value from the GNOME metadata namespace (e.g., "nautilus-tags-starred"). */
+    fun getMetadata(key: String): String? = attributes["metadata::$key"] as? String
+
+    /** Gets an integer value from the GNOME metadata namespace. */
+    fun getMetadataInt(key: String): Int? = (attributes["metadata::$key"] as? Number)?.toInt()
+
+    /** Gets a boolean value from the GNOME metadata namespace. */
+    fun getMetadataBool(key: String): Boolean? = attributes["metadata::$key"] as? Boolean
+
+    /** Gets all metadata keys that start with the given prefix. */
+    fun getMetadataKeys(prefix: String = ""): List<String> {
+        return attributes.keys
+            .filter { it.startsWith("metadata::$prefix") }
+            .map { it.removePrefix("metadata::") }
+    }
+
     companion object {
         /** Sort by name (directories first, then files). */
         val SortByName = compareBy<FileInfo> { !it.isDirectory }.thenBy { it.name.lowercase() }
@@ -116,5 +174,11 @@ data class FileInfo(
 
         /** Sort by modification time (directories first, then newest files). */
         val SortByDate = compareBy<FileInfo> { !it.isDirectory }.thenByDescending { it.modifiedTime }
+
+        /** Sort by trash deletion time (newest deleted first). */
+        val SortByTrashTime = compareBy<FileInfo> { !it.isDirectory }.thenByDescending { it.trashTime }
+
+        /** Sort by recency (most recently accessed first). */
+        val SortByRecency = compareBy<FileInfo> { !it.isDirectory }.thenByDescending { it.recency }
     }
 }

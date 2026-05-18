@@ -31,6 +31,11 @@ open class InMemoryBackend(
     val fs = mutableMapOf<String, FileInfo>()
     val trashFs = mutableMapOf<String, FileInfo>() // For simulating trash
     val failingUris = mutableSetOf<String>()
+    
+    // Thumbnail support for testing
+    private val thumbnailPaths = mutableMapOf<String, String>()
+    private val thumbnailFailures = mutableSetOf<String>()
+    private val thumbnailUnsupported = mutableSetOf<String>()
 
     override fun list(uri: String): Flow<FileInfo> {
         if (failingUris.contains(uri.removeSuffix("/"))) return emptyFlow()
@@ -237,4 +242,43 @@ open class InMemoryBackend(
 
     override fun watch(uri: String): Flow<FileEvent> = callbackFlow { awaitClose { } }
     override fun canHandle(uri: String): Boolean = uri.startsWith("$scheme://") || !uri.contains("://")
+    
+    // --- Thumbnail support for testing ---
+    
+    /**
+     * Test helper: register a thumbnail path for a URI.
+     */
+    fun registerThumbnail(uri: String, path: String) {
+        thumbnailPaths[uri] = path
+    }
+    
+    /**
+     * Test helper: mark a URI as having a failed thumbnail.
+     */
+    fun markThumbnailFailed(uri: String) {
+        thumbnailFailures.add(uri)
+    }
+    
+    /**
+     * Test helper: mark a URI as not supporting thumbnails.
+     */
+    fun markThumbnailUnsupported(uri: String) {
+        thumbnailUnsupported.add(uri)
+    }
+    
+    override suspend fun getThumbnailPath(uri: String): String? {
+        return thumbnailPaths[uri]
+    }
+    
+    override suspend fun generateThumbnail(uri: String): Result<String?> {
+        if (thumbnailUnsupported.contains(uri)) {
+            return Result.success(null)
+        }
+        if (thumbnailFailures.contains(uri)) {
+            return Result.failure(Exception("Thumbnail generation failed"))
+        }
+        val path = "/tmp/thumbnails/${uri.hashCode()}.png"
+        thumbnailPaths[uri] = path
+        return Result.success(path)
+    }
 }
