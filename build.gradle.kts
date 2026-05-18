@@ -43,7 +43,10 @@ dependencies {
     
     // Logging
     implementation("io.github.microutils:kotlin-logging-jvm:3.0.5")
-    implementation("org.java-gi:gtk:0.15.0")
+    implementation("org.java-gi:gtk:0.15.0") {
+        exclude(group = "org.java-gi", module = "glib")
+        exclude(group = "org.java-gi", module = "gdkpixbuf")
+    }
 
     
     // Java-GI base annotations

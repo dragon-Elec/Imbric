@@ -92,10 +92,11 @@ imbric-kt/
 | **FileInfo model** | ✅ Hardened | 18+ fields, `PathType`, `nativeId`, and verified "Secret Bag" (`attributes`) for native GIO metadata. |
 | **XferArbiter** | ✅ Polymorphic | Added **Merge** action; refactored `SyncPolicy` to interface for app-layer extensibility. |
 | **TransferOrchestrator** | ✅ Nautilus-grade | Implements recursive pre-flight planning, **Sticky Conflict Resolution** (Apply to All), and robust cancellation. |
-| **GioBackend** | ✅ Native | Full native attribute mapping, recursive `WOULD_RECURSE` fallback (code 25), and `TRASH_ITEM_COUNT` optimization. |
-| **Transaction Hub** | ✅ Polished | `TransactionManager`, `UndoManager` (with rename support), and `TrashManager` (StateFlow-based) fully verified. |
-| **Desktop Integration** | ✅ Native | `DesktopEnvironment` and `GioDesktopEnvironment` for hardware drives and mounts via `GVolumeMonitor`. |
-| **Live Monitoring** | ✅ Debounced | `DirectoryMonitor` provides stable, flicker-free `Flow<FileEvent>` from native `GFileMonitor`. |
+| **GioBackend** | ✅ Native Async | Full native attribute mapping, recursive `WOULD_RECURSE` fallback. **All mutating ops (copy, move, trash, delete, rename) now use non-blocking `awaitGioAsync` bridge.** |
+| **Transaction Hub** | ✅ Polished | `TransactionManager`, `UndoManager` (with rename support), and `TrashManager` (StateFlow-based) fully verified. Backend-aware concurrency limits (Local: 32, Network: 8). |
+| **Desktop Integration** | ✅ Native | `DesktopEnvironment` and `GioDesktopEnvironment` for hardware drives and mounts via `GVolumeMonitor`. Added **`SettingsProvider`** for reactive GSettings. |
+| **Live Monitoring** | ✅ Debounced | `DirectoryMonitor` and `TrashMonitor` provide stable, flicker-free `Flow` updates from native GIO monitors. |
+| **Search Engine** | ✅ Structured | `VfsQuery` model with depth and MIME support. Integrated with Tracker3 and manual fallback. |
 
 ---
 
@@ -126,8 +127,7 @@ Step 5: Surgical patching (GPid pointer bug in MountOperation.java)
 |:---|---:|:---|---:|
 | **GPid Pointer Mismatch** | GNOME 46 defines GPid as `void*`; generator templates hardcode `int` | `cannot find symbol Pid.getJava.lang.foreign...` | `sed` patch: 8-byte pointer, `Alias.getAddressValues` |
 | **Initialization Paradox** | Java interface static methods **don't** trigger library static init | `UnsupportedOperationException: Cannot find function 'g_file_new_for_uri'` | Manual `` Gio.`javagi$ensureInitialized`() `` in `GioBackend.init` |
-| **Generator Flattening** | Generator nests per-library dirs (`glib/org/`, `gio/org/`) vs flat `org/gnome/` in official JAR | `duplicate class: org.gnome.glib.X` | Flatten via `find ... -path "*/org/gnome/*"` → single root |
-| **G_IO_ERROR code** | GIOErrorEnum mapping mismatch | `WOULD_RECURSE` was assumed 32, is actually 25 | Verified 25 in GNOME 46 headers; hardcoded in `GioBackend` |
+| **Async SIGSEGV Crash** | GNOME GIR incorrectly marks `move_async` callback as `scope="call"`, causing premature GC | JVM crashes in `upcall_stub_load_target` during `moveAsync` | **Patched `java-gi` generator AST** to force `Scope.ASYNC` for all `_async` functions. |
 
 ---
 
@@ -228,13 +228,12 @@ UnsupportedOperationException: Cannot find function 'g_file_new_for_uri'
 
 ### Phase 2 — Compose UI & App Layer
 1. **Sidebar Aggregator**: Combine GTK bookmarks, `recent:///` locations, and `DeviceManager` drives into a unified sidebar model.
-2. **Thumbnail Loader**: Implement an async image loader (like Coil/Kamel) to load the `thumbnailPath` exposed in `FileInfo`.
+2. **Thumbnail Service**: Implement the "Clever" Thumbnailing Flow using Coil 3 + custom GNOME fetcher (porting Python shortcuts like symlink resolving and local fast-path).
 3. **Main Application Bridge**: Initialize Compose Desktop and integrate `GApplication.register()` with the `MainContext.iteration()` pump for native callbacks.
 4. **Visual Prototype**: Build the first interactive Compose Multiplatform frontend consuming the transaction engine and ambient providers.
 
-
 ---
 
-*Generated after binding-generation battle (Sessions 1-2), Core Rewrite (Sessions 3-4), and Policy Hardening (Session 5). Updated at session close.*
+*Generated after binding-generation battle (Sessions 1-2), Core Rewrite (Sessions 3-4), Policy Hardening (Session 5), and Core Engine Polish (Session 6). Updated at session close.*
 
 sincerely yours, crimson heart ❤️

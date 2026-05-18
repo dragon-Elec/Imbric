@@ -7,6 +7,7 @@ PROJECT_DIR="/home/ray/Desktop/files/wrk/Imbric/imbric-kt"
 TOOL_DIR="${PROJECT_DIR}/build/native-gen/tools"
 GEN_DIR="${PROJECT_DIR}/build/native-gen/bindings"
 TEMP_GEN="${PROJECT_DIR}/build/native-gen/temp_raw"
+PATCHED_JAVA_GI="${PROJECT_DIR}/ref/java-gi/generator/build/install/java-gi/bin/java-gi"
 
 echo "==> [1/5] Infrastructure Setup"
 mkdir -p "$TOOL_DIR"
@@ -14,30 +15,32 @@ mkdir -p "$GEN_DIR"
 rm -rf "$GEN_DIR"/*
 rm -rf "$TEMP_GEN"
 
-# Download Tooling
-if [ ! -f "${TOOL_DIR}/java-gi-${VERSION}.zip" ]; then
-    echo "    Downloading java-gi ${VERSION}..."
-    wget -q -O "${TOOL_DIR}/java-gi-${VERSION}.zip" "https://codeberg.org/java-gi/java-gi/releases/download/${VERSION}/java-gi-${VERSION}.zip"
-    unzip -q -o "${TOOL_DIR}/java-gi-${VERSION}.zip" -d "$TOOL_DIR"
-fi
-
-# Download Foundation Sources
+# Download Foundation Sources (needed for org.javagi.* classes)
 if [ ! -f "${TOOL_DIR}/glib-${VERSION}-sources.jar" ]; then
     echo "    Fetching official sources from Maven Central..."
     wget -q -O "${TOOL_DIR}/glib-${VERSION}-sources.jar" "https://repo.maven.apache.org/maven2/org/java-gi/glib/${VERSION}/glib-${VERSION}-sources.jar"
 fi
 
 echo "==> [2/5] Extracting Stable Foundation & Hand-written types"
-# Extract core logic that never changes
-unzip -q -o "${TOOL_DIR}/glib-${VERSION}-sources.jar" "org/javagi/*" -d "$GEN_DIR"
-unzip -q -o "${TOOL_DIR}/glib-${VERSION}-sources.jar" "org/gnome/glib/List.java" -d "$GEN_DIR"
-unzip -q -o "${TOOL_DIR}/glib-${VERSION}-sources.jar" "org/gnome/glib/SList.java" -d "$GEN_DIR"
-unzip -q -o "${TOOL_DIR}/glib-${VERSION}-sources.jar" "org/gnome/glib/HashTable.java" -d "$GEN_DIR"
-unzip -q -o "${TOOL_DIR}/glib-${VERSION}-sources.jar" "org/gnome/glib/ByteArray.java" -d "$GEN_DIR"
+# Copy foundation classes from the local java-gi repo
+cp -r "${PROJECT_DIR}/ref/java-gi/modules/glib/src/main/java/org" "$GEN_DIR"
+# Copy specific hand-written types from the local java-gi repo
+# (These are already copied by the cp -r above if they are in org/gnome/glib)
+# But let's make sure we have the latest versions from the repo.
+mkdir -p "$GEN_DIR/org/gnome/glib/"
+cp "${PROJECT_DIR}/ref/java-gi/modules/glib/src/main/java/org/gnome/glib/List.java" "$GEN_DIR/org/gnome/glib/"
+cp "${PROJECT_DIR}/ref/java-gi/modules/glib/src/main/java/org/gnome/glib/SList.java" "$GEN_DIR/org/gnome/glib/"
+cp "${PROJECT_DIR}/ref/java-gi/modules/glib/src/main/java/org/gnome/glib/HashTable.java" "$GEN_DIR/org/gnome/glib/"
+cp "${PROJECT_DIR}/ref/java-gi/modules/glib/src/main/java/org/gnome/glib/ByteArray.java" "$GEN_DIR/org/gnome/glib/"
 
-echo "==> [3/5] Generating Native GNOME 46 Bindings"
+echo "==> [3/5] Generating Native GNOME 46 Bindings (using PATCHED generator)"
 mkdir -p "$TEMP_GEN"
-"${TOOL_DIR}/java-gi-${VERSION}/bin/java-gi" -S -s "Imbric Native Bindings" \
+
+# We use our locally built, patched java-gi generator.
+# Patch 1: Automatically upgrades scope="call" to "async" for _async functions.
+# Patch 2: Allows CLI-provided GIR files to override bundled ones.
+
+"$PATCHED_JAVA_GI" -S -s "Imbric Native Bindings" \
     -d org.gnome \
     -o "$TEMP_GEN" \
     /usr/share/gir-1.0/GLib-2.0.gir \
@@ -57,10 +60,6 @@ done
 rm -rf "$TEMP_GEN"
 
 echo "==> [5/5] Surgical Patching (GPid Pointer Bug)"
-# Patch MountOperation.java:
-# 1. Add missing Alias import
-# 2. Change broken Pid.get...Values -> Alias.getAddressValues
-# 3. Change hardcoded size 4 -> 8 (Pointer size on 64-bit)
 MO_FILE="$GEN_DIR/org/gnome/gio/MountOperation.java"
 if [ -f "$MO_FILE" ]; then
     echo "    Patching MountOperation.java..."
@@ -76,4 +75,4 @@ fi
 echo "    Removing module-info.java..."
 find "$GEN_DIR" -name "module-info.java" -delete
 
-echo "DONE: Bindings generated and patched successfully."
+echo "DONE: Bindings generated and patched successfully with the fix."

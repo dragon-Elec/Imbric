@@ -52,7 +52,9 @@ com.imbric
 - **UI state is app-only:** Which folder is the user looking at? What's selected? Grid or list view? These are application-layer concerns. The core provides `DirState` (a live folder watcher), but the `FileBrowserViewModel` that wraps it with back/forward history and selection state lives in `app/viewmodel/`.
 - **Reads vs Writes:** Scans/reads go through `ifs` directly. Only mutating ops (copy/move/trash) create transactions.
 - **Initialization:** Always call `org.gnome.gio.Gio.javagi$ensureInitialized()` before using GIO interfaces (especially static methods on interfaces like `File.newForUri`).
-- **Sync over Async:** Prefer synchronous GIO methods wrapped in `Dispatchers.IO` (e.g., `enumerateChildren`, `queryInfo`) over async versions with callbacks to avoid GLib Main Context synchronization issues in Coroutines.
+- **Sync over Async (Reads):** Prefer synchronous GIO methods wrapped in `Dispatchers.IO` (e.g., `enumerateChildren`, `queryInfo`) for fast metadata reads to avoid GLib Main Context synchronization issues in Coroutines. For recursive operations (like search), use `kotlinx.coroutines.yield()` inside loops to ensure cooperative cancellation.
+- **Async over Sync (Writes):** All mutating operations (copy, move, trash, delete, rename) MUST use the `GioCoroutineBridge.awaitGioAsync` bridge. This ensures proper cancellation propagation via `GCancellable`, prevents JVM thread blocking during long transfers, and avoids FFM memory crashes via the patched generator.
+- **GLib Main Context Pump:** All `awaitGioAsync` calls require a running `GMainContext` pump (see `GioCoroutineBridge.startMainContextPump`). In the `app` layer, this is typically handled by the Compose frame loop or a dedicated daemon thread.
 - **GPid Bug:** The `java-gi` generator has a template bug on older GNOME versions where `GPid` is a pointer. This is patched in `generate_bindings.sh` by replacing `Pid.get...Values` with `Alias.getAddressValues` and forcing a pointer-size of 8 bytes.
 - **Undo/Trash:** Integrated into `transactions/` hub, not separate modules.
 - **Policies are application-layer:** Core provides `XferArbiter` engine + `SyncPolicy` interface; user policies (e.g. "Modified Only") live in app layer.
@@ -110,6 +112,13 @@ com.imbric
 ```
 
 Pipeline: download java-gi CLI from Codeberg → generate Java sources from `/usr/share/gir-1.0/{GLib,GObject,Gio}-2.0.gir` → fetch foundation classes (`org.javagi.*`) from Maven Central → delete `module-info.java` → strip `org.gnome.` prefix via sed → compile via Gradle source set.
+
+**Local Patched Generator (`ref/java-gi`):**
+We maintain a local clone of the `java-gi` repository in `ref/java-gi`. We have applied critical AST-level patches to the generator source code to fix upstream GNOME metadata bugs:
+1. **Async Safety Patch:** Automatically detects `_async` functions and forces their callbacks to use `Scope.ASYNC` (Global Arena), preventing fatal `SIGSEGV` crashes (like the one in `moveAsync`) caused by incorrect `scope="call"` annotations in GNOME's GIR files.
+2. **Override Priority Patch:** Allows CLI-provided `.gir` files to correctly override the generator's internal bundled `gir-files.zip`.
+
+The `generate_bindings.sh` script builds and uses this local, patched generator instead of the official release to ensure our async file operations are memory-safe.
 
 **Known generator bugs (java-gi 0.15.0):**
 
