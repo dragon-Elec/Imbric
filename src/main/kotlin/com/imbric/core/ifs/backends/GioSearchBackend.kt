@@ -41,7 +41,7 @@ class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBack
 
     override fun list(uri: String): Flow<FileInfo> {
         // search:///query?root=...&mime=...
-        val query = uri.substringAfter("search:///", "").substringBefore("?")
+        val text = uri.substringAfter("search:///", "").substringBefore("?")
         val params = uri.substringAfter("?", "").split("&").associate {
             val parts = it.split("=")
             if (parts.size == 2) parts[0] to parts[1] else it to ""
@@ -49,21 +49,21 @@ class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBack
         val root = params["root"]?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: "file:///"
         val mime = params["mime"]
         
-        return search(query, root, mime)
+        return search(com.imbric.core.models.VfsQuery(text = text, rootUri = root, mimeFilter = mime))
     }
 
-    override fun search(query: String, root: String, mimeFilter: String?): Flow<FileInfo> = flow {
-        if (query.isBlank()) return@flow
+    override fun search(query: com.imbric.core.models.VfsQuery): Flow<FileInfo> = flow {
+        if (query.text.isBlank()) return@flow
 
         // 1. Try Tracker3
-        val trackerResults = runTrackerSearch(query)
+        val trackerResults = runTrackerSearch(query.text)
         if (trackerResults != null) {
             trackerResults.forEach { uri ->
                 // Only return results that are within the requested root
-                if (uri.startsWith(root)) {
+                if (uri.startsWith(query.rootUri)) {
                     val info = fallback.getMetadata(uri).getOrNull()
                     if (info != null) {
-                        if (mimeFilter == null || info.mimeType.startsWith(mimeFilter)) {
+                        if (query.mimeFilter == null || info.mimeType.startsWith(query.mimeFilter)) {
                             emit(info)
                         }
                     }
@@ -71,7 +71,7 @@ class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBack
             }
         } else {
             // 2. Fallback to manual walk
-            emitAll(fallback.search(query, root, mimeFilter))
+            emitAll(fallback.search(query))
         }
     }.flowOn(Dispatchers.IO)
 

@@ -33,9 +33,50 @@ data class FileInfo(
     val iconName: String? = null,
     val thumbnailPath: String? = null,
     val backendId: String? = null,
+    
+    // Location Flags
+    val isInTrash: Boolean = false,
+    val isInRecent: Boolean = false,
+    val isRemote: Boolean = false,
+    
+    // Mount Capabilities
+    val canMount: Boolean = false,
+    val canUnmount: Boolean = false,
+    val canEject: Boolean = false,
+    
     /** Extensible bag for native-specific metadata (e.g., GIO attributes, Windows ACLs, Android Scoped Storage tags). */
     val attributes: Map<String, Any?> = emptyMap()
 ) {
+    /**
+     * Returns true if the file should be hidden from the user by default.
+     * Checks for leading dots and the native hidden flag.
+     */
+    fun isVisiblyHidden(showHiddenFiles: Boolean = false): Boolean {
+        if (showHiddenFiles) return false
+        return isHidden || name.startsWith(".")
+    }
+
+    /**
+     * Returns true if the file should be shown in the UI.
+     */
+    fun shouldShow(showHiddenFiles: Boolean = false): Boolean {
+        return !isVisiblyHidden(showHiddenFiles)
+    }
+
+    /**
+     * Returns true if this file matches the given glob pattern.
+     */
+    fun matches(pattern: String): Boolean {
+        if (pattern.isEmpty() || pattern == "*") return true
+        // Escape dots FIRST, then replace wildcards — otherwise the dots inside `.*` get escaped
+        val regex = pattern
+            .replace(".", "\\.")   // escape literal dots
+            .replace("*", ".*")    // glob * → regex .*
+            .replace("?", ".")     // glob ? → regex .
+            .toRegex(RegexOption.IGNORE_CASE)
+        return regex.matches(name)
+    }
+
     val extension: String
         get() = name.substringAfterLast('.', "")
 
@@ -65,4 +106,15 @@ data class FileInfo(
             val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
             return String.format("%.1f %s", size / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
         }
+
+    companion object {
+        /** Sort by name (directories first, then files). */
+        val SortByName = compareBy<FileInfo> { !it.isDirectory }.thenBy { it.name.lowercase() }
+
+        /** Sort by size (directories first, then largest files). */
+        val SortBySize = compareBy<FileInfo> { !it.isDirectory }.thenByDescending { it.size }
+
+        /** Sort by modification time (directories first, then newest files). */
+        val SortByDate = compareBy<FileInfo> { !it.isDirectory }.thenByDescending { it.modifiedTime }
+    }
 }

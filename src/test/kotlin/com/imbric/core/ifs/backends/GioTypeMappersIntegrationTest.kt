@@ -39,14 +39,13 @@ class GioTypeMappersIntegrationTest {
         // GioTypeMappers.toImbricFileInfo maps them as-is from getAttributeAsString
         
         assertNotNull(attrs["standard::size"], "standard::size should be in attributes")
-        assertEquals("12", attrs["standard::size"].toString())
+        assertEquals(12L, attrs["standard::size"])
         
         assertNotNull(attrs["standard::display-name"], "standard::display-name should be in attributes")
         assertNotNull(attrs["standard::content-type"], "standard::content-type should be in attributes")
         
         // Check permissions in bag
         assertNotNull(attrs["access::can-read"])
-        // GIO returns "TRUE" / "FALSE" for booleans via getAttributeAsString
-        assertEquals("TRUE", attrs["access::can-read"].toString())
+        assertEquals(true, attrs["access::can-read"])
     }
 }

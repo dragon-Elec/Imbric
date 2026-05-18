@@ -27,8 +27,10 @@ class TransactionDispatcher(
     // Dedicated IO scope for heavy disk work
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO) 
 ) {
-    // 🔥 THE FIX: Limits disk I/O to 4 files at a time. Prevents OS crash!
-    private val ioSemaphore = Semaphore(4) 
+    // 🔥 THE FIX: Backend-aware concurrency limits.
+    // Local GIO can handle 32 concurrent ops; Network/MTP limited to 8.
+    private val localSemaphore = Semaphore(32)
+    private val networkSemaphore = Semaphore(8)
     
     // Tracks active jobs so we can cancel them instantly if requested
     private val activeJobs = ConcurrentHashMap<Uuid, Job>()
@@ -36,10 +38,6 @@ class TransactionDispatcher(
     /**
      * Dispatches a single job to the backend. 
      * Handles the execution, throttling, and JIT conflicts.
-     *
-     * @param policy  SyncPolicy evaluated JIT in the catch block before prompting the user.
-     *                On HIGH-latency backends (MTP, SMB) this prevents unnecessary network
-     *                round-trips during pre-flight — conflicts are resolved here instead.
      */
     fun dispatchJob(
         tid: Uuid,
@@ -50,8 +48,12 @@ class TransactionDispatcher(
         policy: SyncPolicy = SyncPolicy.Standard
     ) {
         val jobCoro = scope.launch {
-            // 🔥 WAIT IN LINE: Coroutine pauses here until one of the 4 slots opens up
-            ioSemaphore.withPermit {
+            val backend = backendRegistry.getIo(op.src) ?: return@launch
+            val uriScheme = op.src.substringBefore("://", "file")
+            val semaphore = if (uriScheme == "file" || uriScheme == "trash") localSemaphore else networkSemaphore
+
+            // 🔥 WAIT IN LINE: Coroutine pauses here until a slot opens up for this backend type
+            semaphore.withPermit {
                 // Ensure we haven't been cancelled while waiting in line
                 if (!isActive) return@withPermit 
                 
@@ -88,6 +90,7 @@ class TransactionDispatcher(
             retry = false
             try {
                 val backend = backendRegistry.getIo(currentOp.src) ?: return
+                val backendScheme = currentOp.src.substringBefore("://", "file")
                 
                 val job = FileJob(
                     id = currentOp.jobId,
@@ -133,16 +136,17 @@ class TransactionDispatcher(
                         emitThrottledProgress(it) 
                     }
                     "trash" -> backend.trash(job).getOrThrow().also { 
-                        inverse = InversePayload(action = "undo_trash", target = job.source, dest = job.source, backendId = "gio")
+                        inverse = InversePayload(action = "undo_trash", target = job.source, dest = job.source, backendId = backendScheme)
                         onProgress(TransferProgress(job.id, job.source, null, inverse, 1, 1, 0, 0)) 
                     }
                     "delete" -> backend.delete(job).getOrThrow().also { 
                         onProgress(TransferProgress(job.id, job.source, null, null, 1, 1, 0, 0)) 
                     }
-                    "rename" -> backend.rename(job.source, job.dest).getOrThrow().also { 
-                        actualDest = job.dest
-                        inverse = InversePayload(action = "undo_rename", target = actualDest!!, dest = job.source, backendId = "gio")
-                        onProgress(TransferProgress(job.id, job.source, actualDest, inverse, 1, 1, 0, 0)) 
+                    "rename" -> {
+                        val renamedUri = backend.rename(job.source, job.dest).getOrThrow()
+                        actualDest = renamedUri
+                        inverse = InversePayload(action = "undo_rename", target = renamedUri, dest = job.source, backendId = backendScheme)
+                        onProgress(TransferProgress(job.id, job.source, renamedUri, inverse, 1, 1, 0, 0))
                     }
                     "undo" -> {
                         val payload = job.inversePayload ?: throw Exception("Undo payload missing")
@@ -154,6 +158,9 @@ class TransactionDispatcher(
                 // Job completely finished successfully
                 onStatusUpdate(currentOp.jobId, TransactionStatus.COMPLETED, "", actualDest, inverse)
 
+            } catch (e: CancellationException) {
+                // Re-throw for proper coroutine cancellation — do NOT report as FAILED
+                throw e
             } catch (e: Exception) {
                 // JIT CONFLICT RESOLUTION (also handles blind pre-flight from HIGH-latency backends)
                 val errorCode = (e as? VfsConflictException)?.code ?: -1

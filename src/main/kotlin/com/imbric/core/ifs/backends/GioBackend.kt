@@ -9,7 +9,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 import kotlin.uuid.Uuid
@@ -20,12 +19,8 @@ import org.gnome.gio.FileCopyFlags
 import org.gnome.gio.FileMonitorFlags
 import org.gnome.gio.FileMonitorEvent
 import org.gnome.gio.FileCreateFlags
-import org.gnome.gio.Cancellable
 import org.gnome.gio.FileProgressCallback
-import org.gnome.gio.AsyncReadyCallback
 import org.gnome.glib.GLib
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 import kotlin.uuid.ExperimentalUuidApi
 import org.gnome.gdkpixbuf.GdkPixbuf
 import org.gnome.gdkpixbuf.PixbufLoader
@@ -139,63 +134,94 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     }
 
     override suspend fun copy(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.channelFlow {
-        withContext(Dispatchers.IO) {
-            val finalDest = if (job.autoRename) resolveUniqueTarget(job.dest) else job.dest
-            val src = File.newForUri(job.source)
-            val dest = File.newForUri(finalDest)
-            
-            val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
-            
-            try {
-                src.copy(dest, flags, null) { current, total, _ ->
-                    trySend(TransferProgress(job.id, job.source, finalDest, null, 0, 1, current, total))
+        val finalDest = if (job.autoRename) resolveUniqueTarget(job.dest) else job.dest
+        val src = File.newForUri(job.source)
+        val dest = File.newForUri(finalDest)
+        
+        val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
+        
+        try {
+            val progressCb = FileProgressCallback { current, total, _ ->
+                trySend(TransferProgress(job.id, job.source, finalDest, null, 0, 1, current, total))
+            }
+
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    src.copyAsync(dest, flags, GLib.PRIORITY_DEFAULT, cancellable, progressCb, callback)
+                },
+                finish = { result ->
+                    src.copyFinish(result)
                 }
-                // Report success with dynamic InversePayload
+            )
+
+            // Report success with dynamic InversePayload
+            val inverse = InversePayload(
+                action = "undo_copy",
+                target = finalDest,
+                backendId = scheme
+            )
+            trySend(TransferProgress(job.id, job.source, finalDest, inverse, 1, 1, 0, 0))
+        } catch (e: org.javagi.base.GErrorException) {
+            // G_IO_ERROR_WOULD_RECURSE is 25 in GNOME 46
+            if (e.code == 25) { 
+                copyRecursive(src, dest, job, this@channelFlow)
+                // Report success for the recursive operation
                 val inverse = InversePayload(
                     action = "undo_copy",
                     target = finalDest,
-                    backendId = "gio"
+                    backendId = scheme
                 )
                 trySend(TransferProgress(job.id, job.source, finalDest, inverse, 1, 1, 0, 0))
-            } catch (e: org.javagi.base.GErrorException) {
-                // G_IO_ERROR_WOULD_RECURSE is 25 in GNOME 46
-                if (e.code == 25) { 
-                    copyRecursive(src, dest, job, this@channelFlow)
-                } else {
-                    throw translateError(e)
-                }
+            } else {
+                throw translateError(e)
             }
         }
     }.flowOn(Dispatchers.IO)
 
     override suspend fun move(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.channelFlow {
-        withContext(Dispatchers.IO) {
-            val finalDest = if (job.autoRename) resolveUniqueTarget(job.dest) else job.dest
-            val src = File.newForUri(job.source)
-            val dest = File.newForUri(finalDest)
-            
-            val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
-            
-            try {
-                src.move(dest, flags, null) { current, total, _ ->
-                    trySend(TransferProgress(job.id, job.source, finalDest, null, 0, 1, current, total))
+        val finalDest = if (job.autoRename) resolveUniqueTarget(job.dest) else job.dest
+        val src = File.newForUri(job.source)
+        val dest = File.newForUri(finalDest)
+        
+        val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
+        
+        try {
+            val progressCb = FileProgressCallback { current, total, _ ->
+                trySend(TransferProgress(job.id, job.source, finalDest, null, 0, 1, current, total))
+            }
+
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    src.moveAsync(dest, flags, GLib.PRIORITY_DEFAULT, cancellable, progressCb, callback)
+                },
+                finish = { result ->
+                    src.moveFinish(result)
                 }
-                // Report success with dynamic InversePayload
+            )
+
+            // Report success with dynamic InversePayload
+            val inverse = InversePayload(
+                action = "undo_move",
+                target = finalDest,
+                dest = job.source,
+                backendId = scheme
+            )
+            trySend(TransferProgress(job.id, job.source, finalDest, inverse, 1, 1, 0, 0))
+        } catch (e: org.javagi.base.GErrorException) {
+            // G_IO_ERROR_WOULD_RECURSE is 25 in GNOME 46
+            if (e.code == 25) { 
+                copyRecursive(src, dest, job, this@channelFlow)
+                src.deleteRecursive()
+                // Report success for the recursive operation
                 val inverse = InversePayload(
                     action = "undo_move",
                     target = finalDest,
                     dest = job.source,
-                    backendId = "gio"
+                    backendId = scheme
                 )
                 trySend(TransferProgress(job.id, job.source, finalDest, inverse, 1, 1, 0, 0))
-            } catch (e: org.javagi.base.GErrorException) {
-                // G_IO_ERROR_WOULD_RECURSE is 25 in GNOME 46
-                if (e.code == 25) { 
-                    copyRecursive(src, dest, job, this@channelFlow)
-                    src.deleteRecursive()
-                } else {
-                    throw translateError(e)
-                }
+            } else {
+                throw translateError(e)
             }
         }
     }.flowOn(Dispatchers.IO)
@@ -209,55 +235,80 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         val info = src.queryInfo("standard::type", FileQueryInfoFlags.NONE, null)
         if (info.fileType == FileType.DIRECTORY) {
             if (!dest.queryExists(null)) {
-                dest.makeDirectory(null)
+                GioCoroutineBridge.awaitGioAsync(
+                    block = { cancellable, callback ->
+                        dest.makeDirectoryAsync(GLib.PRIORITY_DEFAULT, cancellable, callback)
+                    },
+                    finish = { result ->
+                        dest.makeDirectoryFinish(result)
+                    }
+                )
             }
             
             val enumerator = src.enumerateChildren("standard::name", FileQueryInfoFlags.NONE, null)
             try {
                 var childInfo = enumerator.nextFile(null)
                 while (childInfo != null) {
-                    val childSrc = src.getChild(childInfo.name!!)
-                    val childDest = dest.getChild(childInfo.name!!)
-                    copyRecursive(childSrc, childDest, job, channel)
+                    val name = childInfo.name?.toString()
+                    if (!name.isNullOrEmpty()) {
+                        val childSrc = src.getChild(name)
+                        val childDest = dest.getChild(name)
+                        copyRecursive(childSrc, childDest, job, channel)
+                    }
                     childInfo = enumerator.nextFile(null)
+                    kotlinx.coroutines.yield()
                 }
             } finally {
                 enumerator.close(null)
             }
         } else {
             val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
-            src.copy(dest, flags, null) { current, total, _ ->
+            val progressCb = FileProgressCallback { current, total, _ ->
                 channel.trySend(TransferProgress(job.id, src.uri, dest.uri, null, 0, 1, current, total))
             }
+            
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    src.copyAsync(dest, flags, GLib.PRIORITY_DEFAULT, cancellable, progressCb, callback)
+                },
+                finish = { result ->
+                    src.copyFinish(result)
+                }
+            )
         }
     }
 
-    private fun File.deleteRecursive() {
+    private suspend fun File.deleteRecursive() {
         val info = queryInfo("standard::type", FileQueryInfoFlags.NONE, null)
         if (info.fileType == FileType.DIRECTORY) {
             val enumerator = enumerateChildren("standard::name", FileQueryInfoFlags.NONE, null)
             try {
                 var childInfo = enumerator.nextFile(null)
                 while (childInfo != null) {
-                    getChild(childInfo.name!!).deleteRecursive()
+                    val name = childInfo.name?.toString()
+                    if (!name.isNullOrEmpty()) {
+                        getChild(name).deleteRecursive()
+                    }
                     childInfo = enumerator.nextFile(null)
+                    kotlinx.coroutines.yield()
                 }
             } finally {
                 enumerator.close(null)
             }
         }
-        delete(null)
-    }
-
-    override suspend fun trash(job: FileJob): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            File.newForUri(job.source).trash(null)
-            Unit
-        }
+        
+        GioCoroutineBridge.awaitGioAsync(
+            block = { cancellable, callback ->
+                deleteAsync(GLib.PRIORITY_DEFAULT, cancellable, callback)
+            },
+            finish = { result ->
+                deleteFinish(result)
+            }
+        )
     }
 
     override suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val src = File.newForUri(trashPath)
             val dest = File.newForUri(originalPath)
             
@@ -275,15 +326,18 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
             }
             
             val finalDest = File.newForUri(finalDestUri)
-            src.move(finalDest, FileCopyFlags.NONE, null, null)
-            finalDestUri
-        }
-    }
-
-    override suspend fun delete(job: FileJob): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            File.newForUri(job.source).delete(null)
-            Unit
+            
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    src.moveAsync(finalDest, FileCopyFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, null, callback)
+                },
+                finish = { result ->
+                    src.moveFinish(result)
+                }
+            )
+            Result.success(finalDestUri)
+        } catch (e: Exception) {
+            Result.failure(translateError(e))
         }
     }
 
@@ -299,7 +353,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
             try {
                 var info = enumerator.nextFile(null)
                 while (info != null) {
-                    val name = info.name ?: ""
+                    val name = info.name?.toString() ?: ""
                     val size = info.size
                     
                     val origPathAttr = info.getAttributeByteString("trash::orig-path")
@@ -325,24 +379,45 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     }
 
     override suspend fun emptyTrash(): Result<Int> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             var deleted = 0
             val trashRoot = File.newForUri("trash:///")
             val enumerator = trashRoot.enumerateChildren("standard::name", FileQueryInfoFlags.NONE, null)
+            val children = mutableListOf<File>()
+            
             try {
                 var info = enumerator.nextFile(null)
                 while (info != null) {
-                    val child = trashRoot.getChild(info.name!!)
-                    try {
-                        child.deleteRecursive()
-                        deleted++
-                    } catch (e: Exception) { }
+                    val name = info.name?.toString()
+                    if (!name.isNullOrEmpty()) {
+                        children.add(trashRoot.getChild(name))
+                    }
                     info = enumerator.nextFile(null)
                 }
             } finally {
                 enumerator.close(null)
             }
-            deleted
+
+            for (child in children) {
+                try {
+                    // Use the async delete for each item
+                    GioCoroutineBridge.awaitGioAsync(
+                        block = { cancellable, callback ->
+                            child.deleteAsync(GLib.PRIORITY_DEFAULT, cancellable, callback)
+                        },
+                        finish = { result ->
+                            child.deleteFinish(result)
+                        }
+                    )
+                    deleted++
+                } catch (e: Exception) {
+                    // Log individual failures but continue emptying the rest
+                    org.gnome.glib.GLib.log("Imbric", org.gnome.glib.LogLevelFlags.LEVEL_WARNING, "Failed to delete trash item ${child.uri?.toString() ?: "unknown"}: ${e.message}")
+                }
+            }
+            Result.success(deleted)
+        } catch (e: Exception) {
+            Result.failure(translateError(e))
         }
     }
 
@@ -355,56 +430,192 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     }
 
     override suspend fun createFolder(parentUri: String, name: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val parent = File.newForUri(parentUri)
             val child = parent.getChild(name)
-            child.makeDirectory(null)
-            child.uri
+            
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    child.makeDirectoryAsync(GLib.PRIORITY_DEFAULT, cancellable, callback)
+                },
+                finish = { result ->
+                    child.makeDirectoryFinish(result)
+                }
+            )
+            Result.success(child.uri)
+        } catch (e: Exception) {
+            Result.failure(translateError(e))
         }
     }
 
     override suspend fun createFile(parentUri: String, name: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val parent = File.newForUri(parentUri)
             val child = parent.getChild(name)
-            child.create(FileCreateFlags.NONE, null).close()
-            child.uri
+            
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    child.createAsync(FileCreateFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, callback)
+                },
+                finish = { result ->
+                    child.createFinish(result).close()
+                }
+            )
+            Result.success(child.uri)
+        } catch (e: Exception) {
+            Result.failure(translateError(e))
         }
     }
 
     override suspend fun rename(uri: String, newName: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val gfile = File.newForUri(uri)
-            val newFile = gfile.setDisplayName(newName, null)
-            newFile.uri
+            
+            val newFile = GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    gfile.setDisplayNameAsync(newName, GLib.PRIORITY_DEFAULT, cancellable, callback)
+                },
+                finish = { result ->
+                    gfile.setDisplayNameFinish(result)
+                }
+            )
+            
+            Result.success(newFile?.uri ?: uri)
+        } catch (e: Exception) {
+            Result.failure(translateError(e))
+        }
+    }
+
+    override suspend fun mountEnclosingVolume(uri: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val gfile = File.newForUri(uri)
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    // We use null for MountOperation as we don't have a UI prompter in core
+                    gfile.mountEnclosingVolume(org.gnome.gio.MountMountFlags.NONE, null, cancellable, callback)
+                },
+                finish = { result ->
+                    gfile.mountEnclosingVolumeFinish(result)
+                }
+            )
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(translateError(e))
+        }
+    }
+
+    override suspend fun unmount(uri: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val gfile = File.newForUri(uri)
+            val mount = gfile.findEnclosingMount(null) 
+                ?: return@withContext Result.failure(Exception("No enclosing mount found for $uri"))
+            
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    mount.unmountWithOperation(org.gnome.gio.MountUnmountFlags.NONE, null, cancellable, callback)
+                },
+                finish = { result ->
+                    mount.unmountWithOperationFinish(result)
+                }
+            )
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(translateError(e))
+        }
+    }
+
+    override suspend fun trash(job: FileJob): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val gfile = File.newForUri(job.source)
+            
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    gfile.trashAsync(GLib.PRIORITY_DEFAULT, cancellable, callback)
+                },
+                finish = { result ->
+                    gfile.trashFinish(result)
+                }
+            )
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(translateError(e))
+        }
+    }
+
+    override suspend fun delete(job: FileJob): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val gfile = File.newForUri(job.source)
+            
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    gfile.deleteAsync(GLib.PRIORITY_DEFAULT, cancellable, callback)
+                },
+                finish = { result ->
+                    gfile.deleteFinish(result)
+                }
+            )
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(translateError(e))
         }
     }
 
     override suspend fun executeInverse(payload: InversePayload): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val target = File.newForUri(payload.target)
             when (payload.action) {
                 "undo_copy" -> {
-                    target.trash(null)
+                    GioCoroutineBridge.awaitGioAsync(
+                        block = { cancellable, callback ->
+                            target.trashAsync(GLib.PRIORITY_DEFAULT, cancellable, callback)
+                        },
+                        finish = { result ->
+                            target.trashFinish(result)
+                        }
+                    )
                 }
                 "undo_move" -> {
-                    val dest = File.newForUri(payload.dest!!)
-                    target.move(dest, FileCopyFlags.NONE, null, null)
+                    val destUri = payload.dest ?: throw Exception("Original destination missing in payload")
+                    val dest = File.newForUri(destUri)
+                    GioCoroutineBridge.awaitGioAsync(
+                        block = { cancellable, callback ->
+                            target.moveAsync(dest, FileCopyFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, null, callback)
+                        },
+                        finish = { result ->
+                            target.moveFinish(result)
+                        }
+                    )
                 }
                 "undo_rename" -> {
                     val originalName = payload.dest?.uriName ?: throw Exception("Original name missing in payload")
-                    target.setDisplayName(originalName, null)
+                    GioCoroutineBridge.awaitGioAsync(
+                        block = { cancellable, callback ->
+                            target.setDisplayNameAsync(originalName, GLib.PRIORITY_DEFAULT, cancellable, callback)
+                        },
+                        finish = { result ->
+                            target.setDisplayNameFinish(result)
+                        }
+                    )
                 }
                 "undo_trash" -> {
                     val originalPath = payload.dest ?: throw Exception("Original path missing in payload")
-                    restoreFromTrash(payload.target, originalPath)
+                    restoreFromTrash(payload.target, originalPath).getOrThrow()
                 }
                 "undo_create" -> {
-                    target.trash(null)
+                    GioCoroutineBridge.awaitGioAsync(
+                        block = { cancellable, callback ->
+                            target.trashAsync(GLib.PRIORITY_DEFAULT, cancellable, callback)
+                        },
+                        finish = { result ->
+                            target.trashFinish(result)
+                        }
+                    )
                 }
                 else -> throw UnsupportedOperationException("Unknown inverse action: ${payload.action}")
             }
-            Unit
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(translateError(e))
         }
     }
 
@@ -435,16 +646,18 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
     override fun exists(uri: String): Boolean = File.newForUri(uri).queryExists(null)
 
-    override fun search(query: String, root: String, mimeFilter: String?): Flow<FileInfo> = flow {
-        val rootFile = File.newForUri(root)
-        val queryLower = query.lowercase()
+    override fun search(query: com.imbric.core.models.VfsQuery): Flow<FileInfo> = flow {
+        val rootFile = File.newForUri(query.rootUri)
+        val queryLower = query.text.lowercase()
         val queryAttrs = "standard::*,time::*,unix::*,owner::*,access::*"
         
-        val stack = ArrayDeque<File>()
-        stack.add(rootFile)
+        val stack = ArrayDeque<Pair<File, Int>>()
+        stack.add(rootFile to 0)
         
         while (stack.isNotEmpty()) {
-            val dir = stack.removeLast()
+            val (dir, depth) = stack.removeLast()
+            if (depth > query.maxDepth) continue
+
             val enumerator = try {
                 dir.enumerateChildren(queryAttrs, FileQueryInfoFlags.NONE, null)
             } catch (e: Exception) {
@@ -454,18 +667,26 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
             try {
                 var info = enumerator.nextFile(null)
                 while (info != null) {
-                    val name = info.name ?: ""
+                    val name = info.name?.toString()
+                    if (name.isNullOrEmpty()) { info = enumerator.nextFile(null); continue }
                     val child = dir.getChild(name)
+
+                    // Skip hidden files if not requested
+                    if (!query.includeHidden && (name.startsWith(".") || info.isHidden)) {
+                        info = enumerator.nextFile(null)
+                        kotlinx.coroutines.yield()
+                        continue
+                    }
                     
                     // Recurse into subdirectories
-                    if (info.fileType == FileType.DIRECTORY) {
-                        stack.add(child)
+                    if (info.fileType == FileType.DIRECTORY && query.recursive) {
+                        stack.add(child to depth + 1)
                     }
                     
                     // Match filename against query (case-insensitive)
                     if (name.lowercase().contains(queryLower)) {
                         val fileInfo = GioTypeMappers.toImbricFileInfo(dir, info)
-                        if (mimeFilter == null || fileInfo.mimeType.startsWith(mimeFilter)) {
+                        if (query.mimeFilter == null || fileInfo.mimeType.startsWith(query.mimeFilter)) {
                             emit(fileInfo)
                         }
                     }
@@ -591,67 +812,22 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         }
     }
 
-    internal suspend fun File.copySuspend(
-        destination: File,
-        flags: FileCopyFlags,
-        ioPriority: Int,
-        cancellable: Cancellable?,
-        progressCallback: FileProgressCallback?
-    ): Unit = suspendCancellableCoroutine { cont ->
-        val callback = AsyncReadyCallback { source, result, _ ->
-            try {
-                (source as? File ?: this@copySuspend).copyFinish(result)
-                cont.resume(Unit)
-            } catch (e: org.javagi.base.GErrorException) {
-                cont.resumeWithException(translateError(e))
-            } catch (e: Exception) {
-                cont.resumeWithException(e)
+    private fun translateError(e: Exception): Exception {
+        return when {
+            e is org.gnome.gio.IOException -> when (e.enum) {
+                org.gnome.gio.IOErrorEnum.EXISTS -> VfsConflictException(VfsConflictException.EXISTS, e.message ?: "File exists")
+                org.gnome.gio.IOErrorEnum.NOT_FOUND -> VfsConflictException(VfsConflictException.NOT_FOUND, e.message ?: "File not found")
+                org.gnome.gio.IOErrorEnum.WOULD_RECURSE -> VfsConflictException(VfsConflictException.WOULD_RECURSE, e.message ?: "Directory operation would recurse")
+                else -> e
             }
-        }
-        
-        GLib.idleAdd(GLib.PRIORITY_DEFAULT) {
-            this@copySuspend.copyAsync(destination, flags, ioPriority, cancellable, progressCallback, callback)
-            false
-        }
-        
-        cont.invokeOnCancellation {
-            cancellable?.cancel()
-        }
-    }
-
-    internal suspend fun File.moveSuspend(
-        destination: File,
-        flags: FileCopyFlags,
-        ioPriority: Int,
-        cancellable: Cancellable?,
-        progressCallback: FileProgressCallback?
-    ): Unit = suspendCancellableCoroutine { cont ->
-        val callback = AsyncReadyCallback { source, result, _ ->
-            try {
-                (source as? File ?: this@moveSuspend).moveFinish(result)
-                cont.resume(Unit)
-            } catch (e: org.javagi.base.GErrorException) {
-                cont.resumeWithException(translateError(e))
-            } catch (e: Exception) {
-                cont.resumeWithException(e)
+            // GIO error codes: FAILED=0, NOT_FOUND=1, EXISTS=2, WOULD_RECURSE=25
+            // Maps to VfsConflictException constants (EXISTS=1, NOT_FOUND=2) by semantic name, not numeric value
+            e is org.javagi.base.GErrorException -> when (e.code) {
+                1 -> VfsConflictException(VfsConflictException.NOT_FOUND, e.message ?: "File not found")
+                2 -> VfsConflictException(VfsConflictException.EXISTS, e.message ?: "File exists")
+                25 -> VfsConflictException(VfsConflictException.WOULD_RECURSE, e.message ?: "Directory operation would recurse")
+                else -> e
             }
-        }
-        
-        GLib.idleAdd(GLib.PRIORITY_DEFAULT) {
-            this@moveSuspend.moveAsync(destination, flags, ioPriority, cancellable, progressCallback, callback)
-            false
-        }
-        
-        cont.invokeOnCancellation {
-            cancellable?.cancel()
-        }
-    }
-
-    private fun translateError(e: org.javagi.base.GErrorException): Exception {
-        return when (e.code) {
-            2 -> VfsConflictException(VfsConflictException.EXISTS, e.message ?: "File exists")
-            1 -> VfsConflictException(VfsConflictException.NOT_FOUND, e.message ?: "File not found")
-            25 -> VfsConflictException(VfsConflictException.WOULD_RECURSE, e.message ?: "Directory operation would recurse")
             else -> e
         }
     }

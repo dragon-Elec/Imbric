@@ -80,16 +80,17 @@ class TrashManagerTest {
         backend.createFolder("memory://", "docs")
         backend.createFile("memory://docs", "file1.txt")
         
-        assertTrue(trashManager.isTrashEmpty.value, "Trash should be empty initially")
+        // Note: isTrashEmpty is backed by TrashMonitor which monitors real trash:///
+        // via GIO, not InMemoryBackend. We can only verify listTrashItems behavior here.
+        val initialItems = trashManager.listTrashItems(forceRefresh = true)
+        assertEquals(0, initialItems.size, "InMemoryBackend trash should be empty initially")
         
         trashManager.trashFiles(listOf("memory://docs/file1.txt"))
-        trashManager.listTrashItems(forceRefresh = true) // Trigger update
-        
-        assertFalse(trashManager.isTrashEmpty.value, "Trash should not be empty after trashing")
+        val afterTrashItems = trashManager.listTrashItems(forceRefresh = true)
+        assertEquals(1, afterTrashItems.size, "Should have 1 item after trashing")
         
         trashManager.emptyTrash()
-        trashManager.listTrashItems(forceRefresh = true) // Trigger update
-        
-        assertTrue(trashManager.isTrashEmpty.value, "Trash should be empty after emptying")
+        val afterEmptyItems = trashManager.listTrashItems(forceRefresh = true)
+        assertTrue(afterEmptyItems.isEmpty(), "Trash should be empty after emptying")
     }
 }

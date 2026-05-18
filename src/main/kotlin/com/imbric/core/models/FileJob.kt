@@ -45,6 +45,18 @@ open class CancellationToken {
 }
 
 /**
+ * Structured query for VFS search operations.
+ */
+data class VfsQuery(
+    val text: String,
+    val rootUri: String,
+    val mimeFilter: String? = null,
+    val recursive: Boolean = true,
+    val includeHidden: Boolean = false,
+    val maxDepth: Int = Int.MAX_VALUE
+)
+
+/**
  * Progress update for ongoing operations.
  */
 data class TransferProgress(

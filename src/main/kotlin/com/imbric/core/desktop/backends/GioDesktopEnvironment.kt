@@ -1,6 +1,7 @@
 package com.imbric.core.desktop.backends
 
 import com.imbric.core.desktop.*
+import com.imbric.core.ifs.backends.GioCoroutineBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -50,102 +51,94 @@ class GioDesktopEnvironment : DesktopEnvironment {
     }.flowOn(Dispatchers.IO)
 
     override suspend fun mount(driveId: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            kotlinx.coroutines.suspendCancellableCoroutine<String> { cont ->
-                val gioDrive = volumeMonitor.connectedDrives.find { it?.name == driveId }
-                if (gioDrive == null) {
-                    cont.resumeWithException(Exception("Drive $driveId not found"))
-                    return@suspendCancellableCoroutine
-                }
-                
-                if (!gioDrive.hasVolumes()) {
-                    cont.resumeWithException(Exception("Drive has no volumes"))
-                    return@suspendCancellableCoroutine
-                }
-                
-                val volume = gioDrive.volumes.firstOrNull()
-                if (volume == null) {
-                    cont.resumeWithException(Exception("No volume found on drive"))
-                    return@suspendCancellableCoroutine
-                }
-
-                if (volume.mount != null) {
-                    cont.resume(volume.mount!!.root.uri)
-                    return@suspendCancellableCoroutine
-                }
-
-                val callback = AsyncReadyCallback { source, result, _ ->
-                    try {
-                        val v = source as org.gnome.gio.Volume
-                        v.mountFinish(result)
-                        val newMount = v.mount
-                        if (newMount != null) {
-                            cont.resume(newMount.root.uri)
-                        } else {
-                            cont.resumeWithException(Exception("Mount finished but mount object is null"))
-                        }
-                    } catch (e: Exception) {
-                        cont.resumeWithException(e)
-                    }
-                }
-                
-                GLib.idleAdd(GLib.PRIORITY_DEFAULT) {
-                    volume.mount(org.gnome.gio.MountMountFlags.NONE, null, null, callback)
-                    false
-                }
+        try {
+            val gioDrive = volumeMonitor.connectedDrives.find { it?.name == driveId }
+            if (gioDrive == null) {
+                return@withContext Result.failure(Exception("Drive $driveId not found"))
             }
+            
+            if (!gioDrive.hasVolumes()) {
+                return@withContext Result.failure(Exception("Drive has no volumes"))
+            }
+            
+            val volume = gioDrive.volumes.firstOrNull()
+            if (volume == null) {
+                return@withContext Result.failure(Exception("No volume found on drive"))
+            }
+
+            val existingMount = volume.mount
+            if (existingMount != null) {
+                return@withContext Result.success(existingMount.root.uri ?: "")
+            }
+
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    volume.mount(org.gnome.gio.MountMountFlags.NONE, null, cancellable, callback)
+                },
+                finish = { result ->
+                    volume.mountFinish(result)
+                }
+            )
+            
+            val newMount = volume.mount
+            val rootUri = newMount?.root?.uri
+            if (rootUri != null) {
+                Result.success(rootUri)
+            } else {
+                Result.failure(Exception("Mount finished but mount root URI is null"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
     override suspend fun unmount(driveId: String): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
-                val gioDrive = volumeMonitor.connectedDrives.find { it?.name == driveId }
-                val mount = gioDrive?.volumes?.firstOrNull()?.mount
-                
-                if (mount == null) {
-                    cont.resume(Unit) // Already unmounted or doesn't exist
-                    return@suspendCancellableCoroutine
-                }
-
-                val callback = AsyncReadyCallback { source, result, _ ->
-                    try {
-                        val m = source as org.gnome.gio.Mount
-                        m.unmountWithOperationFinish(result)
-                        cont.resume(Unit)
-                    } catch (e: Exception) {
-                        cont.resumeWithException(e)
-                    }
-                }
-                
-                GLib.idleAdd(GLib.PRIORITY_DEFAULT) {
-                    mount.unmountWithOperation(org.gnome.gio.MountUnmountFlags.NONE, null, null, callback)
-                    false
-                }
+        try {
+            val gioDrive = volumeMonitor.connectedDrives.find { it?.name == driveId }
+            val mount = gioDrive?.volumes?.firstOrNull()?.mount
+            
+            if (mount == null) {
+                return@withContext Result.success(Unit) // Already unmounted or doesn't exist
             }
+
+            GioCoroutineBridge.awaitGioAsync(
+                block = { cancellable, callback ->
+                    mount.unmountWithOperation(org.gnome.gio.MountUnmountFlags.NONE, null, cancellable, callback)
+                },
+                finish = { result ->
+                    mount.unmountWithOperationFinish(result)
+                }
+            )
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
-    override fun getDefaultApp(mimeType: String): DesktopAppInfo? {
+    override fun getDefaultApp(mimeType: String): com.imbric.core.desktop.DesktopAppInfo? {
         val gioApp = org.gnome.gio.AppInfo.getDefaultForType(mimeType, false) ?: return null
-        return DesktopAppInfo(
-            id = gioApp.id ?: "",
-            name = gioApp.name ?: "",
-            executable = gioApp.executable ?: "",
-            icon = gioApp.icon?.toString()
+        return com.imbric.core.desktop.DesktopAppInfo(
+            id = gioApp.getId()?.toString() ?: "",
+            name = gioApp.getName()?.toString() ?: "",
+            executable = gioApp.getExecutable()?.toString() ?: "",
+            icon = gioApp.getIcon()?.let { icon ->
+                if (icon is org.gnome.gio.ThemedIcon) icon.names?.firstOrNull() else null
+            }
         )
     }
 
-    override fun getAllApps(mimeType: String): List<DesktopAppInfo> {
+    override fun getAllApps(mimeType: String): List<com.imbric.core.desktop.DesktopAppInfo> {
         val gioApps = org.gnome.gio.AppInfo.getAllForType(mimeType)
-        val result = mutableListOf<DesktopAppInfo>()
+        val result = mutableListOf<com.imbric.core.desktop.DesktopAppInfo>()
         for (i in 0 until gioApps.size) {
             val gioApp = gioApps.get(i) as? org.gnome.gio.AppInfo ?: continue
-            result.add(DesktopAppInfo(
-                id = gioApp.id ?: "",
-                name = gioApp.name ?: "",
-                executable = gioApp.executable ?: "",
-                icon = gioApp.icon?.toString()
+            result.add(com.imbric.core.desktop.DesktopAppInfo(
+                id = gioApp.getId()?.toString() ?: "",
+                name = gioApp.getName()?.toString() ?: "",
+                executable = gioApp.getExecutable()?.toString() ?: "",
+                icon = gioApp.getIcon()?.let { icon ->
+                    if (icon is org.gnome.gio.ThemedIcon) icon.names?.firstOrNull() else null
+                }
             ))
         }
         return result
@@ -159,9 +152,29 @@ class GioDesktopEnvironment : DesktopEnvironment {
     }
 
     override fun observeTheme(): Flow<ThemeMode> = callbackFlow {
-        trySend(ThemeMode.SYSTEM)
-        awaitClose { }
-    }
+        val settings = try { Settings("org.gnome.desktop.interface") } catch (e: Exception) { null }
+        
+        val updateTheme = {
+            val scheme = settings?.getString("color-scheme") ?: "default"
+            val mode = when {
+                scheme.contains("dark") -> ThemeMode.DARK
+                scheme.contains("light") -> ThemeMode.LIGHT
+                else -> ThemeMode.SYSTEM
+            }
+            trySend(mode)
+            Unit
+        }
+
+        updateTheme()
+
+        val conn = settings?.onChanged(null) { _ ->
+            updateTheme()
+        }
+
+        awaitClose {
+            conn?.disconnect()
+        }
+    }.flowOn(Dispatchers.IO)
 
     private fun mapDrive(gioDrive: org.gnome.gio.Drive): DesktopDrive {
         val volume = gioDrive.volumes.firstOrNull()
