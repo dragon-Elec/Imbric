@@ -5,6 +5,9 @@ build/
 *.log
 .DS_Store
 
+# Reference materials (patched java-gi, docs, etc.)
+ref/
+
 # IDE & Tooling
 .classpath
 .project

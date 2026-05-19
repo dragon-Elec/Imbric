@@ -78,13 +78,7 @@ data class FileInfo(
      */
     fun matches(pattern: String): Boolean {
         if (pattern.isEmpty() || pattern == "*") return true
-        // Escape dots FIRST, then replace wildcards — otherwise the dots inside `.*` get escaped
-        val regex = pattern
-            .replace(".", "\\.")   // escape literal dots
-            .replace("*", ".*")    // glob * → regex .*
-            .replace("?", ".")     // glob ? → regex .
-            .toRegex(RegexOption.IGNORE_CASE)
-        return regex.matches(name)
+        return compileGlob(pattern).matches(name)
     }
 
     val extension: String
@@ -180,5 +174,31 @@ data class FileInfo(
 
         /** Sort by recency (most recently accessed first). */
         val SortByRecency = compareBy<FileInfo> { !it.isDirectory }.thenByDescending { it.recency }
+
+        /**
+         * Compiles a glob pattern into a [Regex].
+         * Supports `*` (any characters) and `?` (single character).
+         * Compiled once and reused for bulk filtering in [DirState.matchPattern].
+         *
+         * Manually escapes all regex-special characters, then converts glob wildcards.
+         * This prevents [java.util.regex.PatternSyntaxException] for patterns like `report(v2).*`.
+         */
+        fun compileGlob(pattern: String): Regex {
+            if (pattern.isEmpty() || pattern == "*") return Regex(".*")
+            val regexStr = buildString(pattern.length * 2) {
+                for (c in pattern) {
+                    when (c) {
+                        '*' -> append(".*")
+                        '?' -> append('.')
+                        '.', '(', ')', '[', ']', '{', '}', '+', '^', '$', '|', '\\' -> {
+                            append('\\')
+                            append(c)
+                        }
+                        else -> append(c)
+                    }
+                }
+            }
+            return Regex(regexStr, RegexOption.IGNORE_CASE)
+        }
     }
 }
