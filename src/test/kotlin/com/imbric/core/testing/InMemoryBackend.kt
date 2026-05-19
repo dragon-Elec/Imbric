@@ -77,7 +77,7 @@ open class InMemoryBackend(
     ) {
         val info = fs[srcUri] ?: throw Exception("Source not found: $srcUri")
         if (fs.containsKey(destUri) && !overwrite) {
-            throw VfsConflictException(VfsConflictException.EXISTS, "Destination already exists: $destUri")
+            throw VfsError.AlreadyExists(destUri)
         }
         
         emit(TransferProgress(jobId, srcUri, null, null, 0, 1, 0, 1))
@@ -113,7 +113,7 @@ open class InMemoryBackend(
     ) {
         val info = fs.remove(srcUri) ?: throw Exception("Source not found: $srcUri")
         if (fs.containsKey(destUri) && !overwrite) {
-            throw VfsConflictException(VfsConflictException.EXISTS, "Destination already exists: $destUri")
+            throw VfsError.AlreadyExists(destUri)
         }
         
         emit(TransferProgress(jobId, srcUri, null, null, 0, 1, 0, 1))
@@ -135,12 +135,12 @@ open class InMemoryBackend(
         emit(TransferProgress(jobId, srcUri, destUri, null, 1, 1, 0, 0))
     }
 
-    override suspend fun trash(job: FileJob): Result<Unit> {
+    override suspend fun trash(job: FileJob): Result<String> {
         val srcUri = job.source.removeSuffix("/")
         val info = fs.remove(srcUri)
         return if (info != null) {
             trashFs[srcUri] = info
-            Result.success(Unit)
+            Result.success(srcUri) // In memory, we use the same URI for simplicity
         } else {
             Result.failure(Exception("Source not found: $srcUri"))
         }
@@ -215,33 +215,68 @@ open class InMemoryBackend(
         return Result.success(newUri)
     }
 
-    override suspend fun executeInverse(payload: InversePayload): Result<Unit> {
-        return when (payload.action) {
-            "undo_copy" -> {
-                val target = payload.target.removeSuffix("/")
-                fs.remove(target)
+    override suspend fun executeInverse(payload: UndoAction): Result<Unit> {
+        return when (payload) {
+            is UndoAction.TransferUndo -> {
+                // Transfer undo: delete destinations (for copy/link) or move back (for move)
+                if (payload.sources != null) {
+                    // Move-back: move destinations back to original source URIs
+                    for (i in payload.destinations.indices) {
+                        val destUri = payload.destinations[i].removeSuffix("/")
+                        val originalUri = payload.sources[i].removeSuffix("/")
+                        
+                        val info = fs.remove(destUri) ?: return Result.failure(Exception("Source not found: $destUri"))
+                        fs[originalUri] = info.copy(
+                            uri = originalUri, 
+                            path = originalUri, 
+                            name = originalUri.substringAfterLast("/"), 
+                            displayName = originalUri.substringAfterLast("/")
+                        )
+                    }
+                    Result.success(Unit)
+                } else {
+                    // Delete: trash destinations (for copy/link undo)
+                    for (dest in payload.destinations) {
+                        fs.remove(dest.removeSuffix("/"))
+                    }
+                    Result.success(Unit)
+                }
+            }
+            is UndoAction.TrashUndo -> {
+                // Trash undo: restore from trash to original location
+                for (i in payload.trashedUris.indices) {
+                    val trashedUri = payload.trashedUris[i].removeSuffix("/")
+                    val originalUri = payload.originalUris[i].removeSuffix("/")
+                    val info = trashFs.remove(trashedUri) ?: return Result.failure(Exception("Trashed file not found"))
+                    fs[originalUri] = info.copy(uri = originalUri, path = originalUri, name = originalUri.substringAfterLast("/"), displayName = originalUri.substringAfterLast("/"))
+                }
                 Result.success(Unit)
             }
-            "undo_move" -> {
-                val target = payload.target.removeSuffix("/")
-                val dest = payload.dest?.removeSuffix("/") ?: return Result.failure(Exception("Missing dest"))
-                val info = fs.remove(target) ?: return Result.failure(Exception("Source not found"))
-                val newName = dest.substringAfterLast("/")
-                fs[dest] = info.copy(uri = dest, path = dest, name = newName, displayName = newName)
+            is UndoAction.CreateUndo -> {
+                // Create undo: delete the created file/folder
+                fs.remove(payload.createdUri.removeSuffix("/"))
                 Result.success(Unit)
             }
-            "undo_trash" -> {
-                restoreFromTrash(payload.target, payload.dest ?: payload.target).map { Unit }
+            is UndoAction.RenameUndo -> {
+                // Rename undo: rename back to original name
+                rename(payload.currentUri, payload.originalName).map { Unit }
             }
-            "undo_rename" -> {
-                rename(payload.target, (payload.dest ?: "").substringAfterLast("/")).map { Unit }
-            }
-            else -> Result.failure(UnsupportedOperationException("Action not supported in memory: ${payload.action}"))
         }
     }
 
     override fun watch(uri: String): Flow<FileEvent> = callbackFlow { awaitClose { } }
     override fun canHandle(uri: String): Boolean = uri.startsWith("$scheme://") || !uri.contains("://")
+    
+    // --- Test helpers ---
+    
+    /**
+     * Test helper: move a file to trash (for testing undo).
+     */
+    fun trashFile(uri: String) {
+        val normalized = uri.removeSuffix("/")
+        val info = fs.remove(normalized) ?: return
+        trashFs[normalized] = info
+    }
     
     // --- Thumbnail support for testing ---
     

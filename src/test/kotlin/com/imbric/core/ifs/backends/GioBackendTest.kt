@@ -13,7 +13,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.*
-import com.imbric.core.ifs.VfsConflictException
+
 import kotlin.uuid.Uuid
 
 @Tag("integration")
@@ -166,10 +166,11 @@ class GioBackendTest {
                 overwrite = false
             )
 
-            val exception = assertFailsWith<VfsConflictException> {
+            val exception = assertFailsWith<com.imbric.core.models.VfsError.AlreadyExists> {
                 backend.copy(job).toList()
             }
-            assertEquals(VfsConflictException.EXISTS, exception.code)
+            // The URI in the error should be the source URI
+            assertEquals("file://${src.toAbsolutePath()}", exception.uri)
         }
     }
 }

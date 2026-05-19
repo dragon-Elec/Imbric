@@ -38,6 +38,9 @@ dependencies {
     // DateTime
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
     
+    // JSON Serialization
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    
     // UUID (Kotlin 2.1+ native - bundled in stdlib, no extra dependency needed)
     // implementation(kotlin("kotlin-uuid")) // Uncomment if using Kotlin < 2.1
     

@@ -3,7 +3,7 @@ package com.imbric.core.transactions
 
 import com.imbric.core.ifs.*
 import com.imbric.core.models.FileJob
-import com.imbric.core.models.InversePayload
+import com.imbric.core.models.UndoAction
 import com.imbric.core.transactions.models.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -14,7 +14,7 @@ import java.util.ArrayDeque
 
 /**
  * Stack-based undo/redo for transactions.
- * Orchestrates inversions by submitting them back to TransactionManager.
+ * Dispatches typed UndoAction variants to the correct reversal logic.
  */
 class UndoManager(
     private val backendRegistry: BackendRegistry,
@@ -37,11 +37,29 @@ class UndoManager(
     fun canUndo(): Boolean = !busy && undoStack.isNotEmpty()
     fun canRedo(): Boolean = !busy && redoStack.isNotEmpty()
 
+    /**
+     * Returns the UI label for the current undo action, e.g. "Undo Copy" or "Undo Rename".
+     * Returns null if nothing to undo.
+     */
+    fun getUndoLabel(): String? {
+        val tx = undoStack.peek() ?: return null
+        val action = tx.ops.firstOrNull { it.undoAction != null }?.undoAction ?: return null
+        return "Undo ${action.undoLabel}"
+    }
+
+    /**
+     * Returns the UI label for the current redo action, e.g. "Redo Copy" or "Redo Rename".
+     * Returns null if nothing to redo.
+     */
+    fun getRedoLabel(): String? {
+        val tx = redoStack.peek() ?: return null
+        val action = tx.ops.firstOrNull { it.undoAction != null }?.undoAction ?: return null
+        return "Redo ${action.undoLabel}"
+    }
+
     // --- History Commit ---
     fun commitTransaction(tx: Transaction) {
         if (tx.status != TransactionStatus.COMPLETED) return
-        // We only add to undo stack if it's a "fresh" transaction, not an undo/redo result
-        // (This is a simplified check; more complex logic might be needed to avoid loops)
         undoStack.push(tx)
         redoStack.clear()
         onStackChanged?.invoke(canUndo(), canRedo())
@@ -53,18 +71,40 @@ class UndoManager(
         setBusy(true)
         val tx = undoStack.pop()
         
-        // Prepare inverse operations
+        // Prepare inverse operations from typed UndoAction
         val undoOps = tx.ops
-            .filter { it.status == TransactionStatus.COMPLETED && it.inversePayload != null }
+            .filter { it.status == TransactionStatus.COMPLETED && it.undoAction != null }
             .reversed()
             .map { op ->
-                val payloadMap = op.inversePayload!!
+                val action = op.undoAction!!
+                val (src, dest) = when (action) {
+                    is UndoAction.TransferUndo -> {
+                        // For transfer undo: src = first destination (for routing)
+                        val srcUri = action.destinations.firstOrNull() ?: ""
+                        val destUri = action.srcDir ?: ""
+                        srcUri to destUri
+                    }
+                    is UndoAction.TrashUndo -> {
+                        // For trash undo: src = first trashed URI (for routing)
+                        val srcUri = action.trashedUris.firstOrNull() ?: ""
+                        val destUri = action.originalUris.firstOrNull() ?: ""
+                        srcUri to destUri
+                    }
+                    is UndoAction.CreateUndo -> {
+                        // For create undo: src = created URI
+                        action.createdUri to ""
+                    }
+                    is UndoAction.RenameUndo -> {
+                        // For rename undo: src = current URI
+                        action.currentUri to ""
+                    }
+                }
                 TransactionOperation(
                     jobId = Uuid.random(),
                     opType = "undo",
-                    src = payloadMap["target"] as? String ?: "",
-                    dest = payloadMap["dest"] as? String ?: "",
-                    inversePayload = payloadMap
+                    src = src,
+                    dest = dest,
+                    undoAction = action
                 )
             }
 
@@ -83,19 +123,16 @@ class UndoManager(
                         op.src, 
                         op.dest, 
                         jobId = op.jobId, 
-                        inversePayload = op.inversePayload
+                        undoAction = op.undoAction
                     )
                 }
                 
-                // 1. Prepare the flow collection BEFORE committing
                 val finishedFlow = transactionManager.events
                     .filter { it.tid == tid }
                     .filterIsInstance<TransactionEvent.Finished>()
 
-                // 2. Commit the transaction
                 transactionManager.commitTransaction(tid)
 
-                // 3. Wait for completion
                 val finalEvent = finishedFlow.first()
 
                 if (finalEvent.status == TransactionStatus.COMPLETED) {
@@ -113,56 +150,56 @@ class UndoManager(
         return true
     }
 
-// --- Redo ---
-     fun redo(): Boolean {
-         if (!canRedo()) return false
-         setBusy(true)
-         val tx = redoStack.pop()
+    // --- Redo ---
+    fun redo(): Boolean {
+        if (!canRedo()) return false
+        setBusy(true)
+        val tx = redoStack.pop()
 
-         scope.launch {
-             try {
-                 val tid = transactionManager.startTransaction("Redo: ${tx.description}", isReversible = false)
-                 tx.ops.forEach { op ->
-                     transactionManager.addOperation(
-                         tid,
-                         op.opType,
-                         op.src,
-                         op.dest,
-                         overwrite = op.overwrite,
-                         autoRename = op.autoRename
-                     )
-                 }
+        scope.launch {
+            try {
+                val tid = transactionManager.startTransaction("Redo: ${tx.description}", isReversible = false)
+                tx.ops.forEach { op ->
+                    transactionManager.addOperation(
+                        tid,
+                        op.opType,
+                        op.src,
+                        op.dest,
+                        overwrite = op.overwrite,
+                        autoRename = op.autoRename,
+                        undoAction = op.undoAction
+                    )
+                }
 
-                 val finishedFlow = transactionManager.events
-                     .filter { it.tid == tid }
-                     .filterIsInstance<TransactionEvent.Finished>()
+                val finishedFlow = transactionManager.events
+                    .filter { it.tid == tid }
+                    .filterIsInstance<TransactionEvent.Finished>()
 
-                 transactionManager.commitTransaction(tid)
+                transactionManager.commitTransaction(tid)
 
-                 val finalEvent = finishedFlow.first()
+                val finalEvent = finishedFlow.first()
 
-                 if (finalEvent.status == TransactionStatus.COMPLETED) {
-                     // Capture fresh inverse payloads generated during redo execution
-                     // so that a subsequent undo will use the correct DNA.
-                     tx.ops.forEachIndexed { idx, op ->
-                         val freshOp = transactionManager.findOperation(tid, op.jobId)
-                         if (freshOp != null && freshOp.inversePayload != null) {
-                             tx.ops[idx] = op.copy(inversePayload = freshOp.inversePayload)
-                         }
-                     }
-                     undoStack.push(tx)
-                 } else {
-                     redoStack.push(tx)
-                 }
-             } catch (e: Exception) {
-                 redoStack.push(tx)
-             } finally {
-                 setBusy(false)
-                 onStackChanged?.invoke(canUndo(), canRedo())
-             }
-         }
-         return true
-     }
+                if (finalEvent.status == TransactionStatus.COMPLETED) {
+                    // Capture fresh undo actions generated during redo execution
+                    tx.ops.forEachIndexed { idx, op ->
+                        val freshOp = transactionManager.findOperation(tid, op.jobId)
+                        if (freshOp != null && freshOp.undoAction != null) {
+                            tx.ops[idx] = op.copy(undoAction = freshOp.undoAction)
+                        }
+                    }
+                    undoStack.push(tx)
+                } else {
+                    redoStack.push(tx)
+                }
+            } catch (e: Exception) {
+                redoStack.push(tx)
+            } finally {
+                setBusy(false)
+                onStackChanged?.invoke(canUndo(), canRedo())
+            }
+        }
+        return true
+    }
 
     private fun setBusy(value: Boolean) {
         busy = value

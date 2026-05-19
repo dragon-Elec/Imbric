@@ -47,7 +47,7 @@ class TransactionManager(
         jobId: Uuid = Uuid.random(), 
         overwrite: Boolean = false,
         autoRename: Boolean = false,
-        inversePayload: Map<String, Any?>? = null
+        undoAction: UndoAction? = null
     ) {
         val tx = transactions[tid] ?: return
         tx.addOperation(TransactionOperation(
@@ -57,7 +57,7 @@ class TransactionManager(
             dest = dest,
             overwrite = overwrite,
             autoRename = autoRename,
-            inversePayload = inversePayload
+            undoAction = undoAction
         ))
     }
 
@@ -116,7 +116,7 @@ class TransactionManager(
         status: TransactionStatus, 
         error: String = "", 
         resultPath: String? = null,
-        inversePayload: InversePayload? = null
+        undoAction: UndoAction? = null
     ) {
         val tx = transactions[tid] ?: return
         
@@ -133,18 +133,10 @@ class TransactionManager(
                 status = status, 
                 error = error, 
                 resultPath = resultPath ?: op.resultPath,
-                inversePayload = inversePayload?.let { mapOf(
-                    "action" to it.action,
-                    "target" to it.target,
-                    "dest" to it.dest,
-                    "newName" to it.newName,
-                    "renameTo" to it.renameTo,
-                    "tid" to it.tid,
-                    "backendId" to it.backendId
-                ) } ?: op.inversePayload
+                undoAction = undoAction ?: op.undoAction
             )
             tx.ops[opIndex] = updatedOp
-            updateProgress(tid, TransferProgress(jobId, op.src, resultPath ?: op.resultPath, inversePayload))
+            updateProgress(tid, TransferProgress(jobId, op.src, resultPath ?: op.resultPath, undoAction))
         }
     }
 

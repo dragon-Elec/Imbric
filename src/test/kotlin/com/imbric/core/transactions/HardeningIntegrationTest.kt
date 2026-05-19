@@ -78,7 +78,7 @@ class HardeningIntegrationTest {
                 )
                 injectExistsError = false // Only do it once
                 injectExistsErrorWasTriggered = true
-                throw VfsConflictException(1, "File exists")
+                throw VfsError.AlreadyExists(job.dest)
             }
             super.copy(job).collect { emit(it) }
         }

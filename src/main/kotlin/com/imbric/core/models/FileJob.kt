@@ -1,6 +1,7 @@
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.models
 
+import com.imbric.core.models.UndoAction
 import kotlin.uuid.Uuid
 import kotlin.uuid.ExperimentalUuidApi
 
@@ -17,21 +18,7 @@ data class FileJob(
     val autoRename: Boolean = false,
     val uiRefreshRateMs: Int = 100,
     val haltOnError: Boolean = false,
-    val inversePayload: InversePayload? = null
-)
-
-/**
- * Payload for undoing a completed operation.
- * Ported from Python InversePayload TypedDict.
- */
-data class InversePayload(
-    val action: String, // "undo_copy", "undo_move", etc.
-    val target: String,
-    val dest: String? = null,
-    val newName: String? = null,
-    val renameTo: String? = null,
-    val tid: Uuid? = null,
-    val backendId: String? = null
+    val inversePayload: UndoAction? = null
 )
 
 /**
@@ -53,7 +40,9 @@ data class VfsQuery(
     val mimeFilter: String? = null,
     val recursive: Boolean = true,
     val includeHidden: Boolean = false,
-    val maxDepth: Int = Int.MAX_VALUE
+    val maxDepth: Int = Int.MAX_VALUE,
+    val contentSearch: Boolean = false,
+    val onScanned: ((Int) -> Unit)? = null
 )
 
 /**
@@ -63,7 +52,7 @@ data class TransferProgress(
     val jobId: Uuid,
     val currentFile: String,
     val actualDest: String? = null,
-    val inversePayload: InversePayload? = null,
+    val inversePayload: UndoAction? = null,
     val completedCount: Int = 0,
     val totalCount: Int = 0,
     val completedSize: Long = 0L,

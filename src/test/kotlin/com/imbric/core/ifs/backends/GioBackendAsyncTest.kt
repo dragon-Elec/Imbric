@@ -147,7 +147,7 @@ class GioBackendAsyncTest {
             
             // Verify we got progress events
             assertTrue(progress.isNotEmpty(), "Should have received progress events")
-            assertTrue(progress.any { it.inversePayload != null }, "Should have received an inverse payload for undo")
+            assertTrue(progress.any { it.inversePayload != null }, "Should have received an undo action for undo")
         }
     }
 

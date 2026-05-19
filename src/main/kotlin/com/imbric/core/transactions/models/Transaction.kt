@@ -3,6 +3,7 @@ package com.imbric.core.transactions.models
 
 import com.imbric.core.models.FileJob
 import com.imbric.core.models.TransferProgress
+import com.imbric.core.models.UndoAction
 import kotlin.uuid.Uuid
 import kotlin.uuid.ExperimentalUuidApi
 
@@ -52,7 +53,7 @@ data class TransactionOperation(
     val overwrite: Boolean = false,
     val autoRename: Boolean = false,
     val backendId: String? = null,
-    val inversePayload: Map<String, Any?>? = null,
+    val undoAction: UndoAction? = null,
     val status: TransactionStatus = TransactionStatus.PENDING,
     val error: String = ""
 )

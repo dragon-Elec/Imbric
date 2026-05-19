@@ -56,45 +56,68 @@ class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBack
         if (query.text.isBlank()) return@flow
 
         // 1. Try Tracker3
-        val trackerResults = runTrackerSearch(query.text)
-        if (trackerResults != null) {
-            trackerResults.forEach { uri ->
-                // Only return results that are within the requested root
-                if (uri.startsWith(query.rootUri)) {
+        var trackerSuccess = false
+        var scanned = 0
+        
+        try {
+            runTrackerSearch(query).collect { uri ->
+                scanned++
+                if (scanned % 100 == 0) {
+                    query.onScanned?.invoke(scanned)
+                    kotlinx.coroutines.yield()
+                }
+
+                // Robust root check: must be root itself or a child of root
+                val isMatch = uri == query.rootUri || uri.startsWith("${query.rootUri.removeSuffix("/")}/")
+                if (isMatch) {
                     val info = fallback.getMetadata(uri).getOrNull()
                     if (info != null) {
+                        // Filter by hidden status and MIME
+                        if (!query.includeHidden && info.isVisiblyHidden()) return@collect
                         if (query.mimeFilter == null || info.mimeType.startsWith(query.mimeFilter)) {
                             emit(info)
                         }
                     }
                 }
+                trackerSuccess = true
             }
-        } else {
+            if (trackerSuccess) {
+                query.onScanned?.invoke(scanned)
+            }
+        } catch (e: Exception) {
+            trackerSuccess = false
+        }
+
+        if (!trackerSuccess) {
             // 2. Fallback to manual walk
             emitAll(fallback.search(query))
         }
     }.flowOn(Dispatchers.IO)
 
-    private suspend fun runTrackerSearch(query: String): List<String>? = withContext(Dispatchers.IO) {
+    private fun runTrackerSearch(query: com.imbric.core.models.VfsQuery): Flow<String> = flow {
+        val flag = if (query.contentSearch) "-c" else "-f"
+        val process = ProcessBuilder("tracker3", "search", "--disable-color", flag, query.text)
+            .start()
+        
         try {
-            val process = ProcessBuilder("tracker3", "search", "--disable-color", query)
-                .start()
-            
-            val results = mutableListOf<String>()
             BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
                 var line = reader.readLine()
                 while (line != null) {
                     val trimmed = line.trim()
                     if (trimmed.startsWith("file://")) {
-                        results.add(trimmed)
+                        emit(trimmed)
                     }
                     line = reader.readLine()
+                    kotlinx.coroutines.yield()
                 }
             }
-            
-            if (process.waitFor() == 0) results else null
-        } catch (e: Exception) {
-            null
+            if (process.waitFor() != 0) {
+                throw Exception("Tracker search failed with exit code ${process.exitValue()}")
+            }
+        } finally {
+            if (process.isAlive) {
+                process.destroy()
+            }
         }
     }
 
@@ -104,7 +127,7 @@ class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBack
     override suspend fun readHeader(uri: String, size: Long): Result<ByteArray> = fallback.readHeader(uri, size)
     override suspend fun copy(job: FileJob): Flow<TransferProgress> = fallback.copy(job)
     override suspend fun move(job: FileJob): Flow<TransferProgress> = fallback.move(job)
-    override suspend fun trash(job: FileJob): Result<Unit> = fallback.trash(job)
+    override suspend fun trash(job: FileJob): Result<String> = fallback.trash(job)
     override suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String> = fallback.restoreFromTrash(trashPath, originalPath)
     override suspend fun delete(job: FileJob): Result<Unit> = fallback.delete(job)
     override suspend fun createFolder(parentUri: String, name: String): Result<String> = fallback.createFolder(parentUri, name)

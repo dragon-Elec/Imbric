@@ -93,7 +93,7 @@ imbric-kt/
 | **XferArbiter** | ✅ Polymorphic | Added **Merge** action; refactored `SyncPolicy` to interface for app-layer extensibility. |
 | **TransferOrchestrator** | ✅ Nautilus-grade | Implements recursive pre-flight planning, **Sticky Conflict Resolution** (Apply to All), and robust cancellation. |
 | **GioBackend** | ✅ Native Async | Full native attribute mapping, recursive `WOULD_RECURSE` fallback. **All mutating ops (copy, move, trash, delete, rename) now use non-blocking `awaitGioAsync` bridge.** |
-| **Transaction Hub** | ✅ Polished | `TransactionManager`, `UndoManager` (with rename support), and `TrashManager` (StateFlow-based) fully verified. Backend-aware concurrency limits (Local: 32, Network: 8). |
+| **Transaction Hub** | ✅ Polished | `TransactionManager`, `UndoManager` (with batch support), and `TrashManager` (StateFlow-based) fully verified. Backend-aware concurrency limits (Local: 32, Network: 8). **Undo system now correctly handles trash restoration and move-back renames.** |
 | **Desktop Integration** | ✅ Native | `DesktopEnvironment` and `GioDesktopEnvironment` for hardware drives and mounts via `GVolumeMonitor`. Added **`SettingsProvider`** for reactive GSettings. |
 | **Live Monitoring** | ✅ Debounced | `DirectoryMonitor` and `TrashMonitor` provide stable, flicker-free `Flow` updates from native GIO monitors. |
 | **Search Engine** | ✅ Structured | `VfsQuery` model with depth and MIME support. Integrated with Tracker3 and manual fallback. |
@@ -121,13 +121,14 @@ Step 5: Surgical patching (GPid pointer bug in MountOperation.java)
          → sed: remove module-info.java
 ```
 
-### The Three Bugs We Tamed
+### The Four Bugs We Tamed
 
 | Bug | Root Cause | Symptom | Fix |
 |:---|---:|:---|---:|
 | **GPid Pointer Mismatch** | GNOME 46 defines GPid as `void*`; generator templates hardcode `int` | `cannot find symbol Pid.getJava.lang.foreign...` | `sed` patch: 8-byte pointer, `Alias.getAddressValues` |
 | **Initialization Paradox** | Java interface static methods **don't** trigger library static init | `UnsupportedOperationException: Cannot find function 'g_file_new_for_uri'` | Manual `` Gio.`javagi$ensureInitialized`() `` in `GioBackend.init` |
 | **Async SIGSEGV Crash** | GNOME GIR incorrectly marks `move_async` callback as `scope="call"`, causing premature GC | JVM crashes in `upcall_stub_load_target` during `moveAsync` | **Patched `java-gi` generator AST** to force `Scope.ASYNC` for all `_async` functions. |
+| **Trash Undo Inversion** | `TransferUndo` used for trash; GIO `trash` doesn't return URI | Undo trash tried to trash again; restore failed due to missing trash URI | Added `TrashUndo` variant; `trash()` now returns actual trash URI via `listTrash()` lookup. |
 
 ---
 
@@ -144,8 +145,9 @@ Step 5: Surgical patching (GPid pointer bug in MountOperation.java)
 | `GioTypeMappersIntegrationTest.kt`| Integration | Real GIO | Verify GIO-to-Imbric attribute mapping accuracy |
 | `XferArbiterTest.kt` | Unit | None | Sync policy evaluation, conflict actions |
 | `GioBackendTest.kt` | Integration | Real GIO | Physical filesystem: listing, metadata, symlinks, recursive copy/move |
+| `UndoManagerTest.kt` | Unit | `InMemoryBackend` | Verify undo/redo for copy, move, trash, create, rename |
 
-**Total Tests:** 46+ passing (including deep recursive merge and metadata hardening suites).
+**Total Tests:** 137+ passing (including deep recursive merge, metadata hardening, and full undo/redo suites).
 
 ---
 

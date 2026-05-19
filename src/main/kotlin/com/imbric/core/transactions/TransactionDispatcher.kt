@@ -2,12 +2,12 @@
 package com.imbric.core.transactions
 
 import com.imbric.core.ifs.BackendRegistry
-import com.imbric.core.ifs.VfsConflictException
+import com.imbric.core.models.VfsError
 import com.imbric.core.ifs.uriParent
 import com.imbric.core.ifs.uriJoin
 import com.imbric.core.logic.*
 import com.imbric.core.models.FileJob
-import com.imbric.core.models.InversePayload
+import com.imbric.core.models.UndoAction
 import com.imbric.core.models.TransferProgress
 import com.imbric.core.transactions.models.TransactionOperation
 import com.imbric.core.transactions.models.TransactionStatus
@@ -44,7 +44,7 @@ class TransactionDispatcher(
         op: TransactionOperation,
         conflictResolver: (suspend (ConflictContext) -> ConflictResponse)?,
         onProgress: (TransferProgress) -> Unit,
-        onStatusUpdate: (Uuid, TransactionStatus, String, String?, InversePayload?) -> Unit,
+        onStatusUpdate: (Uuid, TransactionStatus, String, String?, UndoAction?) -> Unit,
         policy: SyncPolicy = SyncPolicy.Standard
     ) {
         val jobCoro = scope.launch {
@@ -80,7 +80,7 @@ class TransactionDispatcher(
         initialOp: TransactionOperation,
         conflictResolver: (suspend (ConflictContext) -> ConflictResponse)?,
         onProgress: (TransferProgress) -> Unit,
-        onStatusUpdate: (Uuid, TransactionStatus, String, String?, InversePayload?) -> Unit,
+        onStatusUpdate: (Uuid, TransactionStatus, String, String?, UndoAction?) -> Unit,
         policy: SyncPolicy = SyncPolicy.Standard
     ) {
         var currentOp = initialOp
@@ -99,19 +99,11 @@ class TransactionDispatcher(
                     dest = currentOp.dest,
                     overwrite = currentOp.overwrite,
                     autoRename = currentOp.autoRename,
-                    inversePayload = currentOp.inversePayload?.let { InversePayload(
-                        action = it["action"] as? String ?: "",
-                        target = it["target"] as? String ?: "",
-                        dest = it["dest"] as? String,
-                        newName = it["newName"] as? String,
-                        renameTo = it["renameTo"] as? String,
-                        tid = (it["tid"] as? String)?.let { Uuid.parse(it) } ?: it["tid"] as? Uuid,
-                        backendId = it["backendId"] as? String
-                    )}
+                    inversePayload = currentOp.undoAction
                 )
                 
                 var actualDest: String? = null
-                var inverse: InversePayload? = null
+                var inverse: UndoAction? = null
                 var lastEmitTime = 0L // For throttling UI
 
                 // Helper to emit progress safely at 100ms intervals
@@ -135,9 +127,28 @@ class TransactionDispatcher(
                         inverse = it.inversePayload
                         emitThrottledProgress(it) 
                     }
-                    "trash" -> backend.trash(job).getOrThrow().also { 
-                        inverse = InversePayload(action = "undo_trash", target = job.source, dest = job.source, backendId = backendScheme)
+                    "trash" -> {
+                        val actualTrashUri = backend.trash(job).getOrThrow()
+                        inverse = UndoAction.TrashUndo(
+                            itemDescription = job.source.substringAfterLast("/"),
+                            trashedUris = listOf(actualTrashUri),
+                            originalUris = listOf(job.source),
+                            backendId = backendScheme
+                        )
                         onProgress(TransferProgress(job.id, job.source, null, inverse, 1, 1, 0, 0)) 
+                    }
+                    "restore" -> {
+                        val originalUri = job.dest // dest holds the original URI for restore
+                        backend.restoreFromTrash(job.source, originalUri).getOrThrow()
+                        inverse = UndoAction.TransferUndo(
+                            undoLabel = "Restore",
+                            itemDescription = job.source.substringAfterLast("/"),
+                            destinations = listOf(originalUri),
+                            sources = listOf(job.source),
+                            srcDir = originalUri.substringBeforeLast("/"),
+                            backendId = backendScheme
+                        )
+                        onProgress(TransferProgress(job.id, job.source, originalUri, inverse, 1, 1, 0, 0))
                     }
                     "delete" -> backend.delete(job).getOrThrow().also { 
                         onProgress(TransferProgress(job.id, job.source, null, null, 1, 1, 0, 0)) 
@@ -145,7 +156,14 @@ class TransactionDispatcher(
                     "rename" -> {
                         val renamedUri = backend.rename(job.source, job.dest).getOrThrow()
                         actualDest = renamedUri
-                        inverse = InversePayload(action = "undo_rename", target = renamedUri, dest = job.source, backendId = backendScheme)
+                        inverse = UndoAction.RenameUndo(
+                            itemDescription = job.source.substringAfterLast("/"),
+                            currentUri = renamedUri,
+                            originalUri = job.source,
+                            currentName = job.dest.substringAfterLast("/"),
+                            originalName = job.source.substringAfterLast("/"),
+                            backendId = backendScheme
+                        )
                         onProgress(TransferProgress(job.id, job.source, renamedUri, inverse, 1, 1, 0, 0))
                     }
                     "undo" -> {
@@ -163,9 +181,9 @@ class TransactionDispatcher(
                 throw e
             } catch (e: Exception) {
                 // JIT CONFLICT RESOLUTION (also handles blind pre-flight from HIGH-latency backends)
-                val errorCode = (e as? VfsConflictException)?.code ?: -1
+                val isConflict = e is VfsError.AlreadyExists
                 
-                if (errorCode == VfsConflictException.EXISTS && (currentOp.opType == "copy" || currentOp.opType == "move")) {
+                if (isConflict && (currentOp.opType == "copy" || currentOp.opType == "move")) {
                     val srcBackend = backendRegistry.getIo(currentOp.src)
                     val destBackend = backendRegistry.getIo(currentOp.dest)
                     
