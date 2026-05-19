@@ -105,7 +105,7 @@ interface IOBackend {
             }
         }
         emit(DeepCount(dirs, files, totalSize, isComplete = true))
-    }.flowOn(kotlinx.coroutines.Dispatchers.IO)
+    }
 
     /**
      * Returns the path to a thumbnail for the given URI, if available.

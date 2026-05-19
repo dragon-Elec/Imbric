@@ -13,6 +13,13 @@ import kotlin.uuid.ExperimentalUuidApi
 /**
  * Specialized transaction logic for trash operations.
  * Ported from Python trash_manager.py.
+ *
+ * TrashManager is the transactional layer — it performs trash operations
+ * via IOBackend and observes trash state via TrashMonitor.
+ * Each platform provides its own TrashMonitor implementation:
+ * - Linux/GIO: GFileMonitor on trash:/// with TRASH_ITEM_COUNT
+ * - Windows: future SHChangeNotifyRegister implementation
+ * - macOS: future FSEvents implementation
  */
 class TrashManager(
     private val backendRegistry: BackendRegistry,
@@ -20,12 +27,7 @@ class TrashManager(
 ) {
     private val trashMonitor = TrashMonitor.getInstance()
 
-    // --- Trash Items Cache ---
-    private var trashItemsCache: List<TrashItem>? = null
-    private var lastScanTime: Long = 0
-    private val cacheValidityMs: Long = 5000 // 5 seconds
-
-    // --- State for UI ---
+    // --- State for UI (delegates to TrashMonitor's real-time StateFlow) ---
     val isTrashEmpty: StateFlow<Boolean> = trashMonitor.isEmpty
 
     // --- Trash Operations ---
@@ -39,7 +41,7 @@ class TrashManager(
             val result = backend.trash(job)
             if (result.isSuccess) {
                 results.add(path)
-                invalidateCache()
+                trashMonitor.refresh()
             } else {
                 hasError = true
             }
@@ -55,7 +57,7 @@ class TrashManager(
         val backend = backendRegistry.getIo(trashItem.originalPath) ?: return Result.failure(Exception("No backend for ${trashItem.originalPath}"))
         val result = backend.restoreFromTrash(trashItem.trashPath, trashItem.originalPath)
         if (result.isSuccess) {
-            invalidateCache()
+            trashMonitor.refresh()
         }
         return result
     }
@@ -73,17 +75,16 @@ class TrashManager(
             }
         }
         
-        invalidateCache()
+        trashMonitor.refresh()
         return if (hasError) Result.failure(Exception("Some items could not be deleted")) else Result.success(Unit)
     }
 
     // --- Listing & Status ---
-    suspend fun listTrashItems(forceRefresh: Boolean = false): List<TrashItem> {
-        val now = System.currentTimeMillis()
-        if (!forceRefresh && trashItemsCache != null && (now - lastScanTime) < cacheValidityMs) {
-            return trashItemsCache!!
-        }
-        
+    /**
+     * Lists all trash items across all registered backends.
+     * Always queries backends fresh — real-time state is TrashMonitor's job.
+     */
+    suspend fun listTrashItems(): List<TrashItem> {
         val items = mutableListOf<TrashItem>()
         for (scheme in backendRegistry.getRegisteredSchemes()) {
             val backend = backendRegistry.getIo("$scheme:///") ?: continue
@@ -94,22 +95,15 @@ class TrashManager(
                 }
             }
         }
-        
-        trashItemsCache = items
-        lastScanTime = now
-        trashMonitor.refresh()
         return items
     }
 
-    fun getTrashSize(): Long = trashItemsCache?.sumOf { it.size } ?: 0L
-    
-    suspend fun isTrashEmpty(): Boolean = trashMonitor.isEmpty.value
+    /**
+     * Computes total size of all items in trash across all backends.
+     */
+    suspend fun getTrashSize(): Long = listTrashItems().sumOf { it.size }
 
-    // --- Utility ---
-    private fun invalidateCache() {
-        trashItemsCache = null
-        trashMonitor.refresh()
-    }
+    suspend fun isTrashEmpty(): Boolean = trashMonitor.isEmpty.value
 
     fun canTrash(path: String): Boolean {
         val backend = backendRegistry.getIo(path) ?: return false

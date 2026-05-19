@@ -40,7 +40,7 @@ class TrashManagerTest {
         assertFalse(backend.exists("memory://docs/file1.txt"), "File should not exist after trashing")
         
         // Check trash list
-        val items = trashManager.listTrashItems(forceRefresh = true)
+        val items = trashManager.listTrashItems()
         assertEquals(1, items.size)
         val trashItem = items.first()
         assertEquals("file1.txt", trashItem.name)
@@ -53,7 +53,7 @@ class TrashManagerTest {
         assertTrue(backend.exists("memory://docs/file1.txt"))
         
         // Empty trash
-        val emptyItems = trashManager.listTrashItems(forceRefresh = true)
+        val emptyItems = trashManager.listTrashItems()
         assertTrue(emptyItems.isEmpty())
     }
 
@@ -65,13 +65,13 @@ class TrashManagerTest {
         
         trashManager.trashFiles(listOf("memory://docs/file1.txt", "memory://docs/file2.txt"))
         
-        var items = trashManager.listTrashItems(forceRefresh = true)
+        var items = trashManager.listTrashItems()
         assertEquals(2, items.size)
         
         val emptyResult = trashManager.emptyTrash()
         assertTrue(emptyResult.isSuccess)
         
-        items = trashManager.listTrashItems(forceRefresh = true)
+        items = trashManager.listTrashItems()
         assertTrue(items.isEmpty())
     }
 
@@ -82,15 +82,15 @@ class TrashManagerTest {
         
         // Note: isTrashEmpty is backed by TrashMonitor which monitors real trash:///
         // via GIO, not InMemoryBackend. We can only verify listTrashItems behavior here.
-        val initialItems = trashManager.listTrashItems(forceRefresh = true)
+        val initialItems = trashManager.listTrashItems()
         assertEquals(0, initialItems.size, "InMemoryBackend trash should be empty initially")
         
         trashManager.trashFiles(listOf("memory://docs/file1.txt"))
-        val afterTrashItems = trashManager.listTrashItems(forceRefresh = true)
+        val afterTrashItems = trashManager.listTrashItems()
         assertEquals(1, afterTrashItems.size, "Should have 1 item after trashing")
         
         trashManager.emptyTrash()
-        val afterEmptyItems = trashManager.listTrashItems(forceRefresh = true)
+        val afterEmptyItems = trashManager.listTrashItems()
         assertTrue(afterEmptyItems.isEmpty(), "Trash should be empty after emptying")
     }
 }

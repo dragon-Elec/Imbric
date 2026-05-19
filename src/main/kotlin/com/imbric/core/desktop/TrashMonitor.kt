@@ -89,5 +89,17 @@ class TrashMonitor private constructor(
                 instance ?: TrashMonitor().also { instance = it }
             }
         }
+
+        /**
+         * Destroys the singleton instance. Used for cleanup and testing.
+         * Next call to [getInstance] will create a fresh instance.
+         */
+        fun clear() {
+            synchronized(this) {
+                instance?.monitor?.cancel()
+                instance?.refreshJob?.cancel()
+                instance = null
+            }
+        }
     }
 }
