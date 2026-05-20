@@ -42,7 +42,15 @@ data class VfsQuery(
     val includeHidden: Boolean = false,
     val maxDepth: Int = Int.MAX_VALUE,
     val contentSearch: Boolean = false,
-    val onScanned: ((Int) -> Unit)? = null
+    val onScanned: ((Int) -> Unit)? = null,
+    /** Filter by modification time range. Both are epoch milliseconds. */
+    val modifiedAfter: Long? = null,
+    val modifiedBefore: Long? = null,
+    /** Filter by file size range in bytes. */
+    val minSize: Long? = null,
+    val maxSize: Long? = null,
+    /** Filter by starred/tagged status. */
+    val starredOnly: Boolean = false
 )
 
 /**

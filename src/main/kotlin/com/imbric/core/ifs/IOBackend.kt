@@ -1,3 +1,4 @@
+@file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 package com.imbric.core.ifs
 
 import com.imbric.core.models.FileInfo
@@ -139,6 +140,44 @@ interface IOBackend {
     suspend fun rename(uri: String, newName: String): Result<String>
 
     /**
+     * Creates a symbolic link at [linkUri] pointing to [targetUri].
+     * Default returns UnsupportedOperationException — backends with native symlink support override this.
+     */
+    suspend fun createLink(targetUri: String, linkUri: String): Result<String> = Result.failure(UnsupportedOperationException("Symlink creation not supported"))
+
+    // Recent Files Operations
+    /**
+     * Adds a file to the recent files list.
+     * Default returns UnsupportedOperationException — backends with recent file support override this.
+     */
+    suspend fun addToRecent(uri: String, mimeType: String? = null): Result<Unit> = Result.failure(UnsupportedOperationException("Recent files not supported"))
+
+    /**
+     * Removes a file from the recent files list.
+     */
+    suspend fun removeFromRecent(uri: String): Result<Unit> = Result.failure(UnsupportedOperationException("Recent files not supported"))
+
+    /**
+     * Purges all recent files older than [olderThanMs] milliseconds.
+     * If [olderThanMs] is 0, purges all recent files.
+     * Returns the number of items purged.
+     */
+    suspend fun purgeRecent(olderThanMs: Long = 0): Result<Int> = Result.failure(UnsupportedOperationException("Recent files not supported"))
+
+    // Archive Operations
+    /**
+     * Extracts an archive to the given destination directory.
+     * Default returns UnsupportedOperationException — backends with archive support override this.
+     */
+    suspend fun extractArchive(archiveUri: String, destDirUri: String): Result<String> = Result.failure(UnsupportedOperationException("Archive extraction not supported"))
+
+    /**
+     * Compresses files/directories into an archive.
+     * Default returns UnsupportedOperationException — backends with archive support override this.
+     */
+    suspend fun compressArchive(sourceUris: List<String>, destArchiveUri: String): Result<String> = Result.failure(UnsupportedOperationException("Archive compression not supported"))
+
+    /**
      * Mounts the volume enclosing the given URI.
      */
     suspend fun mountEnclosingVolume(uri: String): Result<Unit> = Result.failure(UnsupportedOperationException("Mounting not supported"))
@@ -160,7 +199,48 @@ interface IOBackend {
     suspend fun isTrashEmpty(uri: String): Boolean = true
 
     // Optional (default no-ops)
-    fun search(query: com.imbric.core.models.VfsQuery): Flow<FileInfo> = emptyFlow()
+    fun search(query: com.imbric.core.models.VfsQuery): Flow<FileInfo> = flow {
+        val stack = ArrayDeque<Pair<String, Int>>()
+        stack.add(query.rootUri to 0)
+        
+        while (stack.isNotEmpty()) {
+            val (dirUri, depth) = stack.removeLast()
+            if (depth > query.maxDepth) continue
+            
+            try {
+                list(dirUri).collect { info ->
+                    // 1. Recurse
+                    if (info.isDirectory && query.recursive) {
+                        stack.add(info.uri to depth + 1)
+                    }
+                    
+                    // 2. Filter
+                    if (!query.includeHidden && info.isVisiblyHidden()) return@collect
+                    
+                    val matchesText = query.text.isEmpty() || info.name.contains(query.text, ignoreCase = true)
+                    if (!matchesText) return@collect
+                    
+                    val matchesMime = query.mimeFilter == null || info.mimeType.startsWith(query.mimeFilter)
+                    if (!matchesMime) return@collect
+                    
+                    val mtime = info.modifiedTime?.toEpochMilliseconds()
+                    val matchesDate = (query.modifiedAfter == null || (mtime != null && mtime >= query.modifiedAfter)) &&
+                                       (query.modifiedBefore == null || (mtime != null && mtime <= query.modifiedBefore))
+                    if (!matchesDate) return@collect
+                    
+                    val matchesSize = (query.minSize == null || info.size >= query.minSize) &&
+                                       (query.maxSize == null || info.size <= query.maxSize)
+                    if (!matchesSize) return@collect
+                    
+                    if (query.starredOnly && !info.isStarred) return@collect
+                    
+                    emit(info)
+                }
+            } catch (e: Exception) {
+                // Skip unreadable dirs
+            }
+        }
+    }
     fun watch(uri: String): Flow<FileEvent> = emptyFlow()
 
     fun canHandle(uri: String): Boolean =

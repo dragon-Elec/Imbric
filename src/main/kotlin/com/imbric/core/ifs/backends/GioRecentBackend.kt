@@ -76,4 +76,27 @@ class GioRecentBackend : IOBackend {
     override suspend fun createFolder(parentUri: String, name: String): Result<String> = Result.failure(UnsupportedOperationException())
     override suspend fun createFile(parentUri: String, name: String): Result<String> = Result.failure(UnsupportedOperationException())
     override suspend fun rename(uri: String, newName: String): Result<String> = Result.failure(UnsupportedOperationException())
+
+    override suspend fun addToRecent(uri: String, mimeType: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val rm = RecentManager.getDefault()
+            rm.addItem(uri)
+            Unit
+        }
+    }
+
+    override suspend fun removeFromRecent(uri: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val rm = RecentManager.getDefault()
+            rm.removeItem(uri)
+            Unit
+        }
+    }
+
+    override suspend fun purgeRecent(olderThanMs: Long): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val rm = RecentManager.getDefault()
+            rm.purgeItems()
+        }
+    }
 }

@@ -54,6 +54,10 @@ data class FileInfo(
     val canUnmount: Boolean = false,
     val canEject: Boolean = false,
     
+    // Security
+    /** SELinux security context string (e.g., "unconfined_u:object_r:user_home_t:s0"). */
+    val selinuxContext: String? = null,
+    
     /** Extensible bag for native-specific metadata (e.g., GIO attributes, Windows ACLs, Android Scoped Storage tags). */
     val attributes: Map<String, Any?> = emptyMap()
 ) {

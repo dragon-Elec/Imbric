@@ -89,7 +89,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         return vfs.supportedUriSchemes?.contains(scheme) == true
     }
 
-    private val queryAttributes = "standard::*,time::*,unix::*,owner::*,access::*,trash::*,recent::modified,metadata::activation-uri"
+    private val queryAttributes = "standard::*,time::*,unix::*,owner::*,access::*,trash::*,recent::modified,metadata::activation-uri,xattr::selinux"
 
     private fun resolveUniqueTarget(uri: String): String {
         var current = uri
@@ -136,7 +136,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         val src = File.newForUri(job.source)
         val dest = File.newForUri(finalDest)
         
-        val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
+        val flags = if (job.overwrite) setOf(FileCopyFlags.OVERWRITE, FileCopyFlags.ALL_METADATA) else setOf(FileCopyFlags.ALL_METADATA)
         
         try {
             val progressCb = FileProgressCallback { current, total, _ ->
@@ -183,7 +183,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         val src = File.newForUri(job.source)
         val dest = File.newForUri(finalDest)
         
-        val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
+        val flags = if (job.overwrite) setOf(FileCopyFlags.OVERWRITE, FileCopyFlags.ALL_METADATA) else setOf(FileCopyFlags.ALL_METADATA)
         
         try {
             val progressCb = FileProgressCallback { current, total, _ ->
@@ -266,7 +266,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 enumerator.close(null)
             }
         } else {
-            val flags = if (job.overwrite) FileCopyFlags.OVERWRITE else FileCopyFlags.NONE
+            val flags = if (job.overwrite) setOf(FileCopyFlags.OVERWRITE, FileCopyFlags.ALL_METADATA) else setOf(FileCopyFlags.ALL_METADATA)
             val progressCb = FileProgressCallback { current, total, _ ->
                 channel.trySend(TransferProgress(job.id, src.uri, dest.uri, null, 0, 1, current, total))
             }
@@ -469,6 +469,79 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         newFile?.uri ?: uri
     }
 
+    override suspend fun createLink(targetUri: String, linkUri: String): Result<String> = withVfsErrorHandling(linkUri) {
+        val linkFile = File.newForUri(linkUri)
+        val target = if (targetUri.startsWith("file://")) targetUri.removePrefix("file://") else targetUri
+        
+        GioCoroutineBridge.awaitGioAsync(
+            block = { cancellable, callback ->
+                linkFile.makeSymbolicLinkAsync(target, GLib.PRIORITY_DEFAULT, cancellable, callback)
+            },
+            finish = { result ->
+                linkFile.makeSymbolicLinkFinish(result)
+            }
+        )
+        linkUri
+    }
+
+    override suspend fun extractArchive(archiveUri: String, destDirUri: String): Result<String> = withVfsErrorHandling(archiveUri) {
+        val archivePath = if (archiveUri.startsWith("file://")) archiveUri.removePrefix("file://") else archiveUri
+        val destPath = if (destDirUri.startsWith("file://")) destDirUri.removePrefix("file://") else destDirUri
+        
+        val process = when {
+            archivePath.endsWith(".zip", ignoreCase = true) -> 
+                ProcessBuilder("unzip", "-o", archivePath, "-d", destPath).start()
+            archivePath.endsWith(".tar.gz", ignoreCase = true) || archivePath.endsWith(".tgz", ignoreCase = true) -> 
+                ProcessBuilder("tar", "-xzf", archivePath, "-C", destPath).start()
+            archivePath.endsWith(".tar.xz", ignoreCase = true) -> 
+                ProcessBuilder("tar", "-xJf", archivePath, "-C", destPath).start()
+            archivePath.endsWith(".tar", ignoreCase = true) -> 
+                ProcessBuilder("tar", "-xf", archivePath, "-C", destPath).start()
+            else -> throw UnsupportedOperationException("Unsupported archive type: $archiveUri")
+        }
+        
+        val exitCode = withContext(Dispatchers.IO) { process.waitFor() }
+        if (exitCode != 0) {
+            throw Exception("Extraction failed with exit code $exitCode")
+        }
+        destDirUri
+    }
+
+    override suspend fun compressArchive(sourceUris: List<String>, destArchiveUri: String): Result<String> = withVfsErrorHandling(destArchiveUri) {
+        val destPath = if (destArchiveUri.startsWith("file://")) destArchiveUri.removePrefix("file://") else destArchiveUri
+        val sourcePaths = sourceUris.map { if (it.startsWith("file://")) it.removePrefix("file://") else it }
+        
+        val process = when {
+            destPath.endsWith(".zip", ignoreCase = true) -> {
+                val cmd = mutableListOf("zip", "-r", destPath)
+                cmd.addAll(sourcePaths)
+                ProcessBuilder(cmd).start()
+            }
+            destPath.endsWith(".tar.gz", ignoreCase = true) || destPath.endsWith(".tgz", ignoreCase = true) -> {
+                val cmd = mutableListOf("tar", "-czf", destPath)
+                cmd.addAll(sourcePaths)
+                ProcessBuilder(cmd).start()
+            }
+            destPath.endsWith(".tar.xz", ignoreCase = true) -> {
+                val cmd = mutableListOf("tar", "-cJf", destPath)
+                cmd.addAll(sourcePaths)
+                ProcessBuilder(cmd).start()
+            }
+            destPath.endsWith(".tar", ignoreCase = true) -> {
+                val cmd = mutableListOf("tar", "-cf", destPath)
+                cmd.addAll(sourcePaths)
+                ProcessBuilder(cmd).start()
+            }
+            else -> throw UnsupportedOperationException("Unsupported archive type: $destArchiveUri")
+        }
+        
+        val exitCode = withContext(Dispatchers.IO) { process.waitFor() }
+        if (exitCode != 0) {
+            throw Exception("Compression failed with exit code $exitCode")
+        }
+        destArchiveUri
+    }
+
     override suspend fun mountEnclosingVolume(uri: String): Result<Unit> = withVfsErrorHandling(uri) {
         val gfile = File.newForUri(uri)
             GioCoroutineBridge.awaitGioAsync(
@@ -669,7 +742,15 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                     // Match filename against query (case-insensitive)
                     if (name.lowercase().contains(queryLower)) {
                         val fileInfo = GioTypeMappers.toImbricFileInfo(dir, info)
-                        if (query.mimeFilter == null || fileInfo.mimeType.startsWith(query.mimeFilter)) {
+                        
+                        // Apply filters
+                        val matchesMime = query.mimeFilter == null || fileInfo.mimeType.startsWith(query.mimeFilter)
+                        val matchesDateRange = (query.modifiedAfter == null || (fileInfo.modifiedTime?.toEpochMilliseconds() ?: 0) >= query.modifiedAfter) &&
+                                               (query.modifiedBefore == null || (fileInfo.modifiedTime?.toEpochMilliseconds() ?: Long.MAX_VALUE) <= query.modifiedBefore)
+                        val matchesSizeRange = (query.minSize == null || fileInfo.size >= query.minSize) &&
+                                               (query.maxSize == null || fileInfo.size <= query.maxSize)
+                        
+                        if (matchesMime && matchesDateRange && matchesSizeRange) {
                             emit(fileInfo)
                         }
                     }

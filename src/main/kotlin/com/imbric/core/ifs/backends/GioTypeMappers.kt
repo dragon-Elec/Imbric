@@ -100,6 +100,9 @@ object GioTypeMappers {
             // Activation URI (from metadata or .desktop file)
             activationUri = gioInfo.getAttributeString("metadata::activation-uri"),
             
+            // Security
+            selinuxContext = gioInfo.getAttributeString("xattr::selinux"),
+            
             attributes = attributeMap
         )
     }
