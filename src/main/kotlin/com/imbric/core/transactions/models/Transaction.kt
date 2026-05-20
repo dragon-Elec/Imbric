@@ -1,7 +1,6 @@
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.transactions.models
 
-import com.imbric.core.models.FileJob
 import com.imbric.core.models.TransferProgress
 import com.imbric.core.models.UndoAction
 import kotlin.uuid.Uuid
