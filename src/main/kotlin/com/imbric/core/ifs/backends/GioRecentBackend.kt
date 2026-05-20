@@ -1,4 +1,3 @@
-@file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.ifs.backends
 
 import com.imbric.core.ifs.*
@@ -12,8 +11,6 @@ import org.gnome.gtk.Gtk
 import org.gnome.gtk.RecentManager
 import org.gnome.gio.File
 import org.gnome.gio.FileQueryInfoFlags
-import kotlin.uuid.Uuid
-import kotlin.uuid.ExperimentalUuidApi
 
 class GioRecentBackend : IOBackend {
     init {
