@@ -1,4 +1,3 @@
-@file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 package com.imbric.core.transactions
 
 import com.imbric.core.ifs.BackendRegistry
@@ -9,7 +8,6 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlin.test.*
-import kotlin.uuid.Uuid
 
 class TransferOrchestratorTest {
 
