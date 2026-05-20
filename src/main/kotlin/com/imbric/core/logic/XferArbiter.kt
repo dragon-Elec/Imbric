@@ -2,7 +2,6 @@ package com.imbric.core.logic
 
 import com.imbric.core.ifs.uriParent
 import com.imbric.core.models.FileInfo
-import kotlinx.datetime.Instant
 
 /**
  * Conflict resolution decision.
