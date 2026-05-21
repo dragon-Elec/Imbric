@@ -792,12 +792,18 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         var currentInfo = info
         val attrs = currentInfo.attributes.toMutableMap()
         
-        // 1. Image Dimensions (64KB Trick)
-        val mime = currentInfo.mimeType.lowercase()
+        enrichImageMetadata(currentInfo, attrs)
+        currentInfo = enrichDesktopMetadata(currentInfo, attrs)
+
+        currentInfo.copy(attributes = attrs)
+    }
+
+    private suspend fun enrichImageMetadata(info: FileInfo, attrs: MutableMap<String, Any?>) {
+        val mime = info.mimeType.lowercase()
         val isImage = mime.startsWith("image/") || mime.endsWith("/webp") || mime.endsWith("/heic") || mime.endsWith("/avif")
         
-        if (!currentInfo.isDirectory && isImage) {
-            val bytesResult = readHeader(currentInfo.uri, 65536)
+        if (!info.isDirectory && isImage) {
+            val bytesResult = readHeader(info.uri, 65536)
             bytesResult.onSuccess { bytes ->
                 var width = 0
                 var height = 0
@@ -819,8 +825,10 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 }
             }
         }
-        
-        // 2. .desktop file parsing
+    }
+
+    private suspend fun enrichDesktopMetadata(info: FileInfo, attrs: MutableMap<String, Any?>): FileInfo {
+        var currentInfo = info
         if (currentInfo.name.endsWith(".desktop")) {
             val bytesResult = readHeader(currentInfo.uri, 1024 * 1024) // up to 1MB
             bytesResult.onSuccess { bytes ->
@@ -861,8 +869,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 }
             }
         }
-        
-        currentInfo.copy(attributes = attrs)
+        return currentInfo
     }
 
     /**
