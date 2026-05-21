@@ -6,6 +6,9 @@ import androidx.compose.ui.window.application
 import org.gnome.gio.Application
 import org.gnome.gio.ApplicationFlags
 import org.gnome.gio.Gio
+import mu.KotlinLogging
+
+private val logger = KotlinLogging.logger {}
 
 /**
  * Entry point for ImbricFS Desktop.
@@ -29,7 +32,7 @@ fun main(args: Array<String>) {
         app.register(null)
     } catch (e: Exception) {
         // Fallback: Continue anyway, though some native events might not work.
-        System.err.println("Warning: Could not register GApplication: ${e.message}")
+        logger.warn(e) { "Could not register GApplication: ${e.message}" }
     }
 
     // 3. Launch Compose UI
