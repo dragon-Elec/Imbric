@@ -4,8 +4,9 @@ import com.imbric.core.ifs.*
 import com.imbric.core.models.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.gnome.gtk.Gtk
 import org.gnome.gtk.RecentManager
@@ -36,23 +37,25 @@ class GioRecentBackend : IOBackend {
 
     override suspend fun canPerform(action: FileAction, uri: String): Boolean = false
 
-    override fun list(uri: String): Flow<FileInfo> = flow {
+    override fun list(uri: String): Flow<FileInfo> = channelFlow {
         val rm = RecentManager.getDefault()
-        val items = rm.items ?: return@flow
+        val items = rm.items ?: return@channelFlow
         
         val queryAttributes = "standard::*,time::*,unix::*,owner::*,access::*,trash::*"
         for (item in items) {
             if (item == null) continue
             val itemUri = item.uri ?: continue
             
-            val gfile = File.newForUri(itemUri)
-            try {
-                if (gfile.queryExists(null)) {
-                    val info = gfile.queryInfo(queryAttributes, FileQueryInfoFlags.NONE, null)
-                    emit(GioTypeMappers.toImbricFileInfo(gfile, info, "recent"))
+            launch {
+                val gfile = File.newForUri(itemUri)
+                try {
+                    if (gfile.queryExists(null)) {
+                        val info = gfile.queryInfo(queryAttributes, FileQueryInfoFlags.NONE, null)
+                        send(GioTypeMappers.toImbricFileInfo(gfile, info, "recent"))
+                    }
+                } catch (e: Exception) {
+                    // Skip on error
                 }
-            } catch (e: Exception) {
-                // Skip on error
             }
         }
     }.flowOn(Dispatchers.IO)
