@@ -6,7 +6,8 @@ build/
 .DS_Store
 
 # Reference materials (patched java-gi, docs, etc.)
-ref/
+ref/*
+!ref/java-gi/
 
 # IDE & Tooling
 .classpath

@@ -1,0 +1,13 @@
+/*
+ * VideoInfo::fromCaps clashes with VideoInfo::newFromCaps because the
+ * "new" prefix is removed in Java-GI. The same happens in
+ * VideoInfoDmaDrm. Change the name to "withCaps".
+ */
+VideoInfo.from_caps name=with_caps
+VideoInfoDmaDrm.from_caps name=with_caps
+
+/*
+ * Function Navigation.eventParseModifierState has an out-parameter
+ * "state", but it isn't annotated as such.
+ */
+Navigation.event_parse_modifier_state.state direction=out
