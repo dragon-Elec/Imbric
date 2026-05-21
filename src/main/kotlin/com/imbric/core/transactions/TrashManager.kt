@@ -35,15 +35,35 @@ class TrashManager(
         val results = mutableListOf<String>()
         var hasError = false
         
-        for (path in paths) {
-            val backend = backendRegistry.getIo(path) ?: continue
-            val job = FileJob(id = Uuid.random(), opType = "trash", source = path)
-            val result = backend.trash(job)
-            if (result.isSuccess) {
-                results.add(path)
+        val dispatcher = Dispatchers.IO.limitedParallelism(32)
+        coroutineScope {
+            val ops = paths.map { path ->
+                async(dispatcher) {
+                    val backend = backendRegistry.getIo(path)
+                    if (backend == null) {
+                        null
+                    } else {
+                        val job = FileJob(id = Uuid.random(), opType = "trash", source = path)
+                        val result = backend.trash(job)
+                        path to result
+                    }
+                }
+            }.awaitAll()
+
+            var anySuccess = false
+            for (op in ops) {
+                if (op == null) continue
+                val (path, result) = op
+                if (result.isSuccess) {
+                    results.add(path)
+                    anySuccess = true
+                } else {
+                    hasError = true
+                }
+            }
+
+            if (anySuccess) {
                 trashState.refresh()
-            } else {
-                hasError = true
             }
         }
         
