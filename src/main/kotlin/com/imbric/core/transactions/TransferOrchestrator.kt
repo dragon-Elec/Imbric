@@ -61,25 +61,7 @@ class TransferOrchestrator(
         }
         
         val jitResolver: suspend (ConflictContext) -> ConflictResponse = { context ->
-            val existing = mutex.withLock { stickyDecisions[context.type] }
-            if (existing != null) {
-                ConflictResponse(existing)
-            } else {
-                val response = onManualConflict(context)
-                if (response.applyToAll) {
-                    mutex.withLock {
-                        val doubleCheck = stickyDecisions[context.type]
-                        if (doubleCheck == null) {
-                            stickyDecisions[context.type] = response.action
-                            response
-                        } else {
-                            ConflictResponse(doubleCheck)
-                        }
-                    }
-                } else {
-                    response
-                }
-            }
+            getOrPromptDecision(context, onManualConflict, stickyDecisions, mutex)
         }
 
         transactionManager.commitTransaction(tid, jitResolver, policy)
@@ -124,25 +106,8 @@ class TransferOrchestrator(
         }
         
         if (action is ConflictAction.Prompt) {
-            val existing = mutex.withLock { stickyDecisions[conflictType] }
-            val response = if (existing != null) {
-                ConflictResponse(existing)
-            } else {
-                val res = onManualConflict(ConflictContext(src, dest, srcMeta, destMeta, conflictType))
-                if (res.applyToAll) {
-                    mutex.withLock {
-                        val doubleCheck = stickyDecisions[conflictType]
-                        if (doubleCheck == null) {
-                            stickyDecisions[conflictType] = res.action
-                            res
-                        } else {
-                            ConflictResponse(doubleCheck)
-                        }
-                    }
-                } else {
-                    res
-                }
-            }
+            val context = ConflictContext(src, dest, srcMeta, destMeta, conflictType)
+            val response = getOrPromptDecision(context, onManualConflict, stickyDecisions, mutex)
             action = response.action
         }
         
@@ -167,5 +132,31 @@ class TransferOrchestrator(
         }
     }
     
+    private suspend fun getOrPromptDecision(
+        context: ConflictContext,
+        onManualConflict: suspend (ConflictContext) -> ConflictResponse,
+        stickyDecisions: MutableMap<ConflictType, ConflictAction>,
+        mutex: Mutex
+    ): ConflictResponse {
+        val existing = mutex.withLock { stickyDecisions[context.type] }
+        if (existing != null) {
+            return ConflictResponse(existing)
+        }
+
+        val response = onManualConflict(context)
+        if (response.applyToAll) {
+            return mutex.withLock {
+                val doubleCheck = stickyDecisions[context.type]
+                if (doubleCheck == null) {
+                    stickyDecisions[context.type] = response.action
+                    response
+                } else {
+                    ConflictResponse(doubleCheck)
+                }
+            }
+        }
+        return response
+    }
+
     private data class ValidatedOp(val src: String, val dest: String, val overwrite: Boolean, val autoRename: Boolean = false)
 }
