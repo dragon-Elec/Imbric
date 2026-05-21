@@ -19,13 +19,62 @@ object GioTypeMappers {
         gioInfo: org.gnome.gio.FileInfo,
         backendId: String = "gio"
     ): FileInfo {
-        val name = gioInfo.name?.toString() ?: ""
         val uri = gfile.uri?.toString() ?: ""
+        val name = gioInfo.name?.toString() ?: ""
+        val pathType = determinePathType(uri)
+        val nativeId = getNativeId(gioInfo)
         
-        val icon = gioInfo.icon
-        val iconName = if (icon is org.gnome.gio.ThemedIcon) icon.names?.firstOrNull() else null
+        return FileInfo(
+            nativeId = nativeId,
+            name = name,
+            path = gfile.path?.toString() ?: uri,
+            uri = uri,
+            pathType = pathType,
+            displayName = gioInfo.displayName?.toString() ?: name,
+            isDirectory = gioInfo.fileType == org.gnome.gio.FileType.DIRECTORY,
+            isSymlink = gioInfo.isSymlink,
+            symlinkTarget = if (gioInfo.isSymlink) gioInfo.symlinkTarget?.toString() else null,
+            size = gioInfo.size,
+            mimeType = gioInfo.contentType?.toString() ?: "application/octet-stream",
+            modifiedTime = gioInfo.modificationDateTime?.let { Instant.fromEpochSeconds(it.toUnix()) },
+            accessedTime = getTimestamp(gioInfo, "time::access"),
+            createdTime = getTimestamp(gioInfo, "time::created"),
+            isHidden = gioInfo.isHidden,
+            isReadable = gioInfo.getAttributeBoolean("access::can-read"),
+            isWritable = gioInfo.getAttributeBoolean("access::can-write"),
+            isExecutable = gioInfo.getAttributeBoolean("access::can-execute"),
+            permissions = gioInfo.getAttributeUint32("unix::mode").takeIf { it > 0 }?.toString(8) ?: "",
+            owner = gioInfo.getAttributeString("owner::user") ?: "",
+            group = gioInfo.getAttributeString("owner::group") ?: "",
+            iconName = getIconName(gioInfo),
+            thumbnailPath = gioInfo.getAttributeString("standard::thumbnail-path"),
+            backendId = backendId,
+            
+            // Location Flags
+            isInTrash = uri.startsWith("trash:///"),
+            isInRecent = uri.startsWith("recent:///"),
+            isRemote = isRemoteUri(uri),
+            
+            // Mount Capabilities
+            canMount = gioInfo.getAttributeBoolean("access::can-mount"),
+            canUnmount = gioInfo.getAttributeBoolean("access::can-unmount"),
+            canEject = gioInfo.getAttributeBoolean("access::can-eject"),
+            
+            // Virtual timestamps
+            trashTime = getTrashTime(gioInfo),
+            recency = getTimestamp(gioInfo, "recent::modified"),
+            
+            // Activation URI (from metadata or .desktop file)
+            activationUri = gioInfo.getAttributeString("metadata::activation-uri"),
+            
+            // Security
+            selinuxContext = gioInfo.getAttributeString("xattr::selinux"),
+            
+            attributes = extractAttributes(gioInfo)
+        )
+    }
 
-        // Native GIO attributes (Secret Bag)
+    private fun extractAttributes(gioInfo: org.gnome.gio.FileInfo): Map<String, Any?> {
         val attributeMap = mutableMapOf<String, Any?>()
         gioInfo.listAttributes(null)?.forEach { attr ->
             if (attr != null) {
@@ -44,66 +93,37 @@ object GioTypeMappers {
                 }
             }
         }
+        return attributeMap
+    }
 
-        val pathType = when {
+    private fun determinePathType(uri: String): PathType {
+        return when {
             uri.startsWith("trash://") || uri.startsWith("recent://") -> PathType.VIRTUAL
             else -> PathType.PHYSICAL
         }
+    }
 
-        // Native identifier for stable tracking across renames
-        val nativeId = gioInfo.getAttributeUint64("unix::inode").takeIf { it > 0 }?.toString()
+    private fun getIconName(gioInfo: org.gnome.gio.FileInfo): String? {
+        val icon = gioInfo.icon
+        return if (icon is org.gnome.gio.ThemedIcon) icon.names?.firstOrNull() else null
+    }
+
+    private fun getNativeId(gioInfo: org.gnome.gio.FileInfo): String? {
+        return gioInfo.getAttributeUint64("unix::inode").takeIf { it > 0 }?.toString()
             ?: gioInfo.getAttributeString("standard::name")
+    }
 
-        return FileInfo(
-            nativeId = nativeId,
-            name = name,
-            path = gfile.path?.toString() ?: uri,
-            uri = uri,
-            pathType = pathType,
-            displayName = gioInfo.displayName?.toString() ?: name,
-            isDirectory = gioInfo.fileType == org.gnome.gio.FileType.DIRECTORY,
-            isSymlink = gioInfo.isSymlink,
-            symlinkTarget = if (gioInfo.isSymlink) gioInfo.symlinkTarget?.toString() else null,
-            size = gioInfo.size,
-            mimeType = gioInfo.contentType?.toString() ?: "application/octet-stream",
-            modifiedTime = gioInfo.modificationDateTime?.let { Instant.fromEpochSeconds(it.toUnix()) },
-            accessedTime = gioInfo.getAttributeUint64("time::access").takeIf { it > 0 }?.let { Instant.fromEpochSeconds(it) },
-            createdTime = gioInfo.getAttributeUint64("time::created").takeIf { it > 0 }?.let { Instant.fromEpochSeconds(it) },
-            isHidden = gioInfo.isHidden,
-            isReadable = gioInfo.getAttributeBoolean("access::can-read"),
-            isWritable = gioInfo.getAttributeBoolean("access::can-write"),
-            isExecutable = gioInfo.getAttributeBoolean("access::can-execute"),
-            permissions = gioInfo.getAttributeUint32("unix::mode").takeIf { it > 0 }?.toString(8) ?: "",
-            owner = gioInfo.getAttributeString("owner::user") ?: "",
-            group = gioInfo.getAttributeString("owner::group") ?: "",
-            iconName = iconName,
-            thumbnailPath = gioInfo.getAttributeString("standard::thumbnail-path"),
-            backendId = backendId,
-            
-            // Location Flags
-            isInTrash = uri.startsWith("trash:///"),
-            isInRecent = uri.startsWith("recent:///"),
-            isRemote = uri.contains("://") && !uri.startsWith("file://") && !uri.startsWith("trash://") && !uri.startsWith("recent://"),
-            
-            // Mount Capabilities
-            canMount = gioInfo.getAttributeBoolean("access::can-mount"),
-            canUnmount = gioInfo.getAttributeBoolean("access::can-unmount"),
-            canEject = gioInfo.getAttributeBoolean("access::can-eject"),
-            
-            // Virtual timestamps
-            trashTime = gioInfo.getAttributeString("trash::deletion-date")?.let {
-                try { Instant.parse(it) } catch (_: Exception) { null }
-            },
-            recency = gioInfo.getAttributeUint64("recent::modified").takeIf { it > 0 }
-                ?.let { Instant.fromEpochSeconds(it) },
-            
-            // Activation URI (from metadata or .desktop file)
-            activationUri = gioInfo.getAttributeString("metadata::activation-uri"),
-            
-            // Security
-            selinuxContext = gioInfo.getAttributeString("xattr::selinux"),
-            
-            attributes = attributeMap
-        )
+    private fun getTimestamp(gioInfo: org.gnome.gio.FileInfo, attribute: String): Instant? {
+        return gioInfo.getAttributeUint64(attribute).takeIf { it > 0 }?.let { Instant.fromEpochSeconds(it) }
+    }
+
+    private fun getTrashTime(gioInfo: org.gnome.gio.FileInfo): Instant? {
+        return gioInfo.getAttributeString("trash::deletion-date")?.let {
+            try { Instant.parse(it) } catch (_: Exception) { null }
+        }
+    }
+
+    private fun isRemoteUri(uri: String): Boolean {
+        return uri.contains("://") && !uri.startsWith("file://") && !uri.startsWith("trash://") && !uri.startsWith("recent://")
     }
 }
