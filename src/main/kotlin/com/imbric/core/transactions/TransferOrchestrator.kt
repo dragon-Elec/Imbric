@@ -3,7 +3,6 @@ package com.imbric.core.transactions
 
 import com.imbric.core.ifs.*
 import com.imbric.core.logic.*
-import com.imbric.core.models.FileInfo
 import com.imbric.core.transactions.models.TransactionEvent
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
