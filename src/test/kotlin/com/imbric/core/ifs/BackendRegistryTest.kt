@@ -43,4 +43,14 @@ class BackendRegistryTest {
         assert(schemes.contains("memory"))
         assert(schemes.contains("smb"))
     }
+
+    @Test
+    fun testGetIoSmartRoutingCanHandle() {
+        val customBackend = object : InMemoryBackend("custom") {
+            override fun canHandle(uri: String): Boolean = uri.startsWith("magic://")
+        }
+        BackendRegistry.registerIo("custom", customBackend)
+        val backend = BackendRegistry.getIo("magic://foo/bar")
+        assertEquals("custom", backend?.scheme)
+    }
 }
