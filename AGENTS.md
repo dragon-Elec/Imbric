@@ -153,6 +153,35 @@ Read them when working on the corresponding topic.
   coroutine dispatcher proposal, Arena lifecycle for async callbacks,
   signal patterns, GApplication lifecycle quirks, and known workarounds.
 
+## Magic Context & Agent Workflow
+
+- **Read Full Files:** Do not use arbitrary line limits (e.g., `limit: 50`) when reading files to save tokens. Read the full file.
+- **Automatic Truncation:** Magic Context automatically truncates old tool outputs (replacing them with `[truncated]` stubs) when they age out and the context window hits its threshold. This safely manages token limits.
+- **Immediate Memorization:** Because truncated tool outputs disappear from the active context window, **immediately** save important architectural rules or findings to `ctx_memory` while the full file is still visible.
+- **Recovery:** Truncated content is not lost forever; it is stored in SQLite and can be queried via `ctx_search` or recovered via `ctx_expand`, but `ctx_memory` is the most reliable way to persist knowledge.
+
+## Hard-Won Learnings
+
+### PR Review Discipline
+- **Never merge "unused import" PRs without compile-checking.** PR #24 removed `@OptIn(ExperimentalUuidApi::class)` from `TransferOrchestrator.kt`, but `startTransaction()` returns `Uuid`. Broke compilation.
+- **PR #19 was worse** — tried to remove `withContext` from `GioRecentBackend` which IS used on 3 lines. Would have broken build.
+- **Bot PRs (Jules, etc.) need human review.** "Simple" cleanup PRs aren't always safe. Always verify at compile level.
+
+### URI String Manipulation
+- **`trimEnd('/')` on `file:///` gives `file:`** which breaks scheme detection. Always check for root URIs (`isRootUri()`) before trimming slashes.
+- **Plain paths (`/path`) have no scheme.** Code that assumes `scheme://` exists will break on plain paths. Handle `schemeEnd == -1` separately.
+- **Test root URIs explicitly:** `file:///`, `file://`, `smb://`, `smb:///`, `/`, `/path` are all valid and must be tested.
+
+### Testability & Bash Workflow
+- **Singleton dependencies kill testability.** `TrashManager` hardcoding `TrashMonitor.getInstance()` meant tests hit real GIO. Always inject external dependencies via interfaces (`TrashStateProvider`).
+- **Bash is a helpful assistant for tests.** Use bash scripts to orchestrate complex real-filesystem states (deep trees, symlinks, permissions) before running tests, rather than writing 50 lines of Kotlin setup.
+- **Configure Gradle for better output.** Add `testLogging { events("failed"); exceptionFormat = FULL }` to `build.gradle.kts` to print exact failures and stack traces to the console.
+- **Stop over-filtering Gradle output.** Do NOT pipe `./gradlew test` to `| tail` or `| grep`. It throws away the exact stack traces we configured Gradle to print.
+- **The Balanced Testing Workflow:**
+  - For quick checks: `./gradlew test --tests "SpecificTest"` (Targeted, 7s vs 48s).
+  - For full suite: `./gradlew test` (Without `--continue`). It stops at the *first* error and prints the exact stack trace, preventing 50-error spam.
+  - If output is massive: Redirect to a file (`> /tmp/test.log 2>&1`), then use native `grep` and `read` tools to inspect it. Avoid dumping 2000 lines of stack traces into the context window, as it causes token bloat and pushes out useful memory.
+
 ## Session Handover
 
 Before ending a session, update `HANDOVER.md` with the current status, bugs found, and next steps. This ensures the next session can start without re-exploring the entire codebase.
