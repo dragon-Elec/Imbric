@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.*
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
-class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBackend {
+open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IOBackend {
     override val scheme: String = "search"
     override val displayName: String = "GNOME Tracker Search"
 
@@ -55,7 +55,9 @@ class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBack
         var scanned = 0
         
         try {
-            runTrackerSearch(query).collect { uri ->
+            // runTrackerSearch might throw immediately, or might throw during collection
+            val trackerFlow = runTrackerSearch(query)
+            trackerFlow.collect { uri ->
                 scanned++
                 if (scanned % 100 == 0) {
                     query.onScanned?.invoke(scanned)
@@ -89,7 +91,8 @@ class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBack
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun runTrackerSearch(query: com.imbric.core.models.VfsQuery): Flow<String> = flow {
+    // Visible for testing
+    internal open fun runTrackerSearch(query: com.imbric.core.models.VfsQuery): Flow<String> = flow {
         val flag = if (query.contentSearch) "-c" else "-f"
         val process = ProcessBuilder("tracker3", "search", "--disable-color", flag, "--", query.text)
             .start()
