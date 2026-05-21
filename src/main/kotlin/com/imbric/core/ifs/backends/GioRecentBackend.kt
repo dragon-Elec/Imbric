@@ -67,7 +67,7 @@ class GioRecentBackend : IOBackend {
 
     override suspend fun copy(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.emptyFlow()
     override suspend fun move(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.emptyFlow()
-    override suspend fun trash(job: FileJob): Result<String> = Result.failure(UnsupportedOperationException())
+    override suspend fun trash(job: FileJob, recoverTrashUri: Boolean): Result<String> = Result.failure(UnsupportedOperationException())
     override suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String> = Result.failure(UnsupportedOperationException())
     override suspend fun delete(job: FileJob): Result<Unit> = Result.failure(UnsupportedOperationException())
     override suspend fun createFolder(parentUri: String, name: String): Result<String> = Result.failure(UnsupportedOperationException())

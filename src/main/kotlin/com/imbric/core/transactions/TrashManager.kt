@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.*
 import kotlin.uuid.Uuid
 import kotlin.uuid.ExperimentalUuidApi
 
+data class TrashResult(val successful: List<String>, val failed: List<String>)
+
 /**
  * Specialized transaction logic for trash operations.
  * Ported from Python trash_manager.py.
@@ -31,20 +33,21 @@ class TrashManager(
     val isTrashEmpty: StateFlow<Boolean> = trashState.isEmpty
 
     // --- Trash Operations ---
-    suspend fun trashFiles(paths: List<String>): Result<List<String>> {
-        val results = mutableListOf<String>()
-        var hasError = false
+    suspend fun trashFiles(paths: List<String>): TrashResult {
+        val successful = mutableListOf<String>()
+        val failed = mutableListOf<String>()
         
-        val dispatcher = Dispatchers.IO.limitedParallelism(32)
+        val dispatcher = BulkDispatcher.Local
         coroutineScope {
             val ops = paths.map { path ->
                 async(dispatcher) {
                     val backend = backendRegistry.getIo(path)
                     if (backend == null) {
-                        null
+                        path to Result.failure(Exception("No backend found"))
                     } else {
                         val job = FileJob(id = Uuid.random(), opType = "trash", source = path)
-                        val result = backend.trash(job)
+                        // Pass recoverTrashUri = false to avoid O(N^2) bottleneck in GioBackend
+                        val result = backend.trash(job, recoverTrashUri = false)
                         path to result
                     }
                 }
@@ -52,13 +55,12 @@ class TrashManager(
 
             var anySuccess = false
             for (op in ops) {
-                if (op == null) continue
                 val (path, result) = op
                 if (result.isSuccess) {
-                    results.add(path)
+                    successful.add(path)
                     anySuccess = true
                 } else {
-                    hasError = true
+                    failed.add(path)
                 }
             }
 
@@ -67,10 +69,7 @@ class TrashManager(
             }
         }
         
-        if (hasError) {
-            return Result.failure(Exception("Some files could not be trashed"))
-        }
-        return Result.success(results)
+        return TrashResult(successful, failed)
     }
 
     suspend fun restoreFromTrash(trashItem: TrashItem): Result<String> {
@@ -85,11 +84,17 @@ class TrashManager(
     suspend fun emptyTrash(): Result<Unit> {
         var hasError = false
         
-        for (scheme in backendRegistry.getRegisteredSchemes()) {
-            val backend = backendRegistry.getIo("$scheme:///") ?: continue
-            backend.getTrashBackend(backendRegistry)?.let { trashBackend ->
-                val result = trashBackend.emptyTrash()
-                if (!result.isSuccess) {
+        coroutineScope {
+            val ops = backendRegistry.getRegisteredSchemes().map { scheme ->
+                async {
+                    val backend = backendRegistry.getIo("$scheme:///") ?: return@async null
+                    val trashBackend = backend.getTrashBackend(backendRegistry) ?: return@async null
+                    trashBackend.emptyTrash()
+                }
+            }.awaitAll()
+            
+            for (result in ops) {
+                if (result != null && !result.isSuccess) {
                     hasError = true
                 }
             }
@@ -106,11 +111,17 @@ class TrashManager(
      */
     suspend fun listTrashItems(): List<TrashItem> {
         val items = mutableListOf<TrashItem>()
-        for (scheme in backendRegistry.getRegisteredSchemes()) {
-            val backend = backendRegistry.getIo("$scheme:///") ?: continue
-            backend.getTrashBackend(backendRegistry)?.let { trashBackend ->
-                val result = trashBackend.listTrash()
-                if (result.isSuccess) {
+        coroutineScope {
+            val ops = backendRegistry.getRegisteredSchemes().map { scheme ->
+                async {
+                    val backend = backendRegistry.getIo("$scheme:///") ?: return@async null
+                    val trashBackend = backend.getTrashBackend(backendRegistry) ?: return@async null
+                    trashBackend.listTrash()
+                }
+            }.awaitAll()
+            
+            for (result in ops) {
+                if (result != null && result.isSuccess) {
                     items.addAll(result.getOrThrow())
                 }
             }

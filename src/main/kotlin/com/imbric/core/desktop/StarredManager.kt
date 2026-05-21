@@ -16,11 +16,9 @@ import org.gnome.glib.GLib
  */
 class StarredManager private constructor(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-) {
+) : StarredStateProvider {
     private val _starredUris = MutableStateFlow<Set<String>>(emptySet())
-    
-    /** Observable set of all starred file URIs. */
-    val starredUris: StateFlow<Set<String>> = _starredUris.asStateFlow()
+    override val starredUris: StateFlow<Set<String>> = _starredUris.asStateFlow()
 
     private var monitor: FileMonitor? = null
     private var refreshJob: Job? = null
@@ -99,14 +97,14 @@ class StarredManager private constructor(
     /**
      * Checks if a specific URI is starred.
      */
-    fun isStarred(uri: String): Boolean = uri in _starredUris.value
+    override fun isStarred(uri: String): Boolean = uri in _starredUris.value
 
     /**
      * Toggle starred status for a file.
      * Note: This is a stub — actual Tracker3 write integration requires
      * direct SPARQL updates which will be implemented in a future phase.
      */
-    suspend fun toggleStarred(uri: String): Result<Boolean> {
+    override suspend fun toggleStarred(uri: String): Result<Boolean> {
         return try {
             if (isStarred(uri)) {
                 _starredUris.update { it - uri }

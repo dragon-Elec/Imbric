@@ -570,7 +570,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
             )
     }
 
-    override suspend fun trash(job: FileJob): Result<String> = withVfsErrorHandling(job.source) {
+    override suspend fun trash(job: FileJob, recoverTrashUri: Boolean): Result<String> = withVfsErrorHandling(job.source) {
         val gfile = File.newForUri(job.source)
         
         GioCoroutineBridge.awaitGioAsync(
@@ -581,6 +581,10 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 gfile.trashFinish(result)
             }
         )
+        
+        if (!recoverTrashUri) {
+            return@withVfsErrorHandling ""
+        }
         
         // RECOVERY: Find the actual trash URI by matching original path
         // Since GIO doesn't return the trash URI, we have to find it.

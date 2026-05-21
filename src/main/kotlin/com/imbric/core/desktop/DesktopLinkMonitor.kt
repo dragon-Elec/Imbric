@@ -12,10 +12,9 @@ import org.gnome.glib.GLib
  */
 class DesktopLinkMonitor private constructor(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-) {
+) : DesktopLinkProvider {
     private val _links = MutableStateFlow<List<DesktopLink>>(emptyList())
-    /** Observable list of all desktop links. */
-    val links: StateFlow<List<DesktopLink>> = _links.asStateFlow()
+    override val links: StateFlow<List<DesktopLink>> = _links.asStateFlow()
 
     private var monitor: FileMonitor? = null
     private var refreshJob: Job? = null
@@ -48,7 +47,7 @@ class DesktopLinkMonitor private constructor(
     /**
      * Refreshes the list of desktop links by scanning the desktop directory.
      */
-    fun refresh() {
+    override fun refresh() {
         refreshJob?.cancel()
         refreshJob = scope.launch {
             try {

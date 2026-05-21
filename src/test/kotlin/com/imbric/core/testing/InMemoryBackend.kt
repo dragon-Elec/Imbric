@@ -135,15 +135,12 @@ open class InMemoryBackend(
         emit(TransferProgress(jobId, srcUri, destUri, null, 1, 1, 0, 0))
     }
 
-    override suspend fun trash(job: FileJob): Result<String> {
-        val srcUri = job.source.removeSuffix("/")
-        val info = fs.remove(srcUri)
-        return if (info != null) {
-            trashFs[srcUri] = info
-            Result.success(srcUri) // In memory, we use the same URI for simplicity
-        } else {
-            Result.failure(Exception("Source not found: $srcUri"))
-        }
+    override suspend fun trash(job: FileJob, recoverTrashUri: Boolean): Result<String> {
+        val file = fs[job.source] ?: return Result.failure(VfsError.NotFound(job.source))
+        val trashUri = "trash://${file.name}"
+        trashFs[job.source] = file
+        delete(job)
+        return Result.success(if (recoverTrashUri) trashUri else "")
     }
 
     override suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String> {

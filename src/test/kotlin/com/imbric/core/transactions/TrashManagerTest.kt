@@ -40,7 +40,8 @@ class TrashManagerTest {
         // Trash one file
         val trashResult = trashManager.trashFiles(listOf("memory://docs/file1.txt"))
         println("Trash result: $trashResult")
-        assertTrue(trashResult.isSuccess)
+        assertTrue(trashResult.failed.isEmpty(), "Trash operation should succeed")
+        assertEquals(1, trashResult.successful.size)
         assertFalse(backend.exists("memory://docs/file1.txt"), "File should not exist after trashing")
         
         // Check trash list
@@ -67,7 +68,9 @@ class TrashManagerTest {
         backend.createFile("memory://docs", "file1.txt")
         backend.createFile("memory://docs", "file2.txt")
         
-        trashManager.trashFiles(listOf("memory://docs/file1.txt", "memory://docs/file2.txt"))
+        val trashResult = trashManager.trashFiles(listOf("memory://docs/file1.txt", "memory://docs/file2.txt"))
+        assertTrue(trashResult.failed.isEmpty(), "Trash operation should succeed")
+        assertEquals(2, trashResult.successful.size)
         
         var items = trashManager.listTrashItems()
         assertEquals(2, items.size)

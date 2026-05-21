@@ -132,7 +132,7 @@ interface IOBackend {
     // Writes
     suspend fun copy(job: FileJob): Flow<TransferProgress>
     suspend fun move(job: FileJob): Flow<TransferProgress>
-    suspend fun trash(job: FileJob): Result<String>
+    suspend fun trash(job: FileJob, recoverTrashUri: Boolean = true): Result<String>
     suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String>
     suspend fun delete(job: FileJob): Result<Unit>
     suspend fun createFolder(parentUri: String, name: String): Result<String>
