@@ -40,6 +40,14 @@ object BackendRegistry {
 
     fun getRegisteredSchemes(): List<String> = ioBackends.keys.toList()
 
+    /**
+     * Clears all registered backends. Used for testing.
+     */
+    fun clear() {
+        ioBackends.clear()
+        defaultIo = null
+    }
+
     // Convenience
     fun list(uri: String): Flow<FileInfo>? = getIo(uri)?.list(uri)
     suspend fun getMetadata(uri: String): Result<FileInfo>? = getIo(uri)?.getMetadata(uri)

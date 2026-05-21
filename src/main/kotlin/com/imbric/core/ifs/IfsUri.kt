@@ -12,21 +12,23 @@ value class IfsUri(val uriString: String) {
     val isNative: Boolean
         get() = scheme == "file" || scheme == "trash" || scheme == "recent"
 
+    private fun isRootUri(): Boolean = uriString.matches(Regex("^\\w+:/{2,3}$"))
+
     val name: String
         get() {
+            if (isRootUri()) return "/"
             val cleanUri = uriString.trimEnd('/')
-            if (cleanUri.endsWith("://")) return "/"
             if (cleanUri.isEmpty()) return "/"
             return cleanUri.substringAfterLast("/")
         }
 
     val parent: IfsUri
         get() {
+            if (isRootUri()) return IfsUri("$scheme:///")
             val cleanUri = uriString.trimEnd('/')
-            val schemeSplit = cleanUri.indexOf("://")
-            if (schemeSplit != -1 && cleanUri.length <= schemeSplit + 3) return this
+            val schemeEnd = cleanUri.indexOf("://")
             val lastSlash = cleanUri.lastIndexOf('/')
-            if (lastSlash <= schemeSplit + 2) return IfsUri("$scheme:///")
+            if (lastSlash <= schemeEnd + 3) return IfsUri("$scheme:///")
             return IfsUri(cleanUri.substring(0, lastSlash).ifEmpty { "/" })
         }
 
@@ -37,13 +39,18 @@ value class IfsUri(val uriString: String) {
         get() {
             val n = name
             val dotIdx = n.lastIndexOf('.')
-            return if (dotIdx > 0) n.substring(0, dotIdx) else n
+            return when {
+                dotIdx > 0 -> n.substring(0, dotIdx)
+                dotIdx == 0 -> ""  // Hidden file like .hidden — no name part
+                else -> n  // No extension at all
+            }
         }
 
     fun join(child: String): IfsUri {
+        if (isRootUri()) return IfsUri("$scheme:///${child.trimStart('/')}")
         val base = uriString.trimEnd('/')
         val safeChild = child.trimStart('/')
-        return if (base.endsWith("://")) IfsUri("$base$safeChild") else IfsUri("$base/$safeChild")
+        return IfsUri("$base/$safeChild")
     }
 
     fun renameTarget(newName: String): IfsUri = parent.join(newName)

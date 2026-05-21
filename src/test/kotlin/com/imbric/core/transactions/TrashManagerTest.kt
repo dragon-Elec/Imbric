@@ -3,6 +3,7 @@ package com.imbric.core.transactions
 
 import com.imbric.core.ifs.BackendRegistry
 import com.imbric.core.models.TrashItem
+import com.imbric.core.testing.FakeTrashStateProvider
 import com.imbric.core.testing.InMemoryBackend
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
@@ -16,12 +17,15 @@ class TrashManagerTest {
 
     private lateinit var backend: InMemoryBackend
     private lateinit var trashManager: TrashManager
+    private lateinit var fakeTrashState: FakeTrashStateProvider
 
     @BeforeEach
     fun setup() {
+        BackendRegistry.clear()
         backend = InMemoryBackend()
         BackendRegistry.registerIo("memory", backend)
-        trashManager = TrashManager(BackendRegistry)
+        fakeTrashState = FakeTrashStateProvider()
+        trashManager = TrashManager(BackendRegistry, trashState = fakeTrashState)
     }
 
     @Test
@@ -80,17 +84,25 @@ class TrashManagerTest {
         backend.createFolder("memory://", "docs")
         backend.createFile("memory://docs", "file1.txt")
         
-        // Note: isTrashEmpty is backed by TrashMonitor which monitors real trash:///
-        // via GIO, not InMemoryBackend. We can only verify listTrashItems behavior here.
-        val initialItems = trashManager.listTrashItems()
-        assertEquals(0, initialItems.size, "InMemoryBackend trash should be empty initially")
+        // Initial state
+        assertTrue(trashManager.isTrashEmpty(), "Trash should be empty initially")
+        assertEquals(0, fakeTrashState.refreshCount)
         
+        // Trash a file
         trashManager.trashFiles(listOf("memory://docs/file1.txt"))
-        val afterTrashItems = trashManager.listTrashItems()
-        assertEquals(1, afterTrashItems.size, "Should have 1 item after trashing")
         
+        // Verify refresh was called
+        assertEquals(1, fakeTrashState.refreshCount)
+        
+        // Manually update fake state (simulating what a real monitor would do after refresh)
+        fakeTrashState.setEmpty(false)
+        assertFalse(trashManager.isTrashEmpty(), "Trash should not be empty after trashing")
+        
+        // Empty trash
         trashManager.emptyTrash()
-        val afterEmptyItems = trashManager.listTrashItems()
-        assertTrue(afterEmptyItems.isEmpty(), "Trash should be empty after emptying")
+        assertEquals(2, fakeTrashState.refreshCount)
+        
+        fakeTrashState.setEmpty(true)
+        assertTrue(trashManager.isTrashEmpty(), "Trash should be empty after emptying")
     }
 }

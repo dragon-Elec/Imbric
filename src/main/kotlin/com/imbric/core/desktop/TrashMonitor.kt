@@ -14,9 +14,9 @@ import org.gnome.glib.GLib
  */
 class TrashMonitor private constructor(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-) {
+) : TrashStateProvider {
     private val _isEmpty = MutableStateFlow(true)
-    val isEmpty: StateFlow<Boolean> = _isEmpty.asStateFlow()
+    override val isEmpty: StateFlow<Boolean> = _isEmpty.asStateFlow()
 
     private var monitor: FileMonitor? = null
     private var refreshJob: Job? = null
@@ -50,7 +50,7 @@ class TrashMonitor private constructor(
      * Uses the G_FILE_ATTRIBUTE_TRASH_ITEM_COUNT optimization to avoid full enumeration.
      * Conflates rapid calls — if a refresh is already in-flight, it is cancelled and restarted.
      */
-    fun refresh() {
+    override fun refresh() {
         refreshJob?.cancel()
         refreshJob = scope.launch {
             try {

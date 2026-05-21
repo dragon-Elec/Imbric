@@ -2,6 +2,7 @@
 package com.imbric.core.transactions
 
 import com.imbric.core.desktop.TrashMonitor
+import com.imbric.core.desktop.TrashStateProvider
 import com.imbric.core.ifs.BackendRegistry
 import com.imbric.core.models.FileJob
 import com.imbric.core.models.TrashItem
@@ -23,12 +24,11 @@ import kotlin.uuid.ExperimentalUuidApi
  */
 class TrashManager(
     private val backendRegistry: BackendRegistry,
+    private val trashState: TrashStateProvider = TrashMonitor.getInstance(),
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) {
-    private val trashMonitor = TrashMonitor.getInstance()
-
     // --- State for UI (delegates to TrashMonitor's real-time StateFlow) ---
-    val isTrashEmpty: StateFlow<Boolean> = trashMonitor.isEmpty
+    val isTrashEmpty: StateFlow<Boolean> = trashState.isEmpty
 
     // --- Trash Operations ---
     suspend fun trashFiles(paths: List<String>): Result<List<String>> {
@@ -41,7 +41,7 @@ class TrashManager(
             val result = backend.trash(job)
             if (result.isSuccess) {
                 results.add(path)
-                trashMonitor.refresh()
+                trashState.refresh()
             } else {
                 hasError = true
             }
@@ -57,7 +57,7 @@ class TrashManager(
         val backend = backendRegistry.getIo(trashItem.originalPath) ?: return Result.failure(Exception("No backend for ${trashItem.originalPath}"))
         val result = backend.restoreFromTrash(trashItem.trashPath, trashItem.originalPath)
         if (result.isSuccess) {
-            trashMonitor.refresh()
+            trashState.refresh()
         }
         return result
     }
@@ -75,7 +75,7 @@ class TrashManager(
             }
         }
         
-        trashMonitor.refresh()
+        trashState.refresh()
         return if (hasError) Result.failure(Exception("Some items could not be deleted")) else Result.success(Unit)
     }
 
@@ -103,7 +103,7 @@ class TrashManager(
      */
     suspend fun getTrashSize(): Long = listTrashItems().sumOf { it.size }
 
-    suspend fun isTrashEmpty(): Boolean = trashMonitor.isEmpty.value
+    suspend fun isTrashEmpty(): Boolean = trashState.isEmpty.value
 
     fun canTrash(path: String): Boolean {
         val backend = backendRegistry.getIo(path) ?: return false
