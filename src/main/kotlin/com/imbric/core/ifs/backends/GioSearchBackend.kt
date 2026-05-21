@@ -8,7 +8,6 @@ import com.imbric.core.ifs.FileAction
 import com.imbric.core.models.FileInfo
 import com.imbric.core.models.FileJob
 import com.imbric.core.models.TransferProgress
-import com.imbric.core.models.TrashItem
 import com.imbric.core.models.DiskUsage
 import com.imbric.core.ifs.FileEvent
 import kotlinx.coroutines.Dispatchers
