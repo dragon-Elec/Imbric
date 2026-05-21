@@ -155,7 +155,6 @@ Read them when working on the corresponding topic.
 
 ## Magic Context & Agent Workflow
 
-- **Read Full Files:** Do not use arbitrary line limits (e.g., `limit: 50`) when reading files to save tokens. Read the full file.
 - **Automatic Truncation:** Magic Context automatically truncates old tool outputs (replacing them with `[truncated]` stubs) when they age out and the context window hits its threshold. This safely manages token limits.
 - **Immediate Memorization:** Because truncated tool outputs disappear from the active context window, **immediately** save important architectural rules or findings to `ctx_memory` while the full file is still visible.
 - **Recovery:** Truncated content is not lost forever; it is stored in SQLite and can be queried via `ctx_search` or recovered via `ctx_expand`, but `ctx_memory` is the most reliable way to persist knowledge.
