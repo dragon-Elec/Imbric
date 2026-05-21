@@ -96,7 +96,7 @@ class GioSearchBackend(private val fallback: GioBackend = GioBackend()) : IOBack
 
     private fun runTrackerSearch(query: com.imbric.core.models.VfsQuery): Flow<String> = flow {
         val flag = if (query.contentSearch) "-c" else "-f"
-        val process = ProcessBuilder("tracker3", "search", "--disable-color", flag, query.text)
+        val process = ProcessBuilder("tracker3", "search", "--disable-color", flag, "--", query.text)
             .start()
         
         try {
