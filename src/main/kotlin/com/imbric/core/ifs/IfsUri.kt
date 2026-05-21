@@ -28,6 +28,11 @@ value class IfsUri(val uriString: String) {
             val cleanUri = uriString.trimEnd('/')
             val schemeEnd = cleanUri.indexOf("://")
             val lastSlash = cleanUri.lastIndexOf('/')
+            // Plain path (no scheme) — e.g. /path/to/file → /path/to
+            if (schemeEnd == -1) {
+                return if (lastSlash <= 0) IfsUri("/") else IfsUri(cleanUri.substring(0, lastSlash))
+            }
+            // Scheme-based URI — e.g. file:///path → file:///
             if (lastSlash <= schemeEnd + 3) return IfsUri("$scheme:///")
             return IfsUri(cleanUri.substring(0, lastSlash).ifEmpty { "/" })
         }
