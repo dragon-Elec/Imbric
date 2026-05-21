@@ -1,7 +1,6 @@
 @file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 package com.imbric.core.ifs.provider
 
-import com.imbric.core.ifs.BackendRegistry
 import com.imbric.core.ifs.FileEvent
 import com.imbric.core.ifs.IOBackend
 import com.imbric.core.ifs.Locality
