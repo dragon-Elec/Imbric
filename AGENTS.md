@@ -162,9 +162,9 @@ Read them when working on the corresponding topic.
 ## Hard-Won Learnings
 
 ### Jules Bot Environment
-- Jules operates in a sandbox that starts with JDK 21, but is configured via a setup script to install JDK 25 (`openjdk-25-jdk`) and GNOME GIR files (`libglib2.0-dev`), build the patched `java-gi` generator, and run `./scripts/generate_bindings.sh`.
+- Jules operates in a sandbox that starts with JDK 21, but is configured via a setup script to install JDK 25 (`openjdk-25-jdk`) and GNOME GIR files (`libglib2.0-dev`), export `JAVA_HOME`, build the patched `java-gi` generator, and run `./scripts/generate_bindings.sh`.
 - Therefore, Jules *should* be able to successfully run `./gradlew compileKotlin` and `./gradlew test`.
-- If a Jules bot encounters a Gradle failure about missing `java-25-openjdk-amd64`, the setup script might have failed or the snapshot is stale.
+- If a Jules bot encounters a Gradle failure about missing `java-25-openjdk-amd64` or `major.minor version 69.0`, the setup script might have failed or the snapshot is stale.
 - Bot PRs MUST be compile-checked before merging.
 
 ### PR Review Discipline
