@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
  * Ported from nautilus-bookmark.h / NautilusBookmark.
  *
  * @param name Display name derived from the URI (e.g., "Documents")
- * @param uri The bookmarked location URI (e.g., "file:///home/ray/Documents")
+ * @param uri The bookmarked location URI (e.g., "file:///home/user/Documents")
  * @param label Optional user-customizable label (overrides [name] in UI)
  * @param icon Optional icon name for the themed icon (e.g., "folder-documents")
  * @param symbolicIcon Optional symbolic icon name (e.g., "folder-documents-symbolic")

@@ -52,22 +52,22 @@ class BookmarkListTest {
     @Test
     fun testParseGtkBookmarksBasic() {
         val text = """
-            file:///home/ray/Documents Documents
-            file:///home/ray/Downloads Downloads
-            file:///home/ray/Music
+            file:///home/user/Documents Documents
+            file:///home/user/Downloads Downloads
+            file:///home/user/Music
         """.trimIndent()
 
         val bookmarks = bookmarkList.parseGtkBookmarks(text)
         assertEquals(3, bookmarks.size)
 
-        assertEquals("file:///home/ray/Documents", bookmarks[0].uri)
+        assertEquals("file:///home/user/Documents", bookmarks[0].uri)
         assertEquals("Documents", bookmarks[0].label)
         assertEquals("Documents", bookmarks[0].name)
 
-        assertEquals("file:///home/ray/Downloads", bookmarks[1].uri)
+        assertEquals("file:///home/user/Downloads", bookmarks[1].uri)
         assertEquals("Downloads", bookmarks[1].label)
 
-        assertEquals("file:///home/ray/Music", bookmarks[2].uri)
+        assertEquals("file:///home/user/Music", bookmarks[2].uri)
         assertNull(bookmarks[2].label)
         assertEquals("Music", bookmarks[2].name) // Derived from URI
     }
@@ -89,15 +89,15 @@ class BookmarkListTest {
 
     @Test
     fun testAddBookmark() {
-        val bookmark = Bookmark(name = "Documents", uri = "file:///home/ray/Documents")
+        val bookmark = Bookmark(name = "Documents", uri = "file:///home/user/Documents")
         assertTrue(bookmarkList.add(bookmark))
-        assertTrue(bookmarkList.contains("file:///home/ray/Documents"))
-        assertEquals(bookmark, bookmarkList.getBookmark("file:///home/ray/Documents"))
+        assertTrue(bookmarkList.contains("file:///home/user/Documents"))
+        assertEquals(bookmark, bookmarkList.getBookmark("file:///home/user/Documents"))
     }
 
     @Test
     fun testAddDuplicateReturnsFalse() {
-        val bookmark = Bookmark(name = "Documents", uri = "file:///home/ray/Documents")
+        val bookmark = Bookmark(name = "Documents", uri = "file:///home/user/Documents")
         assertTrue(bookmarkList.add(bookmark))
         assertFalse(bookmarkList.add(bookmark)) // Duplicate
         assertEquals(1, bookmarkList.getAll().size)
@@ -130,12 +130,12 @@ class BookmarkListTest {
 
     @Test
     fun testRemoveBookmark() {
-        val bookmark = Bookmark(name = "Documents", uri = "file:///home/ray/Documents")
+        val bookmark = Bookmark(name = "Documents", uri = "file:///home/user/Documents")
         bookmarkList.add(bookmark)
-        assertTrue(bookmarkList.contains("file:///home/ray/Documents"))
+        assertTrue(bookmarkList.contains("file:///home/user/Documents"))
 
-        bookmarkList.remove("file:///home/ray/Documents")
-        assertFalse(bookmarkList.contains("file:///home/ray/Documents"))
+        bookmarkList.remove("file:///home/user/Documents")
+        assertFalse(bookmarkList.contains("file:///home/user/Documents"))
         assertTrue(bookmarkList.getAll().isEmpty())
     }
 
@@ -212,7 +212,7 @@ class BookmarkListTest {
     @Test
     fun testGtkImportOnFirstRun() {
         // Write a GTK bookmarks file
-        gtkFile.writeText("file:///home/ray/Documents Documents\nfile:///home/ray/Downloads\n")
+        gtkFile.writeText("file:///home/user/Documents Documents\nfile:///home/user/Downloads\n")
 
         // Create a new instance with no JSON file (first run)
         val fresh = BookmarkList(
@@ -224,9 +224,9 @@ class BookmarkListTest {
         )
 
         assertEquals(2, fresh.getAll().size)
-        assertEquals("file:///home/ray/Documents", fresh.getAll()[0].uri)
+        assertEquals("file:///home/user/Documents", fresh.getAll()[0].uri)
         assertEquals("Documents", fresh.getAll()[0].label)
-        assertEquals("file:///home/ray/Downloads", fresh.getAll()[1].uri)
+        assertEquals("file:///home/user/Downloads", fresh.getAll()[1].uri)
         fresh.dispose()
     }
 

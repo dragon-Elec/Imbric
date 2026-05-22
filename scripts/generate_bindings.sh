@@ -3,7 +3,7 @@ set -e
 
 # Configuration
 VERSION="0.15.0"
-PROJECT_DIR="/home/ray/Desktop/files/wrk/Imbric/imbric-kt"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOL_DIR="${PROJECT_DIR}/build/native-gen/tools"
 GEN_DIR="${PROJECT_DIR}/build/native-gen/bindings"
 TEMP_GEN="${PROJECT_DIR}/build/native-gen/temp_raw"

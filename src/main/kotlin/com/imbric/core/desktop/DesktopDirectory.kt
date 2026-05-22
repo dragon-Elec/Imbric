@@ -14,7 +14,7 @@ object DesktopDirectory {
     }
 
     /**
-     * Returns the URI of the user's desktop directory (e.g., "file:///home/ray/Desktop").
+     * Returns the URI of the user's desktop directory (e.g., "file:///home/user/Desktop").
      */
     fun getUri(): String {
         val desktopPath = System.getProperty("user.home") + "/Desktop"

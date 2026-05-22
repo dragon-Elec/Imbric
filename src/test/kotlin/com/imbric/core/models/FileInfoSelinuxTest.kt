@@ -9,8 +9,8 @@ class FileInfoSelinuxTest {
     fun `test FileInfo with SELinux context`() {
         val info = FileInfo(
             name = "secret.txt",
-            path = "/home/ray/secret.txt",
-            uri = "file:///home/ray/secret.txt",
+            path = "/home/user/secret.txt",
+            uri = "file:///home/user/secret.txt",
             isDirectory = false,
             selinuxContext = "unconfined_u:object_r:user_home_t:s0"
         )
