@@ -105,6 +105,30 @@ public final class Parameter extends GirElement implements TypedValue {
         );
     }
 
+    public boolean sharesAsyncCallbackArena() {
+        if (!(anyType() instanceof Type type && type.lookup() instanceof Callback))
+            return false;
+        if (!(parent().parent() instanceof Callable callable && callable.isAsync()))
+            return false;
+
+        Scope s = Scope.from(attr("scope"));
+        // The primary callback usually has scope ASYNC or NOTIFIED with a destroy notify.
+        // Progress callbacks usually have scope CALL or NOTIFIED without a destroy notify.
+        if (s == Scope.ASYNC) return false;
+        if (s == Scope.NOTIFIED && destroy() != null) return false;
+
+        return s == Scope.CALL || s == Scope.NOTIFIED;
+    }
+
+    public Parameter findPrimaryAsyncCallback() {
+        return parent().parameters().stream()
+                .filter(p -> p != this)
+                .filter(p -> p.anyType() instanceof Type t && t.lookup() instanceof Callback)
+                .filter(p -> p.scope() == Scope.ASYNC || (p.scope() == Scope.NOTIFIED && p.destroy() != null))
+                .findFirst()
+                .orElse(null);
+    }
+
     @Override
     public boolean allocatesMemory() {
         if (varargs())
@@ -118,7 +142,7 @@ public final class Parameter extends GirElement implements TypedValue {
             return true;
 
         RegisteredType target = type.lookup();
-        if (target instanceof Callback && Scope.CALL.equals(scope()))
+        if (target instanceof Callback && Scope.CALL.equals(scope()) && !sharesAsyncCallbackArena())
             return true;
 
         return type.isPointer() && target instanceof Alias a && a.isValueWrapper();
@@ -154,11 +178,6 @@ public final class Parameter extends GirElement implements TypedValue {
 
     public Scope scope() {
         Scope scope = Scope.from(attr("scope"));
-        // Patch: If the parent function is async, any callback must be treated as ASYNC
-        // to prevent premature Arena closure, even if GIR incorrectly says CALL.
-        if (scope == Scope.CALL && parent().parent() instanceof Callable callable && callable.isAsync()) {
-            return Scope.ASYNC;
-        }
         return (scope == Scope.NOTIFIED && destroy() == null) ? Scope.FOREVER : scope;
     }
 

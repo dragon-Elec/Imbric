@@ -1,0 +1,818 @@
+/* Java-GI - Java language bindings for GObject-Introspection-based libraries
+ * Copyright (C) 2022-2026 Jan-Willem Harmannij
+ *
+ * SPDX-License-Identifier: LGPL-2.1-or-later
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
+ */
+
+package org.javagi.gobject.types;
+
+import org.javagi.base.FunctionPointer;
+import org.javagi.gobject.InstanceCache;
+import org.javagi.gobject.annotations.Flags;
+import org.javagi.gobject.annotations.Property;
+import org.javagi.base.Proxy;
+import org.javagi.base.ProxyInstance;
+import org.javagi.gobject.ValueUtil;
+import org.javagi.interop.Interop;
+import org.gnome.glib.GLib;
+import org.gnome.glib.LogLevelFlags;
+import org.gnome.glib.Type;
+import org.gnome.gobject.*;
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
+
+import java.lang.foreign.*;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.util.*;
+import java.util.function.Consumer;
+
+import static java.util.Objects.requireNonNullElse;
+import static org.javagi.base.Constants.LOG_DOMAIN;
+import static org.javagi.gobject.annotations.Property.NOT_SET;
+import static java.lang.Character.isUpperCase;
+
+/**
+ * Helper class to register properties in a new GType.
+ */
+@NullMarked
+public class Properties {
+
+    /**
+     * Get the ParamSpec of a GObject property
+     *
+     * @param  objectClass  the GObject typeclass that has a property installed
+     *                      with the provided name
+     * @param  propertyName the name of the property
+     * @return the ParamSpec of the property
+     */
+    private static ParamSpec getParamSpec(GObject.ObjectClass objectClass, String propertyName) {
+        ParamSpec pspec = objectClass.findProperty(propertyName);
+        if (pspec == null) {
+            throw new IllegalArgumentException("Cannot find property \"%s\" for type %s\n"
+                    .formatted(propertyName, GObjects.typeName(objectClass.readGType())));
+        }
+        return pspec;
+    }
+
+    /**
+     * Read the value type from the GParamSpecClass.
+     *
+     * @return the value type of the GParamSpecClass, or null if not found
+     */
+    private static Type getValueType(ParamSpec pspec) {
+        var pclass = new ParamSpec.ParamSpecClass(pspec.readGClass().handle());
+        return pclass.readValueType();
+    }
+
+    /**
+     * Read the {@code value_type} field from the GParamSpec.
+     *
+     * @return the value type of the GParamSpec, or null if not found
+     */
+    private static Type getInnerType(ParamSpec pspec) {
+        // ParamSpec is a class, not a record, so Java-GI doesn't generate
+        // read/write methods for its fields.
+        MemoryLayout.PathElement path = MemoryLayout.PathElement.groupElement("value_type");
+        VarHandle _varHandle = ParamSpec.getMemoryLayout().varHandle(path);
+        long _result = (long) _varHandle.get(pspec.handle(), 0);
+        return new Type(_result);
+    }
+
+    /**
+     * Set a property of an object.
+     *
+     * @param  propertyName  the name of the property to set
+     * @param  propertyValue the new property propertyValue
+     * @throws IllegalArgumentException if a property with this name is not
+     *                                  found for the object
+     */
+    public static void setProperty(GObject gobject, String propertyName, @Nullable Object propertyValue) {
+        GObject.ObjectClass gclass = (GObject.ObjectClass) gobject.readGClass();
+        ParamSpec pspec = getParamSpec(gclass, propertyName);
+        Type valueType = getValueType(pspec);
+
+        if (List.of(Types.BOXED, Types.ENUM, Types.FLAGS).contains(valueType))
+            valueType = getInnerType(pspec);
+
+        try (var arena = Arena.ofConfined()) {
+            var gvalue = new Value(arena).init(valueType);
+            if (ValueUtil.objectToValue(propertyValue, gvalue))
+                gobject.setProperty(propertyName, gvalue);
+            gvalue.unset();
+        }
+    }
+
+    /**
+     * Get a property of an object.
+     *
+     * @param  gobject      the object instance
+     * @param  propertyName the name of the property to get
+     * @return the property value
+     * @throws IllegalArgumentException if a property with this name is not
+     *                                  found for the object
+     */
+    public static @Nullable Object getProperty(GObject gobject, String propertyName) {
+        GObject.ObjectClass gclass = (GObject.ObjectClass) gobject.readGClass();
+        ParamSpec pspec = getParamSpec(gclass, propertyName);
+        Type valueType = getValueType(pspec);
+
+        if (List.of(Types.BOXED, Types.ENUM, Types.FLAGS).contains(valueType))
+            valueType = getInnerType(pspec);
+
+        try (var arena = Arena.ofConfined()) {
+            var gvalue = new Value(arena).init(valueType);
+            gobject.getProperty(propertyName, gvalue);
+            return ValueUtil.valueToObject(gvalue);
+        }
+    }
+
+    /*
+     * getMyProperty(), "isMyProperty()", "setMyProperty()" and "myProperty"
+     * are all converted to "my-property"
+     */
+    private static String getPropertyName(String methodName) {
+        String value;
+        if (methodName.startsWith("is"))
+            value = methodName.substring(2);
+        else if (methodName.startsWith("get") || methodName.startsWith("set"))
+            value = methodName.substring(3);
+        else
+            value = methodName;
+        return value.replaceAll("([a-z0-9])([A-Z])", "$1-$2")
+                    .toLowerCase()
+                    .replaceAll("\\.", "");
+    }
+
+    private static boolean isGetter(Method method) {
+        if (skip(method))
+            return false;
+
+        if (method.getReturnType().equals(void.class)
+                || method.getParameterCount() != 0)
+            return false;
+
+        String name = method.getName();
+
+        if (name.startsWith("get")
+                && name.length() > 3
+                && isUpperCase(name.charAt(3)))
+            return true;
+
+        // Boolean getter can be either getFoo() or isFoo()
+        return method.getReturnType().equals(boolean.class)
+                && name.startsWith("is")
+                && name.length() > 2
+                && isUpperCase(name.charAt(2));
+    }
+
+    private static boolean isSetter(Method method) {
+        if (skip(method))
+            return false;
+
+        return method.getReturnType().equals(void.class)
+                && method.getParameterCount() == 1
+                && method.getName().startsWith("set")
+                && method.getName().length() > 3
+                && isUpperCase(method.getName().charAt(3));
+    }
+
+    private static Class<?> getJavaType(Method method) {
+        var javaClass = method.getReturnType().equals(void.class)
+                ? method.getParameterTypes()[0]
+                : method.getReturnType();
+
+        // For a Set<> type, check if it is a Set of flags
+        if (javaClass.isAssignableFrom(Set.class)) {
+            var reflectType = method.getReturnType().equals(void.class)
+                    ? method.getGenericParameterTypes()[0]
+                    : method.getGenericReturnType();
+
+            if (reflectType instanceof ParameterizedType pt
+                    && pt.getActualTypeArguments().length == 1
+                    && pt.getActualTypeArguments()[0] instanceof Class<?> cls
+                    && Enum.class.isAssignableFrom(cls)
+                    && cls.isAnnotationPresent(Flags.class))
+                return cls;
+        }
+
+        return javaClass;
+    }
+
+    /*
+     * Infer the ParamSpec class from the Java class that is used in the
+     * getter/setter method.
+     */
+    private static Class<? extends ParamSpec> getParamSpecClass(Class<?> type) {
+        if (type.equals(boolean.class) || type.equals(Boolean.class))
+            return ParamSpecBoolean.class;
+
+        else if (type.equals(byte.class) || type.equals(Byte.class))
+            return ParamSpecChar.class;
+
+        else if (type.equals(char.class) || type.equals(Character.class))
+            return ParamSpecChar.class;
+
+        else if (type.equals(double.class) || type.equals(Double.class))
+            return ParamSpecDouble.class;
+
+        else if (type.equals(float.class) || type.equals(Float.class))
+            return ParamSpecFloat.class;
+
+        else if (type.equals(int.class) || type.equals(Integer.class))
+            return ParamSpecInt.class;
+
+        else if (type.equals(long.class) || type.equals(Long.class))
+            return ParamSpecLong.class;
+
+        else if (type.equals(String.class))
+            return ParamSpecString.class;
+
+        else if (Type.class.isAssignableFrom(type))
+            return ParamSpecGType.class;
+
+        // GObject class
+        else if (GObject.class.isAssignableFrom(type))
+            return ParamSpecObject.class;
+
+        // Struct
+        else if (ProxyInstance.class.isAssignableFrom(type))
+            return ParamSpecBoxed.class;
+
+        // GObject interface
+        else if (Proxy.class.isAssignableFrom(type))
+            return ParamSpecObject.class;
+
+        // Flags
+        else if (Enum.class.isAssignableFrom(type) && type.isAnnotationPresent(Flags.class))
+            return ParamSpecFlags.class;
+
+        // Enum
+        else if (Enum.class.isAssignableFrom(type))
+            return ParamSpecEnum.class;
+
+        throw new IllegalArgumentException("Invalid property type " + type.getSimpleName());
+    }
+
+    private static void checkParameters(String property, String minimumValue,
+                                        String maximumValue, String defaultValue,
+                                        boolean defAllowed) {
+        if (!notSet(minimumValue))
+            throw new IllegalArgumentException("No minimum value allowed on property " + property);
+        if (!notSet(maximumValue))
+            throw new IllegalArgumentException("No maximum value allowed on property " + property);
+        if (!defAllowed && !notSet(defaultValue))
+            throw new IllegalArgumentException("No default value allowed on property " + property);
+    }
+
+    private static boolean notSet(String s) {
+        return NOT_SET.equals(s);
+    }
+
+    /*
+     * Create a ParamSpec of the requested class.
+     */
+    private void createParamSpec(Class<?> javaType,
+                                 Class<? extends ParamSpec> pClass,
+                                 String name,
+                                 Set<ParamFlags> flags,
+                                 String min, String max, String def) {
+        ParamSpec paramSpec;
+        if (pClass.equals(ParamSpecBoolean.class)) {
+            checkParameters(name, min, max, def, true);
+            var defVal = !notSet(def) && Boolean.parseBoolean(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecBoolean(name, name, name, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecChar.class)) {
+            var minVal = notSet(min) ? Byte.MIN_VALUE : Byte.parseByte(min);
+            var maxVal = notSet(max) ? Byte.MAX_VALUE : Byte.parseByte(max);
+            var defVal = notSet(def) ? (byte) 0 : Byte.parseByte(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecChar(name, name, name, minVal, maxVal, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecDouble.class)) {
+            var minVal = notSet(min) ? -Double.MIN_VALUE : Double.parseDouble(min);
+            var maxVal = notSet(max) ? Double.MAX_VALUE : Double.parseDouble(max);
+            var defVal = notSet(def) ? 0.0d : Double.parseDouble(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecDouble(name, name, name, minVal, maxVal, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecFloat.class)) {
+            var minVal = notSet(min) ? -Float.MIN_VALUE : Float.parseFloat(min);
+            var maxVal = notSet(max) ? Float.MAX_VALUE : Float.parseFloat(max);
+            var defVal = notSet(def) ? 0.0f : Float.parseFloat(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecFloat(name, name, name, minVal, maxVal, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecGType.class)) {
+            checkParameters(name, min, max, def, true);
+            var defVal = notSet(def) ? Types.NONE : GObjects.typeFromName(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecGtype(name, name, name, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecInt.class)) {
+            var minVal = notSet(min) ? Integer.MIN_VALUE : Integer.parseInt(min);
+            var maxVal = notSet(max) ? Integer.MAX_VALUE : Integer.parseInt(max);
+            var defVal = notSet(def) ? 0 : Integer.parseInt(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecInt(name, name, name, minVal, maxVal, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecInt64.class)) {
+            var minVal = notSet(min) ? Long.MIN_VALUE : Long.parseLong(min);
+            var maxVal = notSet(max) ? Long.MAX_VALUE : Long.parseLong(max);
+            var defVal = notSet(def) ? 0L : Long.parseLong(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecInt64(name, name, name, minVal, maxVal, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecLong.class)) {
+            var minVal = notSet(min) ? Integer.MIN_VALUE : Integer.parseInt(min);
+            var maxVal = notSet(max) ? Integer.MAX_VALUE : Integer.parseInt(max);
+            var defVal = notSet(def) ? 0 : Integer.parseInt(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecLong(name, name, name, minVal, maxVal, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecObject.class)) {
+            checkParameters(name, min, max, def, false);
+            var objectType = TypeCache.getType(javaType);
+            paramSpec = GObjects.paramSpecObject(name, name, name, objectType, flags);
+        }
+
+        else if (pClass.equals(ParamSpecPointer.class)) {
+            checkParameters(name, min, max, def, false);
+            paramSpec = GObjects.paramSpecPointer(name, name, name, flags);
+        }
+
+        else if (pClass.equals(ParamSpecString.class)) {
+            checkParameters(name, min, max, def, true);
+            var defVal = notSet(def) ? null : def;
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecString(name, name, name, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecUChar.class)) {
+            var minVal = notSet(min) ? (byte) 0 : Byte.parseByte(min);
+            var maxVal = notSet(max) ? Byte.MAX_VALUE : Byte.parseByte(max);
+            var defVal = notSet(def) ? (byte) 0 : Byte.parseByte(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecUchar(name, name, name, minVal, maxVal, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecUInt.class)) {
+            var minVal = notSet(min) ? 0 : Integer.parseInt(min);
+            var maxVal = notSet(max) ? Integer.MAX_VALUE : Integer.parseInt(max);
+            var defVal = notSet(def) ? 0 : Integer.parseInt(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecUint(name, name, name, minVal, maxVal, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecUInt64.class)) {
+            var minVal = notSet(min) ? 0L : Long.parseLong(min);
+            var maxVal = notSet(max) ? Long.MAX_VALUE : Long.parseLong(max);
+            var defVal = notSet(def) ? 0L : Long.parseLong(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecUint64(name, name, name, minVal, maxVal, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecULong.class)) {
+            var minVal = notSet(min) ? 0 : Integer.parseInt(min);
+            var maxVal = notSet(max) ? Integer.MAX_VALUE : Integer.parseInt(max);
+            var defVal = notSet(def) ? 0 : Integer.parseInt(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecUlong(name, name, name, minVal, maxVal, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecUnichar.class)) {
+            checkParameters(name, min, max, def, true);
+            var defVal = notSet(def) ? 0 : Integer.parseInt(def);
+            defaultValues.put(index, defVal);
+            paramSpec = GObjects.paramSpecUnichar(name, name, name, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecFlags.class)) {
+            var flagsType = TypeCache.getType(javaType);
+            var defVal = notSet(def) ? 0 : Integer.parseInt(def);
+            paramSpec = GObjects.paramSpecFlags(name, name, name, flagsType, defVal, flags);
+        }
+
+        else if (pClass.equals(ParamSpecEnum.class)) {
+            var enumType = TypeCache.getType(javaType);
+            var defVal = notSet(def) ? 0 : Integer.parseInt(def);
+            paramSpec = GObjects.paramSpecEnum(name, name, name, enumType, defVal, flags);
+        }
+
+        else {
+            throw new IllegalArgumentException("Unsupported property type: " + pClass.getSimpleName());
+        }
+
+        paramSpecs.put(index, paramSpec);
+    }
+
+    /*
+     * Create a GParamFlags based on {@code @Property} annotation parameters.
+     */
+    private static Set<ParamFlags> getFlags(Property property) {
+        EnumSet<ParamFlags> flags = EnumSet.noneOf(ParamFlags.class);
+        if (property.readable())       flags.add(ParamFlags.READABLE);
+        if (property.writable())       flags.add(ParamFlags.WRITABLE);
+        if (property.construct())      flags.add(ParamFlags.CONSTRUCT);
+        if (property.constructOnly())  flags.add(ParamFlags.CONSTRUCT_ONLY);
+        if (property.explicitNotify()) flags.add(ParamFlags.EXPLICIT_NOTIFY);
+        if (property.deprecated())     flags.add(ParamFlags.DEPRECATED);
+        return flags;
+    }
+
+    /*
+     * Check if a `@Property` annotation with `skip=true`is set on this method
+     */
+    private static boolean skip(Method method) {
+        return method.isAnnotationPresent(Property.class)
+                && method.getAnnotation(Property.class).skip();
+    }
+
+    private final Map<Integer, String> names;
+    private final Map<Integer, Method> getters;
+    private final Map<Integer, Method> setters;
+    private final Map<Integer, ParamSpec> paramSpecs;
+    private final Map<Integer, @Nullable Object> defaultValues;
+    private int index = 0;
+
+    public Properties() {
+        names = new HashMap<>();
+        getters = new HashMap<>();
+        setters = new HashMap<>();
+        paramSpecs = new HashMap<>();
+        defaultValues = new HashMap<>();
+    }
+
+    /*
+     * Find all property methods: `T getFooBar()`, `void setFooBar(T t)`, and
+     * methods annotated with `@Property`. The results are put in the hashmaps.
+     */
+    private void inferProperties(Class<?> cls) {
+        Map<String, Method> possibleGetters = new HashMap<>();
+
+        // Create a sorted list of Methods so the getters are processed first
+        var methods = cls.getDeclaredMethods();
+        Arrays.sort(methods, Comparator.comparing(Method::getName));
+
+        // Methods with annotation @Property
+        for (var method : methods) {
+            if (method.isAnnotationPresent(Property.class)) {
+                Property p = method.getAnnotation(Property.class);
+                if (p.skip())
+                    continue;
+
+                String name = p.name();
+                if (name.isBlank()) name = getPropertyName(method.getName());
+
+                if (names.containsValue(name)) {
+                    for (var entry : names.entrySet()) {
+                        if (entry.getValue().equals(name)) {
+                            int id = entry.getKey();
+                            if (method.getReturnType().equals(void.class))
+                                setters.put(id, method);
+                            else
+                                getters.put(id, method);
+                            break;
+                        }
+                    }
+                } else {
+                    index++;
+                    names.put(index, name);
+                    if (method.getReturnType().equals(void.class))
+                        setters.put(index, method);
+                    else
+                        getters.put(index, method);
+
+                    try {
+                        var flags = getFlags(p);
+                        var javaType = getJavaType(method);
+                        var paramSpecClass = getParamSpecClass(javaType);
+                        createParamSpec(javaType, paramSpecClass, name, flags,
+                                p.minimumValue(), p.maximumValue(), p.defaultValue());
+                    } catch (IllegalArgumentException _) {
+                        // ignore getter/setter with unsupported type
+                        index--;
+                    }
+                }
+            }
+        }
+
+        // Getter methods (`T getFoo()` or `boolean isFoo()`)
+        for (var method : cls.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(Property.class))
+                continue;
+
+            if (isGetter(method))
+                possibleGetters.put(getPropertyName(method.getName()), method);
+        }
+
+        // Setter methods (`void setFoo(T t)`) for which a corresponding
+        // getter method was found
+        for (var method : cls.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(Property.class))
+                continue;
+
+            if (isSetter(method)) {
+                String name = getPropertyName(method.getName());
+                if (possibleGetters.containsKey(name)) {
+                    Method getter = possibleGetters.get(name);
+
+                    // Check that the getter and setter have the same type
+                    if (!getJavaType(getter).equals(getJavaType(method)))
+                        continue;
+
+                    // Prevent multiple properties with the same name
+                    if (names.containsValue(name))
+                        continue;
+
+                    index++;
+                    names.put(index, name);
+                    getters.put(index, getter);
+                    setters.put(index, method);
+
+                    try {
+                        var javaType = getJavaType(method);
+                        var paramSpecClass = getParamSpecClass(javaType);
+                        var flags = EnumSet.of(ParamFlags.READABLE, ParamFlags.WRITABLE);
+                        createParamSpec(javaType, paramSpecClass, name, flags, NOT_SET, NOT_SET, NOT_SET);
+                    } catch (IllegalArgumentException e) {
+                        // ignore getter/setter with unsupported type
+                        index--;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Check whether this class is a subclass of {@code clojure.lang.Proxy}.
+     * A Clojure proxy class overrides methods of parent types, and that can
+     * be interpreted by java-gi as user-defined getter/setter methods. So we
+     * explicitly exclude Clojure proxy classes.
+     *
+     * @param cls the class to check
+     * @return whether {@code cls} is a proxy
+     */
+    private static boolean isClojureProxy(Class<?> cls) {
+        for (Class<?> c = cls; c != null; c = c.getSuperclass())
+            if ("clojure.lang.Proxy".equals(c.getName()))
+                return true;
+        return false;
+    }
+
+    /**
+     * If the provided class defines {@code @Property}-annotated getter and/or
+     * setter methods, this function will return a class initializer that
+     * registers these properties as GObject properties and overrides the
+     * {@code GObject.getProperty} and {@code setProperty} methods to call the
+     * annotated getters and setters.
+     *
+     * @param  cls  the class that possibly contains @Property annotations
+     * @return a class initializer that registers the properties
+     */
+    public @Nullable Consumer<TypeClass> installProperties(Class<?> cls) {
+        if (isClojureProxy(cls))
+            return null;
+
+        inferProperties(cls);
+        if (index == 0)
+            return null;
+
+        // Return class initializer method that installs the properties.
+        return (gclass) -> {
+            // Override the get_property virtual method
+            overrideGetProperty(gclass, (object, propertyId, value, _) -> {
+
+                // Check for invalid property IDs
+                if (propertyId < 1 || propertyId > index) {
+                    GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL,
+                            "Invalid property id %d in %s.getProperty\n",
+                            propertyId, cls.getSimpleName());
+                    return;
+                }
+
+                String name = names.get(propertyId);
+                if (name == null) name = "";
+                Method getter = getters.get(propertyId);
+
+                Object output = null;
+
+                if (getter == null && defaultValues.containsKey(propertyId)) {
+                    output = defaultValues.get(propertyId);
+                } else if (getter == null) {
+                    GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL,
+                            "No getter method defined for property with ID=%d and name='%s' in %s\n",
+                            propertyId, name, cls.getSimpleName());
+                    return;
+                }
+
+                // Invoke the getter method
+                if (output == null && getter != null) {
+                    try {
+                        output = getter.invoke(object);
+                    } catch (InvocationTargetException e) {
+                        // Log exceptions thrown by the getter method
+                        Throwable t = e.getTargetException();
+                        GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL,
+                                "%s.getProperty('%s'): %s\n",
+                                cls.getSimpleName(), name, t.toString());
+                        return;
+                    } catch (IllegalAccessException e) {
+                        // Tried to call a private method
+                        GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL,
+                                "IllegalAccessException calling %s.getProperty('%s')\n",
+                                cls.getSimpleName(), name);
+                        return;
+                    }
+                }
+
+                // Convert return value to GValue
+                if (output != null) {
+                    var success = ValueUtil.objectToValue(output, value);
+                    if (!success) {
+                        GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL,
+                                "Error in %s.getProperty('%s'): Cannot write return-value " +
+                                        "with Java type %s into GValue with GType %s\n",
+                                cls.getSimpleName(), name, output.getClass().getSimpleName(),
+                                value == null
+                                        ? "null"
+                                        : requireNonNullElse(GObjects.typeName(value.readGType()),
+                                                             "null"));
+                    }
+                }
+            }, Arena.global());
+
+            // Override the set_property virtual method
+            overrideSetProperty(gclass, (object, propertyId, value, _) -> {
+                // Check for invalid property IDs
+                if (propertyId < 1 || propertyId > index) {
+                    GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL,
+                            "Invalid property id %d in %s.setProperty\n",
+                            propertyId, cls.getSimpleName());
+                    return;
+                }
+
+                String name = names.get(propertyId);
+                if (name == null) name = "";
+                Method setter = setters.get(propertyId);
+
+                if (setter == null) {
+                    GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL,
+                            "No getter method defined for property with ID=%d and name='%s' in %s\n",
+                            propertyId, name, cls.getSimpleName());
+                    return;
+                }
+
+                // Convert argument to GValue
+                Object input = ValueUtil.valueToObject(value);
+
+                // Invoke the setter method
+                if (input != null) {
+                    try {
+                        setter.invoke(object, input);
+                    } catch (InvocationTargetException e) {
+                        // Log exceptions thrown by the setter method
+                        Throwable t = e.getTargetException();
+                        GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL,
+                                "%s.setProperty('%s'): %s\n",
+                                cls.getSimpleName(), name, t.toString());
+                    } catch (IllegalAccessException e) {
+                        // Tried to call a private method
+                        GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL,
+                                "IllegalAccessException calling %s.setProperty('%s')\n",
+                                cls.getSimpleName(), name);
+                    }
+                }
+            }, Arena.global());
+
+            // Register properties for the generated ParamSpecs
+            if (gclass instanceof GObject.ObjectClass oclass) {
+                for (int i = 1; i <= index; i++) {
+                    oclass.installProperty(i, paramSpecs.get(i));
+                }
+            }
+
+            else if (cls.isInterface() && Types.isGObjectBased(cls)) {
+                var giface = new TypeInterface(gclass.handle());
+                for (int i = 1; i <= index; i++) {
+                    GObject.interfaceInstallProperty(giface, paramSpecs.get(i));
+                }
+            }
+
+            else {
+                GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL,
+                        "Class or interface %s is not based on GObject\n",
+                        cls.getSimpleName());
+            }
+        };
+    }
+
+    private static final VarHandle get_property =
+            GObject.ObjectClass.getMemoryLayout().varHandle(
+                    MemoryLayout.PathElement.groupElement("get_property"));
+
+    private static void overrideGetProperty(Proxy instance,
+                                            @Nullable GetPropertyCallback getProperty,
+                                            Arena _arena) {
+        MemorySegment callback = getProperty == null ? MemorySegment.NULL : getProperty.toCallback(_arena);
+        get_property.set(instance.handle(), 0, callback);
+    }
+
+    private static final VarHandle set_property =
+            GObject.ObjectClass.getMemoryLayout().varHandle(
+                    MemoryLayout.PathElement.groupElement("set_property"));
+
+    private static void overrideSetProperty(Proxy instance,
+                                            @Nullable SetPropertyCallback setProperty,
+                                            Arena _arena) {
+        MemorySegment callback = setProperty == null ? MemorySegment.NULL : setProperty.toCallback(_arena);
+        set_property.set(instance.handle(), 0, callback);
+    }
+
+    /**
+     * Functional interface declaration of the {@code GetPropertyCallback} callback.
+     */
+    @FunctionalInterface
+    public interface GetPropertyCallback extends FunctionPointer {
+        void run(GObject object, int propertyId, @Nullable Value value, ParamSpec pspec);
+
+        default void upcall(MemorySegment object, int propertyId, MemorySegment value, MemorySegment pspec) {
+            Proxy o = InstanceCache.get(object, GObject::new);
+            if (! (o instanceof GObject gobject)) {
+                GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL, "get_property for invalid GObject\n");
+                return;
+            }
+            Proxy p = InstanceCache.get(pspec, ParamSpec.ParamSpec$Impl::new);
+            if (! (p instanceof ParamSpec gparamspec)) {
+                GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL, "get_property for invalid GParamSpec\n");
+                return;
+            }
+            Value gvalue = MemorySegment.NULL.equals(value) ? null : new Value(value);
+            run(gobject, propertyId, gvalue, gparamspec);
+        }
+
+        default MemorySegment toCallback(Arena arena) {
+            FunctionDescriptor _fdesc = FunctionDescriptor.ofVoid(
+                    ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+            MethodHandle _handle = Interop.upcallHandle(MethodHandles.lookup(),GetPropertyCallback.class, _fdesc);
+            return Linker.nativeLinker().upcallStub(_handle.bindTo(this), _fdesc, arena);
+        }
+    }
+
+    /**
+     * Functional interface declaration of the {@code SetPropertyCallback} callback.
+     */
+    @FunctionalInterface
+    public interface SetPropertyCallback extends FunctionPointer {
+        void run(GObject object, int propertyId, @Nullable Value value, ParamSpec pspec);
+
+        default void upcall(MemorySegment object, int propertyId, MemorySegment value, MemorySegment pspec) {
+            Proxy o = InstanceCache.get(object, GObject::new);
+            if (! (o instanceof GObject gobject)) {
+                GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL, "set_property for invalid GObject\n");
+                return;
+            }
+            Proxy p = InstanceCache.get(pspec, ParamSpec.ParamSpec$Impl::new);
+            if (! (p instanceof ParamSpec gparamspec)) {
+                GLib.log(LOG_DOMAIN, LogLevelFlags.LEVEL_CRITICAL, "set_property for invalid GParamSpec\n");
+                return;
+            }
+            Value gvalue = MemorySegment.NULL.equals(value) ? null : new Value(value);
+            run(gobject, propertyId, gvalue, gparamspec);
+        }
+
+        default MemorySegment toCallback(Arena arena) {
+            FunctionDescriptor _fdesc = FunctionDescriptor.ofVoid(
+                    ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+            MethodHandle _handle = Interop.upcallHandle(MethodHandles.lookup(), SetPropertyCallback.class, _fdesc);
+            return Linker.nativeLinker().upcallStub(_handle.bindTo(this), _fdesc, arena);
+        }
+    }
+}

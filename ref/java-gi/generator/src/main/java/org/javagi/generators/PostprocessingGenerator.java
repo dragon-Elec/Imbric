@@ -302,6 +302,9 @@ public class PostprocessingGenerator extends TypedValueGenerator {
     // Mark arena for parameters with async or notified scope, ready to close
     private void scope(MethodSpec.Builder builder) {
         if (v instanceof Parameter p) {
+            if (p.sharesAsyncCallbackArena())
+                return;
+
             boolean notified = p.scope() == Scope.NOTIFIED && p.destroy() != null;
             boolean async = p.scope() == Scope.ASYNC && !p.isDestroyNotifyParameter();
             if (notified || async)

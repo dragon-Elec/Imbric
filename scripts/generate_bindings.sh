@@ -22,16 +22,10 @@ if [ ! -f "${TOOL_DIR}/glib-${VERSION}-sources.jar" ]; then
 fi
 
 echo "==> [2/5] Extracting Stable Foundation & Hand-written types"
-# Copy foundation classes from the local java-gi repo
+# Extract foundation classes from the downloaded sources jar
+unzip -q -o "${TOOL_DIR}/glib-${VERSION}-sources.jar" "org/javagi/*" -d "$GEN_DIR"
+# Copy our local foundation classes (including our patches and missing types like Filename)
 cp -r "${PROJECT_DIR}/ref/java-gi/modules/glib/src/main/java/org" "$GEN_DIR"
-# Copy specific hand-written types from the local java-gi repo
-# (These are already copied by the cp -r above if they are in org/gnome/glib)
-# But let's make sure we have the latest versions from the repo.
-mkdir -p "$GEN_DIR/org/gnome/glib/"
-cp "${PROJECT_DIR}/ref/java-gi/modules/glib/src/main/java/org/gnome/glib/List.java" "$GEN_DIR/org/gnome/glib/"
-cp "${PROJECT_DIR}/ref/java-gi/modules/glib/src/main/java/org/gnome/glib/SList.java" "$GEN_DIR/org/gnome/glib/"
-cp "${PROJECT_DIR}/ref/java-gi/modules/glib/src/main/java/org/gnome/glib/HashTable.java" "$GEN_DIR/org/gnome/glib/"
-cp "${PROJECT_DIR}/ref/java-gi/modules/glib/src/main/java/org/gnome/glib/ByteArray.java" "$GEN_DIR/org/gnome/glib/"
 
 echo "==> [3/5] Generating Native GNOME 46 Bindings (using PATCHED generator)"
 mkdir -p "$TEMP_GEN"
@@ -46,7 +40,7 @@ mkdir -p "$TEMP_GEN"
     /usr/share/gir-1.0/GLib-2.0.gir \
     /usr/share/gir-1.0/GObject-2.0.gir \
     /usr/share/gir-1.0/Gio-2.0.gir \
-    "${PROJECT_DIR}/gir/GdkPixbuf-2.0.gir"
+    /usr/share/gir-1.0/GdkPixbuf-2.0.gir
 
 echo "==> [4/5] Flattening & Merging Structure"
 # Move all library-specific org/gnome subfolders into the shared root
@@ -58,18 +52,6 @@ find "$TEMP_GEN" -path "*/org/gnome/*" -type f | while read -r file; do
     cp "$file" "$dest_path"
 done
 rm -rf "$TEMP_GEN"
-
-echo "==> [5/5] Surgical Patching (GPid Pointer Bug)"
-MO_FILE="$GEN_DIR/org/gnome/gio/MountOperation.java"
-if [ -f "$MO_FILE" ]; then
-    echo "    Patching MountOperation.java..."
-    # Add import at line 20
-    sed -i '20i import org.javagi.base.Alias;' "$MO_FILE"
-    # Replace broken call using a more aggressive regex for mangled names
-    sed -i 's/Pid\.get[a-zA-Z0-9.]*Values(processes)/Alias.getAddressValues(processes)/g' "$MO_FILE"
-    # Adjust element size for pointers (4 bytes -> 8 bytes)
-    sed -i 's/processes.length, 4)/processes.length, 8)/g' "$MO_FILE"
-fi
 
 # Cleanup
 echo "    Removing module-info.java..."

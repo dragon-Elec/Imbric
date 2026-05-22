@@ -327,14 +327,31 @@ public class PreprocessingGenerator extends TypedValueGenerator {
 
     // Arena for parameters with async or notified scope
     private void scope(MethodSpec.Builder builder) {
+        if (p.sharesAsyncCallbackArena())
+            return;
+
         if (p.scope() == Scope.NOTIFIED && p.destroy() != null)
             builder.addStatement("final $1T _$2LScope = $1T.ofShared()", Arena.class, getName());
 
-        if (p.scope() == Scope.ASYNC && !p.isDestroyNotifyParameter())
+        if (p.scope() == Scope.ASYNC && !p.isDestroyNotifyParameter()) {
             builder.addStatement("final $1T _$2LScope = $1T.ofShared()",
                             Arena.class, getName())
                    .addStatement("if ($2L != null) $1T.CLEANER.register($2L, new $1T(_$2LScope))",
                             ClassNames.ARENA_CLOSE_ACTION, getName());
+
+            // Fallback: if the primary callback is null at runtime, register the
+            // CLEANER on a secondary callback that shares this arena, so the arena
+            // is still closed when the secondary callback is GC'd.
+            p.parent().parameters().stream()
+                .filter(q -> q != p && q.sharesAsyncCallbackArena())
+                .findFirst()
+                .ifPresent(shared -> {
+                    String sharedName = new TypedValueGenerator(shared).getName();
+                    builder.addStatement(
+                        "if ($2L == null && $3L != null) $1T.CLEANER.register($3L, new $1T(_$4LScope))",
+                        ClassNames.ARENA_CLOSE_ACTION, getName(), sharedName, getName());
+                });
+        }
     }
 
     // If the parameter has attribute transfer-ownership="full", we must

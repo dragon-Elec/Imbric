@@ -280,12 +280,22 @@ class TypedValueGenerator {
             case Bitfield _ -> CodeBlock.of("$T.enumSetToInt($L)", ClassNames.INTEROP, identifier);
             case Callback _ -> {
                 CodeBlock.Builder arena = CodeBlock.builder();
-                switch(Scope.ofTypedValue(v)) {
-                    case null -> arena.add("$T.global()", Arena.class);
-                    case BOUND -> arena.add("$T.attachArena($T.ofConfined(), this)", ClassNames.INTEROP, Arena.class);
-                    case CALL -> arena.add("_arena");
-                    case NOTIFIED, ASYNC -> arena.add("_$LScope", identifier);
-                    case FOREVER -> arena.add("$T.global()", Arena.class);
+                if (v instanceof Parameter p && p.sharesAsyncCallbackArena()) {
+                    Parameter primary = p.findPrimaryAsyncCallback();
+                    if (primary != null) {
+                        arena.add("_$LScope", toJavaIdentifier(primary.name()));
+                    } else {
+                        arena.add("$T.global()", Arena.class);
+                    }
+                } else {
+                    switch (Scope.ofTypedValue(v)) {
+                        case null -> arena.add("$T.global()", Arena.class);
+                        case BOUND ->
+                                arena.add("$T.attachArena($T.ofConfined(), this)", ClassNames.INTEROP, Arena.class);
+                        case CALL -> arena.add("_arena");
+                        case NOTIFIED, ASYNC -> arena.add("_$LScope", identifier);
+                        case FOREVER -> arena.add("$T.global()", Arena.class);
+                    }
                 }
                 yield CodeBlock.of("$L.toCallback($L)", identifier, arena.build());
             }
@@ -342,7 +352,7 @@ class TypedValueGenerator {
         if (isEnum || isPrimitiveAlias)
             stmt = CodeBlock.of("$T.allocate($T.get$LValues($L), $L, $L)",
                     ClassNames.INTEROP,
-                    isEnum ? ClassNames.INTEROP : elemType.typeName(),
+                    isEnum ? ClassNames.INTEROP : ClassNames.ALIAS,
                     primitiveClassName,
                     identifier,
                     array.zeroTerminated(),
