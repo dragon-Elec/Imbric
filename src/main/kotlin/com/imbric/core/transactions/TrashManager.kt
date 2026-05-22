@@ -138,6 +138,7 @@ class TrashManager(
 
     fun canTrash(path: String): Boolean {
         val backend = backendRegistry.getIo(path) ?: return false
-        return backend.getCapabilities(path).supportsTrash && backend.exists(path)
+        if (!backend.getCapabilities(path).supportsTrash) return false
+        return backend.exists(path)
     }
 }
