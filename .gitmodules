@@ -1,0 +1,4 @@
+[submodule "ref/java-gi_patched"]
+	path = ref/java-gi_patched
+	url = https://github.com/dragon-Elec/java-gi.git
+	branch = imbric-patches
