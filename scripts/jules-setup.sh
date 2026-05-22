@@ -38,4 +38,7 @@ cd ref/java-gi_patched && ./gradlew installDist --quiet && cd ../..
 # --- Verify compilation ---
 ./gradlew compileKotlin --quiet
 
+# --- Clean working tree (Jules rejects dirty state) ---
+git checkout -- ref/java-gi_patched
+
 echo "==> Jules setup complete."
