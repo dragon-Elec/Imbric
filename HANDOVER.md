@@ -6,18 +6,14 @@
 - **Core VFS abstraction:** `ifs`
 - **Language:** Kotlin 2.3.20+ (K2 compiler) on **Kotlin/JVM** (not Kotlin/Native)
 - **JVM target:** JDK 25
-- **Build system:** Gradle 9.5.0
+- **Build system:** Gradle 9.5.1
 - **UI Strategy:** Compose Multiplatform (Kotlin) — **not GTK**
 
 ## Repository
 - Path: `/home/ray/Desktop/files/wrk/Imbric/imbric-kt`
-- Standalone Git repo (no shared history with Python original at `/home/ray/Desktop/files/wrk/Imbric/Imbric`)
-- 5 commits on `master` as of handover:
-  1. `fb58be3` — Initial commit: Kotlin ImbricFS core layout
-  2. `d5e9a19` — feat(core): complete Kotlin 2.3+ core rewrite
-  3. `39b465e` — refine read pipeline & unify ifs backends
-  4. `7adb470` — test: add tier 1 unit tests and test infrastructure
-  5. `624556d` — fix(native): automate binding generation and gpid pointer patching
+- Standalone Git repo (no shared history with Python original)
+- 71 commits on `main`
+- **Test count:** 188 passing
 
 ---
 
@@ -25,59 +21,126 @@
 
 ```
 imbric-kt/
-├── AGENTS.md                         # Agent instructions (architecture, build, conventions)
-├── HANDOVER.md                       # THIS FILE
-├── build.gradle.kts                  # Gradle build config (JDK 25, sourceSets for bindings)
-├── build.properties                  # Gradle properties (JDK home)
-├── .gitignore                        # Ignores .gradle/, build/, .kotlin/
+├── AGENTS.md                           # Agent instructions (architecture, build, conventions)
+├── HANDOVER.md                         # THIS FILE
+├── build.gradle.kts                    # Gradle build config (JDK 25, sourceSets for bindings)
+├── gradle.properties                   # Clean — no hardcoded JDK path (Gradle Toolchains handles it)
 ├── scripts/
-│   └── generate_bindings.sh          # Auto-generate + patch GIO bindings (5-step pipeline)
-├── src/
-│   ├── main/kotlin/com/imbric/core/
-│   │   ├── ifs/                      # VFS foundation (agnostic layer)
-│   │   │   ├── IOBackend.kt          # Interface: list/copy/move/trash/rename/getMetadata
-│   │   │   ├── BackendCapabilities.kt # Capabilities & locality flags
-│   │   │   ├── BackendRegistry.kt    # URI scheme → backend router (singleton)
-│   │   │   ├── PathCapabilities.kt   # Per-path capability inspection
-│   │   │   ├── FileEvent.kt          # File system event types
-│   │   │   └── backends/
-│   │   │       └── GioBackend.kt     # java-gi GIO implementation (GNOME 46)
-│   │   ├── transactions/             # Mutating operations hub
-│   │   │   ├── TransactionManager.kt # Orchestrator: batch lifecycle, conflict hooks
-│   │   │   ├── UndoManager.kt        # Stack-based undo/redo
-│   │   │   └── TrashManager.kt       # Trash lifecycle, cache, restore
+│   ├── generate_bindings.sh            # 5-step binding pipeline (dynamic paths, no hardcoded /home/ray)
+│   └── filter_gradle.py               # Test output filter: . for PASSED, full block for FAILED
+├── src/main/kotlin/com/imbric/
+│   ├── core/
+│   │   ├── ifs/                        # VFS abstraction layer
+│   │   │   ├── IOBackend.kt            # Interface: list/copy/move/trash/rename/getMetadata/deepCount/thumbnail
+│   │   │   ├── BackendCapabilities.kt  # Capabilities & locality flags
+│   │   │   ├── BackendRegistry.kt      # URI scheme → backend router
+│   │   │   ├── IfsUri.kt              # URI parsing with scheme/root detection
+│   │   │   ├── VfsError.kt            # Sealed class hierarchy (AlreadyExists, NotFound, PermissionDenied, etc.)
+│   │   │   ├── FileAction.kt          # File action types
+│   │   │   ├── FileEvent.kt           # File system event types
+│   │   │   ├── PathCapabilities.kt    # Per-path capability inspection
+│   │   │   ├── LatencyProfiler.kt     # Performance monitoring
+│   │   │   ├── backends/
+│   │   │   │   ├── GioBackend.kt      # GIO implementation — all ops use awaitGioAsync
+│   │   │   │   ├── GioCoroutineBridge.kt  # GLib MainContext pump + suspendCancellableCoroutine
+│   │   │   │   ├── GioSearchBackend.kt    # Tracker3 + manual fallback search
+│   │   │   │   ├── GioRecentBackend.kt    # recent:/// backend
+│   │   │   │   └── GioTypeMappers.kt     # GIO ↔ Imbric attribute mapping
+│   │   │   ├── provider/
+│   │   │   │   ├── DirState.kt        # Live directory state (StateFlow, enrichment, readiness)
+│   │   │   │   ├── DirStateRegistry.kt # WeakReference shared DirState cache
+│   │   │   │   ├── DirectoryType.kt   # Enum: STANDARD, SEARCH, STARRED, VIRTUAL
+│   │   │   │   └── ListingStrategy.kt # Sealed interface: Standard, Search, Starred, Virtual
+│   │   │   └── services/
+│   │   │       └── ThumbnailStateTracker.kt  # StateFlow thumbnail tracking
+│   │   ├── transactions/               # Mutating operations hub
+│   │   │   ├── TransactionManager.kt   # Batch lifecycle, conflict hooks
+│   │   │   ├── TransactionDispatcher.kt # Backend-aware concurrency (Local: 32, Network: 8)
+│   │   │   ├── TransferOrchestrator.kt # Recursive pre-flight, sticky conflict resolution
+│   │   │   ├── BulkDispatcher.kt       # Concurrent I/O with limitedParallelism
+│   │   │   ├── UndoManager.kt          # Stack-based undo/redo
+│   │   │   ├── TrashManager.kt         # Trash lifecycle, StateFlow tracking
+│   │   │   └── models/
+│   │   │       └── Transaction.kt      # Transaction data model
 │   │   ├── logic/
-│   │   │   └── XferArbiter.kt        # ConflictAction + SyncPolicy + resolve()
-│   │   └── models/
-│   │       ├── FileInfo.kt           # Immutable file metadata snapshot (16 fields)
-│   │       ├── FileJob.kt            # Atomic work unit + InversePayload + TransferProgress
-│   │       └── TrashItem.kt          # Trash bin item metadata
-│   └── test/kotlin/com/imbric/core/
-│       ├── ifs/
-│       │   ├── IOBackendTest.kt
-│       │   ├── BackendRegistryTest.kt
-│       │   ├── PathCapabilitiesTest.kt
-│       │   ├── monitoring/
-│       │   │   └── DirectoryMonitorTest.kt
-│       │   └── backends/
-│       │       ├── GioBackendTest.kt
-│       │       └── GioTypeMappersIntegrationTest.kt
-│       ├── logic/
-│       │   └── XferArbiterTest.kt
-│       ├── models/
-│       │   ├── FileInfoTest.kt
-│       │   └── FileJobTest.kt
-│       ├── transactions/
-│       │   ├── TransactionManagerTest.kt
-│       │   ├── TransferOrchestratorTest.kt
-│       │   ├── TrashManagerTest.kt
-│       │   ├── UndoManagerTest.kt
-│       │   └── UndoFactoryTest.kt
-│       ├── desktop/
-│       │   └── DeviceManagerTest.kt
-│       └── testing/
-│           └── InMemoryBackend.kt    # HashMap-based test double for IOBackend
-└── ref/                              # Reference documentation (java-gi docs, examples)
+│   │   │   ├── XferArbiter.kt          # ConflictAction + SyncPolicy interface + resolve()
+│   │   │   └── Validation.kt          # FAT_FORBIDDEN_CHARACTERS, isValidComponentName
+│   │   ├── models/
+│   │   │   ├── FileInfo.kt            # 20+ fields: timestamps, flags, visibility, sort, permissions
+│   │   │   ├── FileJob.kt             # Atomic work unit + TransferProgress
+│   │   │   ├── TrashItem.kt           # Trash bin item metadata
+│   │   │   ├── Bookmark.kt            # Bookmark data class (name, uri, label, icon)
+│   │   │   ├── DeepCount.kt           # Recursive directory count
+│   │   │   ├── DiskUsage.kt           # Disk usage model
+│   │   │   ├── PathType.kt            # PHYSICAL, VIRTUAL
+│   │   │   ├── UndoAction.kt          # Sealed interface: TransferUndo, TrashUndo, RenameUndo, CreateUndo, MetadataUndo
+│   │   │   └── VfsError.kt           # (see ifs/)
+│   │   └── desktop/                    # Global system state (no URI required)
+│   │       ├── DeviceManager.kt       # Hardware drives/volumes via GVolumeMonitor
+│   │       ├── DesktopEnvironment.kt  # Interface for hardware mounts
+│   │       ├── GioDesktopEnvironment.kt # GIO implementation
+│   │       ├── TrashMonitor.kt        # Real-time GFileMonitor on trash:///
+│   │       ├── TrashStateProvider.kt  # Injectable interface (testability)
+│   │       ├── StarredManager.kt      # System-wide starred file tracking
+│   │       ├── StarredStateProvider.kt # Injectable interface
+│   │       ├── BookmarkList.kt        # JSON + GTK bidirectional sync
+│   │       ├── SettingsProvider.kt    # GSettings interface
+│   │       ├── GioSettingsProvider.kt # GIO implementation
+│   │       ├── DesktopLink.kt         # .desktop file handling
+│   │       ├── DesktopLinkProvider.kt # Desktop link provider
+│   │       ├── DesktopLinkMonitor.kt  # Desktop link monitoring
+│   │       ├── DesktopDirectory.kt    # XDG desktop directory
+│   │       ├── SandboxDetector.kt     # Flatpak/sandbox detection
+│   │       └── ImbricDesktop.kt       # Desktop integration coordinator
+│   └── app/                            # Application layer (not started)
+│       └── bootstrap/
+│           ├── Main.kt                # Entry point
+│           └── MainContextPump.kt     # GLib MainContext iteration pump
+├── src/test/kotlin/com/imbric/core/   # 188 tests
+│   ├── ifs/
+│   │   ├── IOBackendTest.kt
+│   │   ├── backends/
+│   │   │   ├── GioBackendAsyncTest.kt
+│   │   │   ├── GioSearchBackendTest.kt
+│   │   │   └── VfsQueryFilterTest.kt
+│   │   ├── provider/
+│   │   │   ├── DirStateTest.kt
+│   │   │   └── DirectoryTypeTest.kt
+│   │   └── services/
+│   │       └── ThumbnailStateTrackerTest.kt
+│   ├── models/
+│   │   ├── FileInfoTest.kt
+│   │   ├── FileJobTest.kt
+│   │   └── VfsQueryTest.kt
+│   ├── transactions/
+│   │   ├── TransferOrchestratorTest.kt
+│   │   ├── UndoManagerTest.kt
+│   │   └── HardeningIntegrationTest.kt
+│   ├── desktop/
+│   │   ├── DeviceManagerTest.kt
+│   │   ├── DesktopDirectoryTest.kt
+│   │   ├── ImbricDesktopTest.kt
+│   │   └── backends/
+│   │       ├── GioRecentBackendTest.kt
+│   │       └── GioRecentBackendBenchmark.kt
+│   └── testing/
+│       ├── InMemoryBackend.kt         # HashMap-based test double
+│       ├── InMemoryBackendContractTest.kt
+│       ├── GioBackendContractTest.kt   # Ensures both backends behave identically
+│       └── BashHelper.kt             # Bash script helper for complex filesystem state setup
+└── ref/                                # Reference documentation (untracked)
+    ├── java-gi_patched/                # Patched java-gi generator (tracked in git)
+    │   ├── generator/src/main/java/org/javagi/
+    │   │   ├── gir/Callable.java       # Simplified isAsync() using finishFunc
+    │   │   ├── gir/Parameter.java      # sharesAsyncCallbackArena() + findPrimaryAsyncCallback()
+    │   │   ├── generators/TypedValueGenerator.java  # Shared arena + IllegalStateException for malformed GIR
+    │   │   ├── generators/PreprocessingGenerator.java  # Skip arena allocation for progress callbacks
+    │   │   └── generators/PostprocessingGenerator.java # Skip arena close for progress callbacks
+    │   └── ext/gir-files/              # Official upstream GIR files (restored)
+    ├── java-gi-remote/                 # Clean upstream clone (for diffing)
+    ├── codeberg-reply.md               # Draft reply for Codeberg maintainer
+    ├── CODEBERG_PROPOSAL_ASYNC_ARENA.md # RcArena + Isolated Teardown architecture proposal
+    └── JAVA-GI-REFERENCE.md            # java-gi repo structure documentation
 ```
 
 ---
@@ -87,122 +150,111 @@ imbric-kt/
 ### ✅ Completed (Stable, Verified)
 | Component | Status | Notes |
 |:---|---:|:---|
-| **ifs abstraction** | ✅ Standardized | V2 upgraded: smart routing, dynamic capabilities, action checks. Added **"Does it require a URI?"** boundary. |
-| **InMemoryBackend** | ✅ Fully Recursive | Test double now supports recursive copy/move, metadata failures, and StateFlow trash tracking. |
-| **FileInfo model** | ✅ Hardened | 18+ fields, `PathType`, `nativeId`, and verified "Secret Bag" (`attributes`) for native GIO metadata. |
-| **XferArbiter** | ✅ Polymorphic | Added **Merge** action; refactored `SyncPolicy` to interface for app-layer extensibility. |
-| **TransferOrchestrator** | ✅ Nautilus-grade | Implements recursive pre-flight planning, **Sticky Conflict Resolution** (Apply to All), and robust cancellation. |
-| **GioBackend** | ✅ Native Async | Full native attribute mapping, recursive `WOULD_RECURSE` fallback. **All mutating ops (copy, move, trash, delete, rename) now use non-blocking `awaitGioAsync` bridge.** |
-| **Transaction Hub** | ✅ Polished | `TransactionManager`, `UndoManager` (with batch support), and `TrashManager` (StateFlow-based) fully verified. Backend-aware concurrency limits (Local: 32, Network: 8). **Undo system now correctly handles trash restoration and move-back renames.** |
-| **Desktop Integration** | ✅ Native | `DesktopEnvironment` and `GioDesktopEnvironment` for hardware drives and mounts via `GVolumeMonitor`. Added **`SettingsProvider`** for reactive GSettings. |
-| **Live Monitoring** | ✅ Debounced | `DirectoryMonitor` and `TrashMonitor` provide stable, flicker-free `Flow` updates from native GIO monitors. |
-| **Search Engine** | ✅ Structured | `VfsQuery` model with depth and MIME support. Integrated with Tracker3 and manual fallback. |
+| **ifs abstraction** | ✅ Hardened | V2 with smart routing, dynamic capabilities, VfsError hierarchy, URI parsing |
+| **IOBackend** | ✅ Full Surface | list, copy, move, trash, delete, rename, getMetadata, deepCount, thumbnail, search, mount/unmount |
+| **InMemoryBackend** | ✅ Contract-Tested | IOBackendContractTest ensures behavioral parity with GioBackend |
+| **FileInfo** | ✅ Nautilus-Grade | 20+ fields: timestamps (birth/access/modify), capability flags (canMount/canEject/canTrash), visibility (isHidden/shouldShow), sort functions, permissions, owner/group, child count, isArchive, isLaunchable, isStarred, trashTime, recency, activationUri |
+| **DirState** | ✅ Strategy-Based | ListingStrategy sealed interface (Standard/Search/Starred/Virtual), DirStateRegistry with WeakReference caching, whenReady/whenEnriched StateFlows, deep count enrichment |
+| **GioBackend** | ✅ Fully Async | All mutating ops use `awaitGioAsync` bridge. Recursive ops (copyRecursive/deleteRecursive) use sequential async with `yield()` for cancellation. Backend-aware semaphores (Local: 32, Network: 8). |
+| **GioCoroutineBridge** | ✅ Battle-Tested | `startMainContextPump(scope)` + `awaitGioAsync(block, finish)`. GLib.idleAdd dispatch, Source.remove() cleanup, cont.isActive check for double-resume safety. |
+| **VfsError** | ✅ Typed Hierarchy | Sealed class (not interface) extending Exception. 12 variants: AlreadyExists, NotFound, WouldRecurse, PermissionDenied, NoSpace, ReadOnly, Cancelled, NotSupported, IsDirectory, NotDirectory, Busy, IoError |
+| **UndoAction** | ✅ Type-Driven | Sealed interface: TransferUndo, TrashUndo, RenameUndo, CreateUndo, MetadataUndo. Full URI recovery for trash restore. |
+| **Bookmarks** | ✅ GTK-Synced | JSON primary store + bidirectional sync with `~/.config/gtk-3.0/bookmarks`. GFileMonitor for external edits. 500ms debounce. |
+| **Search** | ✅ Tracker3 + Fallback | VfsQuery with depth/MIME/hidden/date/size/content filters. Progress reporting. Flow-based result streaming. |
+| **TrashMonitor** | ✅ Real-Time | GFileMonitor on `trash:///` with TRASH_ITEM_COUNT optimization. Debounced StateFlow. |
+| **ThumbnailStateTracker** | ✅ Observable | StateFlow-based thumbnail tracking. Per-URI VFS ops on IOBackend. |
+| **Desktop Integration** ✅ | DeviceManager, DesktopLink, DesktopDirectory, SandboxDetector, StarredManager, SettingsProvider — all injectable via interfaces for testability. |
+| **BulkDispatcher** | ✅ Safe Parallelism | `limitedParallelism()` for concurrent I/O. Local: 32 threads, Network: 8. |
 
 ---
 
-## The java-gi Binding Pipeline (5-Step Automated Process)
+## The java-gi Binding Pipeline
 
-All steps are automated in `scripts/generate_bindings.sh`:
+All steps automated in `scripts/generate_bindings.sh` (dynamic path resolution, no hardcoded paths):
 
 ```
-Step 1: Download java-gi CLI
-         → Codeberg release v0.15.0 → build/native-gen/tools/
-Step 2: Extract Foundation + Hand-written types
-         → org.javagi.*, glib/List.java, SList.java, HashTable.java, ByteArray.java
-         → from Maven Central glib-0.15.0-sources.jar
-Step 3: Generate GNOME 46 bindings from local GIR files
+Step 1: Infrastructure Setup
+         → Create build/native-gen/{tools,bindings,temp_raw}
+Step 2: Extract Foundation Classes
+         → org.javagi.* from Maven Central glib-0.15.0-sources.jar
+         → org/gnome/* + org/javagi/* from local ref/java-gi_patched/modules/
+Step 3: Generate GNOME 46 Bindings
+         → PATCHED generator from ref/java-gi_patched/generator/build/install/
          → /usr/share/gir-1.0/{GLib,GObject,Gio}-2.0.gir
-         → using -d org.gnome package flag
-Step 4: Flatten directory structure (glib/org/... + gobject/org/... + gio/org/... → org/)
-         → Prevents "duplicate class" errors from conflicting directory roots
-Step 5: Surgical patching (GPid pointer bug in MountOperation.java)
-         → sed: Pid.get*Values → Alias.getAddressValues
-         → sed: pointer size 4 → 8 (64-bit)
-         → sed: remove module-info.java
+Step 4: Flatten & Merge
+         → Prevents "duplicate class" errors
+Step 5: Post-Processing
+         → GPid pointer fix (detect type, call correct helper)
+         → Remove module-info.java
 ```
 
-### The Four Bugs We Tamed
+### The Patches We Maintain (in ref/java-gi_patched)
 
-| Bug | Root Cause | Symptom | Fix |
-|:---|---:|:---|---:|
-| **GPid Pointer Mismatch** | GNOME 46 defines GPid as `void*`; generator templates hardcode `int` | `cannot find symbol Pid.getJava.lang.foreign...` | `sed` patch: 8-byte pointer, `Alias.getAddressValues` |
-| **Initialization Paradox** | Java interface static methods **don't** trigger library static init | `UnsupportedOperationException: Cannot find function 'g_file_new_for_uri'` | Manual `` Gio.`javagi$ensureInitialized`() `` in `GioBackend.init` |
-| **Async SIGSEGV Crash** | GNOME GIR incorrectly marks `move_async` callback as `scope="call"`, causing premature GC | JVM crashes in `upcall_stub_load_target` during `moveAsync` | **Patched `java-gi` generator AST** to force `Scope.ASYNC` for all `_async` functions. |
-| **Trash Undo Inversion** | `TransferUndo` used for trash; GIO `trash` doesn't return URI | Undo trash tried to trash again; restore failed due to missing trash URI | Added `TrashUndo` variant; `trash()` now returns actual trash URI via `listTrash()` lookup. |
+| Patch | File | What | Why |
+|:---|:---|:---|:---|
+| **Shared Arena** | `Parameter.java` | `sharesAsyncCallbackArena()` detects progress callbacks in async functions | GNOME GIR marks progress callbacks as `scope="call"` instead of `scope="notified"` |
+| **Arena Sharing** | `TypedValueGenerator.java` | Progress callbacks reuse primary callback's `_asyncScope` arena | Prevents SIGSEGV from premature arena close |
+| **Fail-Fast** | `TypedValueGenerator.java` | Throws `IllegalStateException` if no primary callback found | Prevents silent memory leaks from malformed GIR data |
+| **Arena Skip** | `PreprocessingGenerator.java` | Skips arena allocation for progress callbacks | They share the primary's arena |
+| **Close Skip** | `PostprocessingGenerator.java` | Skips arena close for progress callbacks | Primary callback's arena handles cleanup |
+| **isAsync()** | `Callable.java` | Simplified to `finishFunc != null` | More reliable than string heuristic |
+| **Override Priority** | `Library.java` | CLI-provided GIR files override internal bundle | Generator ignores user GIR files without this |
 
----
+### java-gi Fork Strategy
 
-## Test Infrastructure
-
-| Test Class | Type | Backend | Purpose |
-|:---|---:|:---|---:|
-| `IOBackendTest.kt` | Unit | `InMemoryBackend` | Verify IOBackend contract (list, exists, getMetadata, copy, move) |
-| `TransactionManagerTest.kt`| Unit | `InMemoryBackend` | Verify batch lifecycle, progress, and cleanup |
-| `TransferOrchestratorTest.kt`| Unit | `InMemoryBackend` | Verify recursive merge, sticky decisions, and planning failures |
-| `DirectoryMonitorTest.kt` | Unit | `InMemoryBackend` | Verify event debouncing and buffering |
-| `DeviceManagerTest.kt` | Unit | `InMemoryBackend` | Verify drive tracking and StateFlow updates |
-| `UndoFactoryTest.kt` | Unit | None | Verify "Undo DNA" generation for all ops |
-| `GioTypeMappersIntegrationTest.kt`| Integration | Real GIO | Verify GIO-to-Imbric attribute mapping accuracy |
-| `XferArbiterTest.kt` | Unit | None | Sync policy evaluation, conflict actions |
-| `GioBackendTest.kt` | Integration | Real GIO | Physical filesystem: listing, metadata, symlinks, recursive copy/move |
-| `UndoManagerTest.kt` | Unit | `InMemoryBackend` | Verify undo/redo for copy, move, trash, create, rename |
-
-**Total Tests:** 137+ passing (including deep recursive merge, metadata hardening, and full undo/redo suites).
+- **`ref/java-gi_patched/`** — Patched local clone (tracked in git). Edge development. Pushes to Codeberg fork.
+- **`ref/java-gi-remote/`** — Clean upstream clone (untracked). For diffing against official and submitting PRs.
+- **Codeberg fork:** `codeberg.org/dragon-Elec/java-gi` (origin) — for PRs to maintainer
+- **GitHub fork:** `github.com/dragon-Elec/java-gi` (github remote) — for ahead/behind UI visibility
+- **Official:** `codeberg.org/java-gi/java-gi` (upstream) — for pulling updates
 
 ---
 
-## Architecture Decisions (The "Why")
+## Nautilus Parity Scorecard
 
-### 1. Polymorphic Sync Policies (The "Rsync Engine")
-**Decision:** Refactored `SyncPolicy` from a `sealed class` to a public **`interface`**.
+| Audit Section | Status | Core/App | Notes |
+|:---|---:|:---|:---|
+| 1. FileInfo model | ✅ 90% | Core | All Nautilus fields present except emblem icons and GIcon pipeline |
+| 2. Directory model | ✅ 85% | Core | DirState + ListingStrategy + Registry. Missing: async deep count for UI |
+| 3. File Operations | ✅ 95% | Core | Full async with progress + cancellation. Missing: attribute preservation edge cases |
+| 4. Trash Monitor | ✅ 90% | Core | Real-time GFileMonitor. Missing: cross-volume trash detection |
+| 5. Undo/Redo | ✅ 95% | Core | Typed UndoAction. Missing: batch undo UI |
+| 6. Search | ✅ 80% | Core | VfsQuery + Tracker3. Missing: result ranking, composite search |
+| 7. Thumbnails | ✅ 70% | Core | ThumbnailStateTracker skeleton. Missing: actual thumbnail generation pipeline |
+| 8. Bookmarks | ✅ 95% | Core | JSON + GTK sync. Complete for v1 |
+| 9. Sidebar | ❌ 0% | App | Purely app-layer. No core work needed |
+| 10. Monitoring | ✅ 90% | Core | DirectoryMonitor + TrashMonitor + DesktopLinkMonitor |
+| 11. Error Reporting | ✅ 95% | Core | VfsError hierarchy with human-readable messages |
+| 12. Preferences | ✅ 60% | Core | SettingsProvider interface. Missing: app-layer preference UI |
+| 13. DBus | ❌ 0% | App | org.freedesktop.FileManager1 is pure app-layer |
+| 14. Icon Names | ❌ 0% | App | GIO already returns icon strings. App maps to Compose icons |
+| 15-22. Remaining | ⏳ Planned | Mixed | Symlink creation, recent CRUD, SELinux, compression primitives |
 
-**Why:**
-- **App-Layer Control:** Allows the application layer to define "Smart" policies that access external state (databases, cloud metadata) without modifying the Core.
-- **Rsync-lite:** Standard policies like `ModifiedOnly` are now standardized implementations that any UI can toggle.
-- **Metadata-Intelligence:** Policies now receive the full `FileInfo` including the `attributes` bag, enabling checksum-based or permission-based synchronization.
-- **Ergonomics:** `SyncPolicy.custom { ... }` factory provides a lightweight path for ad-hoc logic while maintaining a structured API for complex rules.
+**Overall:** ~65% Nautilus parity. ~75% of remaining work is core, ~25% app-layer.
 
-### 2. Sync over Async (Phase 1)
-**Decision:** Use synchronous GIO calls (`enumerateChildren`, `queryInfo`) wrapped in `Dispatchers.IO` instead of native `...Async` methods.
+---
 
-**Why:**
-- GIO's async is Main-Loop-dependent. Without a running `g_main_loop_run()`, callbacks never fire → coroutines hang forever
-- Spawning a dedicated GLib Main Loop thread adds the same deadlock/complexity we fled from in Python
-- `Dispatchers.IO` is an elastic thread pool (default 64 threads) — no starvation risk
-- For Compose UI, this is indistinguishable from async: the Flow emits results on IO, UI observes on Main
+## Architecture Decisions (Key "Why"s)
 
-**Critical Synchronization Pattern:**
-When relaying events from synchronous `commitTransaction()` calls through a `channelFlow` (e.g. in `TransferOrchestrator`), use `launch(start = CoroutineStart.UNDISPATCHED)` for the collector. This ensures the collector is subscribed *before* the synchronous emits occur, preventing missed events and hangs in virtual-time test dispatchers.
+### 1. Async for Writes, Sync for Reads
+- **Reads** (list, metadata, enumerate): Synchronous GIO wrapped in `Dispatchers.IO`. Fast, simple, no GLib Main Context dependency.
+- **Writes** (copy, move, trash, delete, rename): `awaitGioAsync` bridge. Non-blocking, cancellation-aware, progress-reporting.
 
-**Future Async Path:**
-Three bridge patterns available (see `ref/GIO-COROUTINE-BRIDGE.md`):
-1. **Idle-Async Bridge** — `GLib.idleAdd` + `suspendCancellableCoroutine` to wrap native async methods without a dedicated loop thread
-2. **MainContext Pump** — `MainContext.default().iteration(mayBlock)` integrated into Compose frame callbacks (`withFrameMillis`)
-3. **Custom `GlibDispatcher`** — `CoroutineDispatcher` scheduling work via `GLib.idleAdd`
+### 2. Injectable Singletons (Testability)
+All `core/desktop/` singletons are accessed via interfaces (`TrashStateProvider`, `StarredStateProvider`, `SettingsProvider`). Production uses real implementations; tests inject fakes. No test ever mutates the host OS.
 
-### 3. Local Generation over Pre-built JARs
-**Decision:** Generate bindings from local GIR files rather than using Maven Central's pre-built JARs.
+### 3. Services vs IOBackend
+- **IOBackend method:** Per-URI VFS operation. Each backend can override. Examples: `deepCount()`, `getThumbnailPath()`.
+- **Service:** State coordinator wrapping IOBackend calls, exposing StateFlow for UI. Example: `ThumbnailStateTracker`.
+- **Desktop singleton:** System-wide state without a URI. Example: `TrashMonitor`, `StarredManager`.
 
-**Why:**
-- Maven Central's JARs are compiled for GNOME 50 — **incompatible with GNOME 46** at binary level
-- Local GIR files guarantee perfect ABI match with the host OS libraries
-- The `generate_bindings.sh` script is a project artifact — any machine can reproduce
+### 4. Typed Undo (Not Operation-Driven)
+`UndoAction` sealed interface defines actions by *how* they are reversed (delete, move back, rename back, restore), not *what button the user clicked* (duplicate, template, starred). Keeps undo engine small and generic.
 
-### 4. Compose over GTK
-**Decision:** UI will use Compose Multiplatform (Kotlin/JVM), not GTK.
-
-**Why:**
+### 5. Compose over GTK
 - Compose is Kotlin-native with first-class coroutine/Flow integration
-- GTK signal system would add unnecessary bridging between GObject and Kotlin StateFlow
+- GTK signal system would add unnecessary bridging
 - Internal communication uses `StateFlow`/`SharedFlow` — no GObject signals needed
-
-### 5. Application Lifecycle (GApplication + Compose)
-**Decision:** Use `GApplication.register()` (not `app.run()`), integrate via idle callbacks.
-
-**Why:**
-- `Application.run(args)` starts a GTK event loop, blocking the thread — incompatible with Compose
-- `register()` activates the GMainContext without blocking, enabling `GLib.idleAdd`/`timeoutAdd` to process
-- **Critical:** `register()` expects `argv[0]` to be program name. Prepend `"imbric"` to args array.
 
 ---
 
@@ -215,27 +267,58 @@ class GioBackend : IOBackend {
     init {
         org.gnome.gio.Gio.`javagi$ensureInitialized`()
     }
-    // ...
 }
 ```
 
-Without this, calling `File.newForUri(...)` throws:
-```
-UnsupportedOperationException: Cannot find function 'g_file_new_for_uri'
-```
+Without this: `UnsupportedOperationException: Cannot find function 'g_file_new_for_uri'`
 
 ---
 
-## Next Steps (New Session)
+## Testing Workflow
 
-### Phase 2 — Compose UI & App Layer
-1. **Sidebar Aggregator**: Combine GTK bookmarks, `recent:///` locations, and `DeviceManager` drives into a unified sidebar model.
-2. **Thumbnail Service**: Implement the "Clever" Thumbnailing Flow using Coil 3 + custom GNOME fetcher (porting Python shortcuts like symlink resolving and local fast-path).
-3. **Main Application Bridge**: Initialize Compose Desktop and integrate `GApplication.register()` with the `MainContext.iteration()` pump for native callbacks.
-4. **Visual Prototype**: Build the first interactive Compose Multiplatform frontend consuming the transaction engine and ambient providers.
+```bash
+# Quick check — specific test class (~7s)
+./gradlew test --tests "ClassName" --console=plain 2>&1 | python3 scripts/filter_gradle.py
+
+# Full suite (~50s)
+./gradlew test --console=plain 2>&1 | python3 scripts/filter_gradle.py
+
+# Regenerate bindings + compile + test
+./scripts/generate_bindings.sh && ./gradlew test --console=plain 2>&1 | python3 scripts/filter_gradle.py
+```
+
+- `filter_gradle.py` prints `.` for PASSED, full error blocks for FAILED, always shows `error:`/`Exception`/`BUILD`
+- Use `2>&1` to merge stderr into stdout when piping
+- `BashHelper.kt` for setting up complex filesystem states (symlinks, permissions) via bash scripts
+- `IOBackendContractTest` enforces identical behavior across `GioBackend` and `InMemoryBackend`
 
 ---
 
-*Generated after binding-generation battle (Sessions 1-2), Core Rewrite (Sessions 3-4), Policy Hardening (Session 5), and Core Engine Polish (Session 6). Updated at session close.*
+## Known Issues & Gotchas
 
-sincerely yours, crimson heart ❤️
+1. **URI String Manipulation:** `trimEnd('/')` on `file:///` gives `file:` — breaks scheme detection. Always check `isRootUri()` first.
+2. **Plain paths have no scheme:** Handle `schemeEnd == -1` separately from `scheme://` URIs.
+3. **Enum shorthand doesn't work:** `.PENDING` doesn't compile — use full `TransactionStatus.PENDING`.
+4. **CancellationException must be re-thrown:** Any catch block in coroutine code must `if (e is CancellationException) throw e` or coroutines hang on cancel.
+5. **Never hardcode dispatchers in suspend functions:** `.flowOn(Dispatchers.IO)` inside suspend/Flow bypasses test dispatchers.
+6. **Bot PRs must be compile-checked:** Static analysis often flags required imports as unused. Always verify before merging.
+
+---
+
+## Next Steps
+
+### Phase 2 — App Layer (Not Started)
+1. **Sidebar Aggregator:** Combine bookmarks, recent, DeviceManager into unified sidebar model
+2. **Thumbnail Pipeline:** Coil 3 + custom GNOME fetcher (symlink resolution, local fast-path, theme icon fallback)
+3. **Main Application Bridge:** Compose Desktop + GApplication.register() + MainContext pump
+4. **Visual Prototype:** First interactive frontend consuming transaction engine
+
+### Phase 2 — Core Polish
+1. **Symlink creation** via `IOBackend.createSymlink()`
+2. **Recent file CRUD** (add/remove from recent:/// list)
+3. **Attribute preservation** on copy/move edge cases
+4. **Compression primitives** for archive integration
+
+---
+
+*Updated after Sessions 1-20+. 71 commits, 188 tests passing. Core engine complete. App layer not started.*

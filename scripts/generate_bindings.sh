@@ -7,7 +7,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOL_DIR="${PROJECT_DIR}/build/native-gen/tools"
 GEN_DIR="${PROJECT_DIR}/build/native-gen/bindings"
 TEMP_GEN="${PROJECT_DIR}/build/native-gen/temp_raw"
-PATCHED_JAVA_GI="${PROJECT_DIR}/ref/java-gi/generator/build/install/java-gi/bin/java-gi"
+PATCHED_JAVA_GI="${PROJECT_DIR}/ref/java-gi_patched/generator/build/install/java-gi/bin/java-gi"
 
 echo "==> [1/5] Infrastructure Setup"
 mkdir -p "$TOOL_DIR"
@@ -25,7 +25,7 @@ echo "==> [2/5] Extracting Stable Foundation & Hand-written types"
 # Extract foundation classes from the downloaded sources jar
 unzip -q -o "${TOOL_DIR}/glib-${VERSION}-sources.jar" "org/javagi/*" -d "$GEN_DIR"
 # Copy our local foundation classes (including our patches and missing types like Filename)
-cp -r "${PROJECT_DIR}/ref/java-gi/modules/glib/src/main/java/org" "$GEN_DIR"
+cp -r "${PROJECT_DIR}/ref/java-gi_patched/modules/glib/src/main/java/org" "$GEN_DIR"
 
 echo "==> [3/5] Generating Native GNOME 46 Bindings (using PATCHED generator)"
 mkdir -p "$TEMP_GEN"

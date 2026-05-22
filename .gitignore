@@ -7,7 +7,7 @@ build/
 
 # Reference materials (patched java-gi, docs, etc.)
 ref/*
-!ref/java-gi/
+!ref/java-gi_patched/
 
 # IDE & Tooling
 .classpath

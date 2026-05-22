@@ -121,8 +121,22 @@ com.imbric
 
 Pipeline: download java-gi CLI from Codeberg → generate Java sources from `/usr/share/gir-1.0/{GLib,GObject,Gio}-2.0.gir` → fetch foundation classes (`org.javagi.*`) from Maven Central → delete `module-info.java` → strip `org.gnome.` prefix via sed → compile via Gradle source set.
 
-**Local Patched Generator (`ref/java-gi`):**
-We maintain a local clone of the `java-gi` repository in `ref/java-gi`. We have applied critical AST-level patches to the generator source code to fix upstream GNOME metadata bugs:
+**Maven Dependency Role:**
+The `org.java-gi:gtk:0.15.0` Maven artifact provides the **runtime foundation classes** that generated JNI bindings depend on. These are hand-written Java classes that handle the interop between JVM and native GNOME libraries — they're not generated from GIR files. Key packages:
+- `org.javagi.base.*` — Core types (`Alias`, `Filename`, `GErrorException`, `Proxy`, `Out`, `Floating`)
+- `org.javagi.interop.*` — FFM/JNI layer (`Interop`, `Arena`, `MemoryCleaner`, `Platform`, `VarargsInvoker`)
+- `org.javagi.gobject.*` — GObject system (`InstanceCache`, `JavaClosure`, `SignalConnection`, `ValueUtil`, `BoxedUtil`)
+- `org.javagi.gio.*` — GIO adapters (`AutoCloseable`, `ListModelJavaList`, `ListIndexModel`)
+- `org.javagi.glib.*` — GLib collection types (`ByteArray`, `HashTable`, `List`, `SList`)
+
+**Why exclude `glib` and `gdkpixbuf` modules in `build.gradle.kts`:**
+We exclude these because we generate our own versions locally from GIR files via `generate_bindings.sh`. The Maven artifacts would conflict with our locally generated bindings (same class names, different implementations). The foundation classes (`org.javagi.*`) are shared across all modules — only the GNOME API wrappers (`org.gnome.*`) are module-specific.
+
+**Why use Maven for GTK (`org.java-gi:gtk:0.15.0`) instead of generating locally:**
+The java-gi generator crashes with a `NullPointerException` in `DocGenerator` when generating bindings for `Gtk-4.0.gir` due to missing documentation strings in standard Linux distribution GIR files. The Maven-provided GTK classes are pre-built and compatible with our locally-generated GIO bindings — no conflicts or performance penalties. This is a generator bug workaround, not an architectural choice.
+**Local Patched Generator (`ref/java-gi_patched`):**
+
+  We maintain a local clone of the `java-gi` repository in `ref/java-gi_patched`. We have applied critical AST-level patches to the generator source code to fix upstream GNOME metadata bugs:
 1. **Async Safety Patch:** Automatically detects `_async` functions and forces their callbacks to use `Scope.ASYNC` (Global Arena), preventing fatal `SIGSEGV` crashes (like the one in `moveAsync`) caused by incorrect `scope="call"` annotations in GNOME's GIR files.
 2. **Override Priority Patch:** Allows CLI-provided `.gir` files to correctly override the generator's internal bundled `gir-files.zip`.
 
@@ -182,6 +196,11 @@ Read them when working on the corresponding topic.
 - **Bash is a helpful assistant for tests.** Use bash scripts to orchestrate complex real-filesystem states (deep trees, symlinks, permissions) before running tests, rather than writing 50 lines of Kotlin setup.
 - **Configure Gradle for better output.** Add `testLogging { events("failed"); exceptionFormat = FULL }` to `build.gradle.kts` to print exact failures and stack traces to the console.
 - **Stop over-filtering Gradle output.** Do NOT pipe `./gradlew test` to `| tail` or `| grep`. It throws away the exact stack traces we configured Gradle to print.
+- **Use `scripts/filter_gradle.py` for test output filtering.** It prints `.` for PASSED tests and full error blocks for FAILED tests, avoiding token-heavy raw output:
+  ```bash
+  ./gradlew test 2>&1 | python3 scripts/filter_gradle.py
+  ./gradlew test --tests "ClassName" 2>&1 | python3 scripts/filter_gradle.py
+  ```
 - **The Balanced Testing Workflow:**
   - For quick checks: `./gradlew test --tests "SpecificTest"` (Targeted, 7s vs 48s).
   - For full suite: `./gradlew test` (Without `--continue`). It stops at the *first* error and prints the exact stack trace, preventing 50-error spam.
