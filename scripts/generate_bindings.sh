@@ -34,13 +34,19 @@ mkdir -p "$TEMP_GEN"
 # Patch 1: Automatically upgrades scope="call" to "async" for _async functions.
 # Patch 2: Allows CLI-provided GIR files to override bundled ones.
 
+# Prefer submodule GIR files (guaranteed compatible), fall back to system
+GIR_DIR="${PROJECT_DIR}/ref/java-gi_patched/ext/gir-files/linux"
+if [ ! -f "$GIR_DIR/GLib-2.0.gir" ]; then
+    GIR_DIR="/usr/share/gir-1.0"
+fi
+
 "$PATCHED_JAVA_GI" -S -s "Imbric Native Bindings" \
     -d org.gnome \
     -o "$TEMP_GEN" \
-    /usr/share/gir-1.0/GLib-2.0.gir \
-    /usr/share/gir-1.0/GObject-2.0.gir \
-    /usr/share/gir-1.0/Gio-2.0.gir \
-    /usr/share/gir-1.0/GdkPixbuf-2.0.gir
+    "$GIR_DIR/GLib-2.0.gir" \
+    "$GIR_DIR/GObject-2.0.gir" \
+    "$GIR_DIR/Gio-2.0.gir" \
+    "$GIR_DIR/GdkPixbuf-2.0.gir"
 
 echo "==> [4/5] Flattening & Merging Structure"
 # Move all library-specific org/gnome subfolders into the shared root
