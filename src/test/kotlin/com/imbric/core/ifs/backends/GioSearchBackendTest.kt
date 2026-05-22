@@ -1,3 +1,4 @@
+@file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.ifs.backends
 
 import com.imbric.core.ifs.BackendCapabilities
@@ -16,6 +17,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.time.Instant
+import kotlin.uuid.ExperimentalUuidApi
 
 class GioSearchBackendTest {
 
@@ -27,6 +29,7 @@ class GioSearchBackendTest {
             private set
 
         override suspend fun canPerform(action: FileAction, uri: String): Boolean = true
+        override fun getCapabilities(uri: String): BackendCapabilities = BackendCapabilities(Locality.LOCAL, LatencyProfile.LOW)
         override fun list(uri: String): Flow<FileInfo> = flowOf()
         override suspend fun getMetadata(uri: String): Result<FileInfo> = Result.failure(Exception("Not implemented"))
         override fun exists(uri: String): Boolean = false
@@ -50,6 +53,7 @@ class GioSearchBackendTest {
     fun testFallbackIsCalledWhenTrackerFails() = runTest {
         val mockFileInfo = FileInfo(
             uri = "file:///tmp/test.txt",
+            path = "/tmp/test.txt",
             name = "test.txt",
             size = 123L,
             isDirectory = false,
