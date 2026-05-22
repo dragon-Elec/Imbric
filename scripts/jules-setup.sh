@@ -1,19 +1,22 @@
 #!/bin/bash
 # jules-setup.sh — Environment setup for Jules bot (Google's AI coding agent)
 #
+# Usage: Paste into Jules UI → Configuration → Initial Setup:
+#   bash scripts/jules-setup.sh
+#
+# Then click "Run and Snapshot" to cache the environment.
+#
 # Jules runs in a sandboxed Ubuntu VM with:
 #   - JDK 21 pre-installed (we need 25)
 #   - Gradle 8.8 on PATH (we need 9.5.1 via wrapper)
 #   - Network: GitHub/Maven OK, services.gradle.org may be slow
 #
-# This script is designed to be pasted into the Jules UI
-# (Configuration → Initial Setup) and then "Run and Snapshot".
-#
-# It handles:
+# This script handles:
 #   1. JDK 25 installation
 #   2. Building the patched java-gi generator from the submodule
 #   3. Generating GNOME 46 bindings
 #   4. Compiling the project
+#   5. Cleaning the working tree (Jules rejects dirty state)
 
 set -e
 
