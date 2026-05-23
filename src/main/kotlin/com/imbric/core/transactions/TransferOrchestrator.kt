@@ -24,21 +24,20 @@ class TransferOrchestrator(
         onManualConflict: suspend (ConflictContext) -> ConflictResponse = { ConflictResponse(ConflictAction.Prompt) }
     ): Flow<TransactionEvent> = channelFlow {
         val tid = transactionManager.startTransaction("Batch $mode to $destDir")
-        val stickyDecisions = mutableMapOf<ConflictType, ConflictAction>()
-        val mutex = Mutex()
-        val validatedOps = Collections.synchronizedList(mutableListOf<ValidatedOp>())
+
+        val session = PlanningSession(mode, policy, onManualConflict)
 
         // 1. Parallel Pre-flight Planning
         withContext(Dispatchers.IO) {
             sources.map { src ->
                 async {
-                    planOperation(src, destDir, mode, policy, onManualConflict, stickyDecisions, mutex, validatedOps)
+                    session.planOperation(src, destDir)
                 }
             }.awaitAll()
         }
         
         // 2. Dispatch to TransactionManager
-        validatedOps.forEach { op ->
+        session.validatedOps.forEach { op ->
             transactionManager.addOperation(
                 tid, 
                 mode, 
@@ -61,7 +60,7 @@ class TransferOrchestrator(
         }
         
         val jitResolver: suspend (ConflictContext) -> ConflictResponse = { context ->
-            getOrPromptDecision(context, onManualConflict, stickyDecisions, mutex)
+            session.getOrPromptDecision(context)
         }
 
         transactionManager.commitTransaction(tid, jitResolver, policy)
@@ -73,89 +72,100 @@ class TransferOrchestrator(
         }
     }
 
-    private suspend fun planOperation(
-        src: String,
-        destParent: String,
-        mode: String,
-        policy: SyncPolicy,
-        onManualConflict: suspend (ConflictContext) -> ConflictResponse,
-        stickyDecisions: MutableMap<ConflictType, ConflictAction>,
-        mutex: Mutex,
-        validatedOps: MutableList<ValidatedOp>
+    private inner class PlanningSession(
+        private val mode: String,
+        private val policy: SyncPolicy,
+        private val onManualConflict: suspend (ConflictContext) -> ConflictResponse
     ) {
-        val fileName = src.uriName
-        val dest = destParent.uriJoin(fileName)
-        
-        val srcBackend = backendRegistry.getIo(src) ?: return
-        val destBackend = backendRegistry.getIo(dest) ?: return
-        
-        val srcMeta = srcBackend.getMetadata(src).getOrNull() ?: return
-        val destExists = destBackend.exists(dest)
-        
-        if (!destExists) {
-            validatedOps.add(ValidatedOp(src, dest, false))
-            return
-        }
+        val stickyDecisions = mutableMapOf<ConflictType, ConflictAction>()
+        val stateMutex = Mutex()
+        val promptMutex = Mutex()
+        val validatedOps = Collections.synchronizedList(mutableListOf<ValidatedOp>())
 
-        val destMeta = destBackend.getMetadata(dest).getOrNull() ?: return
-        val conflictType = XferArbiter.classifyConflict(srcMeta, destMeta)
-        
-        // Check sticky decisions first under lock
-        var action: ConflictAction = mutex.withLock {
-            stickyDecisions[conflictType] ?: XferArbiter.decide(srcMeta, destMeta, policy)
-        }
-        
-        if (action is ConflictAction.Prompt) {
-            val context = ConflictContext(src, dest, srcMeta, destMeta, conflictType)
-            val response = getOrPromptDecision(context, onManualConflict, stickyDecisions, mutex)
-            action = response.action
-        }
-        
-        when (action) {
-            is ConflictAction.Overwrite -> validatedOps.add(ValidatedOp(src, dest, true))
-            is ConflictAction.AutoRename -> validatedOps.add(ValidatedOp(src, dest, false, true))
-            is ConflictAction.Rename -> {
-                val newName = action.newName
-                val newDest = destParent.uriJoin(newName)
-                validatedOps.add(ValidatedOp(src, newDest, false))
+        suspend fun planOperation(src: String, destParent: String) {
+            val fileName = src.uriName
+            val dest = destParent.uriJoin(fileName)
+
+            val srcBackend = backendRegistry.getIo(src) ?: return
+            val destBackend = backendRegistry.getIo(dest) ?: return
+
+            val srcMeta = srcBackend.getMetadata(src).getOrNull() ?: return
+            val destExists = destBackend.exists(dest)
+
+            if (!destExists) {
+                validatedOps.add(ValidatedOp(src, dest, false))
+                return
             }
-            is ConflictAction.Merge -> {
-                // Recursive Merge: plan all children of source into destination
-                srcBackend.list(src).collect { child ->
 
-                    planOperation(child.path, dest, mode, policy, onManualConflict, stickyDecisions, mutex, validatedOps)
+            val destMeta = destBackend.getMetadata(dest).getOrNull() ?: return
+            val conflictType = XferArbiter.classifyConflict(srcMeta, destMeta)
+            val conflictContext = ConflictContext(src, dest, srcMeta, destMeta, conflictType)
+
+            val action = determineAction(conflictContext)
+            applyAction(action, conflictContext, destParent, srcBackend)
+        }
+
+        private suspend fun determineAction(context: ConflictContext): ConflictAction {
+            var action: ConflictAction = stateMutex.withLock {
+                stickyDecisions[context.type] ?: XferArbiter.decide(context.srcMeta, context.destMeta, policy)
+            }
+
+            if (action is ConflictAction.Prompt) {
+                val response = getOrPromptDecision(context)
+                action = response.action
+            }
+            return action
+        }
+
+        private suspend fun applyAction(
+            action: ConflictAction,
+            context: ConflictContext,
+            destParent: String,
+            srcBackend: IOBackend
+        ) {
+            val src = context.src
+            val dest = context.dest
+
+            when (action) {
+                is ConflictAction.Overwrite -> validatedOps.add(ValidatedOp(src, dest, true))
+                is ConflictAction.AutoRename -> validatedOps.add(ValidatedOp(src, dest, false, true))
+                is ConflictAction.Rename -> {
+                    val newDest = destParent.uriJoin(action.newName)
+                    validatedOps.add(ValidatedOp(src, newDest, false))
                 }
+                is ConflictAction.Merge -> {
+                    // Recursive Merge: plan all children of source into destination
+                    srcBackend.list(src).collect { child ->
+                        planOperation(child.path, dest)
+                    }
+                }
+                is ConflictAction.Skip -> { /* Do nothing */ }
+                is ConflictAction.Cancel -> throw CancellationException("Operation cancelled by user")
+                else -> { /* Prompt already handled or unexpected action */ }
             }
-            is ConflictAction.Skip -> { /* Do nothing */ }
-            is ConflictAction.Cancel -> throw CancellationException("Operation cancelled by user")
-            else -> { /* Prompt already handled or unexpected action */ }
-        }
-    }
-    
-    private suspend fun getOrPromptDecision(
-        context: ConflictContext,
-        onManualConflict: suspend (ConflictContext) -> ConflictResponse,
-        stickyDecisions: MutableMap<ConflictType, ConflictAction>,
-        mutex: Mutex
-    ): ConflictResponse {
-        val existing = mutex.withLock { stickyDecisions[context.type] }
-        if (existing != null) {
-            return ConflictResponse(existing)
         }
 
-        val response = onManualConflict(context)
-        if (response.applyToAll) {
-            return mutex.withLock {
-                val doubleCheck = stickyDecisions[context.type]
-                if (doubleCheck == null) {
-                    stickyDecisions[context.type] = response.action
-                    response
-                } else {
-                    ConflictResponse(doubleCheck)
+        suspend fun getOrPromptDecision(context: ConflictContext): ConflictResponse {
+            val existing = stateMutex.withLock { stickyDecisions[context.type] }
+            if (existing != null) {
+                return ConflictResponse(existing)
+            }
+
+            return promptMutex.withLock {
+                val doubleCheck = stateMutex.withLock { stickyDecisions[context.type] }
+                if (doubleCheck != null) {
+                    return@withLock ConflictResponse(doubleCheck)
                 }
+
+                val response = onManualConflict(context)
+                if (response.applyToAll) {
+                    stateMutex.withLock {
+                        stickyDecisions[context.type] = response.action
+                    }
+                }
+                response
             }
         }
-        return response
     }
 
     private data class ValidatedOp(val src: String, val dest: String, val overwrite: Boolean, val autoRename: Boolean = false)
