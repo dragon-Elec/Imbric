@@ -21,27 +21,29 @@ object GioTypeMappers {
     ): FileInfo {
         val uri = gfile.uri?.toString() ?: ""
         val name = gioInfo.name?.toString() ?: ""
+        val pathType = determinePathType(uri)
+        val nativeId = getNativeId(gioInfo)
         
         return FileInfo(
-            nativeId = getNativeId(gioInfo),
+            nativeId = nativeId,
             name = name,
             path = gfile.path?.toString() ?: uri,
             uri = uri,
-            pathType = determinePathType(uri),
+            pathType = pathType,
             displayName = gioInfo.displayName?.toString() ?: name,
             isDirectory = gioInfo.fileType == org.gnome.gio.FileType.DIRECTORY,
             isSymlink = gioInfo.isSymlink,
-            symlinkTarget = gioInfo.mappedSymlinkTarget,
+            symlinkTarget = if (gioInfo.isSymlink) gioInfo.symlinkTarget?.toString() else null,
             size = gioInfo.size,
-            mimeType = gioInfo.mappedMimeType,
-            modifiedTime = gioInfo.mappedModifiedTime,
+            mimeType = gioInfo.contentType?.toString() ?: "application/octet-stream",
+            modifiedTime = gioInfo.modificationDateTime?.let { Instant.fromEpochSeconds(it.toUnix()) },
             accessedTime = getTimestamp(gioInfo, "time::access"),
             createdTime = getTimestamp(gioInfo, "time::created"),
             isHidden = gioInfo.isHidden,
             isReadable = gioInfo.getAttributeBoolean("access::can-read"),
             isWritable = gioInfo.getAttributeBoolean("access::can-write"),
             isExecutable = gioInfo.getAttributeBoolean("access::can-execute"),
-            permissions = gioInfo.mappedPermissions,
+            permissions = gioInfo.getAttributeUint32("unix::mode").takeIf { it > 0 }?.toString(8) ?: "",
             owner = gioInfo.getAttributeString("owner::user") ?: "",
             group = gioInfo.getAttributeString("owner::group") ?: "",
             iconName = getIconName(gioInfo),
@@ -71,18 +73,6 @@ object GioTypeMappers {
             attributes = extractAttributes(gioInfo)
         )
     }
-
-    private val org.gnome.gio.FileInfo.mappedSymlinkTarget: String?
-        get() = if (isSymlink) symlinkTarget?.toString() else null
-
-    private val org.gnome.gio.FileInfo.mappedMimeType: String
-        get() = contentType?.toString() ?: "application/octet-stream"
-
-    private val org.gnome.gio.FileInfo.mappedModifiedTime: Instant?
-        get() = modificationDateTime?.let { Instant.fromEpochSeconds(it.toUnix()) }
-
-    private val org.gnome.gio.FileInfo.mappedPermissions: String
-        get() = getAttributeUint32("unix::mode").takeIf { it > 0 }?.toString(8) ?: ""
 
     private fun extractAttributes(gioInfo: org.gnome.gio.FileInfo): Map<String, Any?> {
         val attributeMap = mutableMapOf<String, Any?>()
