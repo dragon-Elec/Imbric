@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
+import kotlin.uuid.Uuid
 import kotlin.uuid.ExperimentalUuidApi
 import org.gnome.gio.File
 import org.gnome.gio.FileQueryInfoFlags
