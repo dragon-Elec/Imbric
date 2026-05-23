@@ -24,13 +24,19 @@ class GioDesktopEnvironment : DesktopEnvironment {
     private val volumeMonitor: VolumeMonitor by lazy { VolumeMonitor.get() }
 
     override fun observeDrives(): Flow<List<DesktopDrive>> = callbackFlow {
-        val updateDrives = {
-            launch {
+        val triggerChannel = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+
+        launch {
+            for (trigger in triggerChannel) {
                 val deferreds = volumeMonitor.connectedDrives.mapNotNull { gioDrive ->
                     gioDrive?.let { async { mapDrive(it) } }
                 }
                 send(deferreds.awaitAll())
             }
+        }
+
+        val updateDrives = {
+            triggerChannel.trySend(Unit)
             Unit
         }
 
