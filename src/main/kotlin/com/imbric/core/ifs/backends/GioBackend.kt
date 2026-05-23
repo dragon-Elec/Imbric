@@ -790,21 +790,19 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
     override suspend fun enrichMetadata(info: FileInfo): FileInfo = withContext(Dispatchers.IO) {
         var currentInfo = info
-        val attrs = currentInfo.attributes.toMutableMap()
-        
-        enrichImageMetadata(currentInfo, attrs)
-        currentInfo = enrichDesktopMetadata(currentInfo, attrs)
-
-        currentInfo.copy(attributes = attrs)
+        currentInfo = enrichImageMetadata(currentInfo)
+        currentInfo = enrichDesktopMetadata(currentInfo)
+        currentInfo
     }
 
-    private suspend fun enrichImageMetadata(info: FileInfo, attrs: MutableMap<String, Any?>) {
+    private suspend fun enrichImageMetadata(info: FileInfo): FileInfo {
         val mime = info.mimeType.lowercase()
         val isImage = mime.startsWith("image/") || mime.endsWith("/webp") || mime.endsWith("/heic") || mime.endsWith("/avif")
         
         if (!info.isDirectory && isImage) {
             val bytesResult = readHeader(info.uri, 65536)
-            bytesResult.onSuccess { bytes ->
+            if (bytesResult.isSuccess) {
+                val bytes = bytesResult.getOrThrow()
                 var width = 0
                 var height = 0
                 try {
@@ -817,21 +815,26 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                     try { loader.close() } catch (e: Exception) { }
                     
                     if (width > 0 && height > 0) {
-                        attrs["std::dimensions"] = "${width}x${height}"
-                        attrs["std::aspect-ratio"] = width.toDouble() / height
+                        val newAttrs = mapOf(
+                            "std::dimensions" to "${width}x${height}",
+                            "std::aspect-ratio" to width.toDouble() / height
+                        )
+                        return info.copy(attributes = info.attributes + newAttrs)
                     }
                 } catch (e: Exception) {
                     // Ignore parsing errors for partial/corrupt images
                 }
             }
         }
+        return info
     }
 
-    private suspend fun enrichDesktopMetadata(info: FileInfo, attrs: MutableMap<String, Any?>): FileInfo {
+    private suspend fun enrichDesktopMetadata(info: FileInfo): FileInfo {
         var currentInfo = info
         if (currentInfo.name.endsWith(".desktop")) {
             val bytesResult = readHeader(currentInfo.uri, 1024 * 1024) // up to 1MB
-            bytesResult.onSuccess { bytes ->
+            if (bytesResult.isSuccess) {
+                val bytes = bytesResult.getOrThrow()
                 try {
                     val keyFile = KeyFile()
                     // Convert bytes to string (assuming UTF-8 for desktop files)
@@ -839,9 +842,10 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                     if (keyFile.loadFromData(content, content.length.toLong(), KeyFileFlags.NONE)) {
                         val group = "Desktop Entry"
                         if (keyFile.hasGroup(group)) {
+                            val newAttrs = mutableMapOf<String, Any?>()
                             try {
                                 val type = keyFile.getString(group, "Type")
-                                attrs["desktop::type"] = type
+                                newAttrs["desktop::type"] = type
                                 
                                 val name = keyFile.getString(group, "Name")
                                 if (name != null) {
@@ -854,13 +858,16 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                                 }
                                 
                                 if (keyFile.hasKey(group, "Exec")) {
-                                    attrs["desktop::exec"] = keyFile.getString(group, "Exec")
+                                    newAttrs["desktop::exec"] = keyFile.getString(group, "Exec")
                                 }
                                 if (keyFile.hasKey(group, "URL")) {
-                                    attrs["desktop::url"] = keyFile.getString(group, "URL")
+                                    newAttrs["desktop::url"] = keyFile.getString(group, "URL")
                                 }
                             } catch (e: Exception) {
                                 // Missing keys are fine
+                            }
+                            if (newAttrs.isNotEmpty()) {
+                                currentInfo = currentInfo.copy(attributes = currentInfo.attributes + newAttrs)
                             }
                         }
                     }
