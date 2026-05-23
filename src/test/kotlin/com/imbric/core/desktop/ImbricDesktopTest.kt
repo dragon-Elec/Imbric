@@ -4,20 +4,22 @@ import com.imbric.core.ifs.BackendRegistry
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import org.gnome.gtk.Gtk
+import org.gnome.gio.Vfs
 
 class ImbricDesktopTest {
     @Test
     fun testInitializeRegistersExpectedSchemes() {
+        if (!Gtk.isInitialized()) Gtk.init()
+
         ImbricDesktop.initialize()
 
-        // Verify that the schemes were registered correctly.
-        // Even though getRegisteredSchemes() exists, we can also verify by fetching them.
         assertNotNull(BackendRegistry.getIo("file://"))
         assertNotNull(BackendRegistry.getIo("trash://"))
         assertNotNull(BackendRegistry.getIo("recent://"))
         assertNotNull(BackendRegistry.getIo("search://"))
 
-        val vfs = org.gnome.gio.Vfs.getDefault()
+        val vfs = Vfs.getDefault()
         val supported = vfs.supportedUriSchemes?.toList() ?: emptyList()
 
         if (supported.contains("smb")) {
