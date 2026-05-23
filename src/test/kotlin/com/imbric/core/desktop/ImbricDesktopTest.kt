@@ -14,18 +14,31 @@ class ImbricDesktopTest {
         // Even though getRegisteredSchemes() exists, we can also verify by fetching them.
         assertNotNull(BackendRegistry.getIo("file://"))
         assertNotNull(BackendRegistry.getIo("trash://"))
-        assertNotNull(BackendRegistry.getIo("smb://"))
-        assertNotNull(BackendRegistry.getIo("sftp://"))
         assertNotNull(BackendRegistry.getIo("recent://"))
         assertNotNull(BackendRegistry.getIo("search://"))
+
+        val vfs = org.gnome.gio.Vfs.getDefault()
+        val supported = vfs.supportedUriSchemes?.toList() ?: emptyList()
+
+        if (supported.contains("smb")) {
+            assertNotNull(BackendRegistry.getIo("smb://"))
+        }
+        if (supported.contains("sftp")) {
+            assertNotNull(BackendRegistry.getIo("sftp://"))
+        }
 
         // Also verify with getRegisteredSchemes if we want
         val registeredSchemes = BackendRegistry.getRegisteredSchemes()
         assertTrue(registeredSchemes.contains("file"))
         assertTrue(registeredSchemes.contains("trash"))
-        assertTrue(registeredSchemes.contains("smb"))
-        assertTrue(registeredSchemes.contains("sftp"))
         assertTrue(registeredSchemes.contains("recent"))
         assertTrue(registeredSchemes.contains("search"))
+
+        if (supported.contains("smb")) {
+            assertTrue(registeredSchemes.contains("smb"))
+        }
+        if (supported.contains("sftp")) {
+            assertTrue(registeredSchemes.contains("sftp"))
+        }
     }
 }
