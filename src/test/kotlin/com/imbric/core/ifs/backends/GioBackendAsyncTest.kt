@@ -6,6 +6,7 @@ import com.imbric.core.models.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
+import com.imbric.core.testing.BashHelper
 import org.gnome.gio.File
 import org.gnome.gio.FileCopyFlags
 import org.gnome.glib.GLib
@@ -31,12 +32,12 @@ class GioBackendAsyncTest {
     @Test
     fun testCopyAsync(@TempDir tempDir: Path) = runTest {
         TestUtils.withGlibPump {
-            val srcFile = java.io.File(tempDir.toFile(), "src.txt")
-            srcFile.writeText("async copy test")
-            val destFile = java.io.File(tempDir.toFile(), "dest.txt")
+            BashHelper.runScript("echo -n 'async copy test' > src.txt", tempDir.toFile())
+            val srcUri = "file://${tempDir.toAbsolutePath()}/src.txt"
+            val destUri = "file://${tempDir.toAbsolutePath()}/dest.txt"
 
-            val gSrc = File.newForUri("file://${srcFile.absolutePath}")
-            val gDest = File.newForUri("file://${destFile.absolutePath}")
+            val gSrc = File.newForUri(srcUri)
+            val gDest = File.newForUri(destUri)
 
             GioCoroutineBridge.awaitGioAsync(
                 block = { cancellable, callback ->
@@ -47,6 +48,7 @@ class GioBackendAsyncTest {
                 }
             )
 
+            val destFile = java.io.File(tempDir.toFile(), "dest.txt")
             assertTrue(destFile.exists(), "Destination file should exist after async copy")
             assertEquals("async copy test", destFile.readText())
         }
@@ -55,12 +57,12 @@ class GioBackendAsyncTest {
     @Test
     fun testMoveAsync(@TempDir tempDir: Path) = runTest {
         withGlibPump {
-            val srcFile = java.io.File(tempDir.toFile(), "src_move.txt")
-            srcFile.writeText("async move test")
-            val destFile = java.io.File(tempDir.toFile(), "dest_move.txt")
+            BashHelper.runScript("echo -n 'async move test' > src_move.txt", tempDir.toFile())
+            val srcUri = "file://${tempDir.toAbsolutePath()}/src_move.txt"
+            val destUri = "file://${tempDir.toAbsolutePath()}/dest_move.txt"
 
-            val gSrc = File.newForUri("file://${srcFile.absolutePath}")
-            val gDest = File.newForUri("file://${destFile.absolutePath}")
+            val gSrc = File.newForUri(srcUri)
+            val gDest = File.newForUri(destUri)
 
             GioCoroutineBridge.awaitGioAsync(
                 block = { cancellable, callback ->
@@ -71,7 +73,9 @@ class GioBackendAsyncTest {
                 }
             )
 
+            val srcFile = java.io.File(tempDir.toFile(), "src_move.txt")
             assertFalse(srcFile.exists(), "Source file should not exist after async move")
+            val destFile = java.io.File(tempDir.toFile(), "dest_move.txt")
             assertTrue(destFile.exists(), "Destination file should exist after async move")
             assertEquals("async move test", destFile.readText())
         }
@@ -80,12 +84,12 @@ class GioBackendAsyncTest {
     @Test
     fun testCopyWithProgress(@TempDir tempDir: Path) = runTest {
         withGlibPump {
-            val srcFile = java.io.File(tempDir.toFile(), "src_large.txt")
-            srcFile.writeBytes(ByteArray(1024 * 100) { it.toByte() }) // 100KB
-            val destFile = java.io.File(tempDir.toFile(), "dest_large.txt")
+            BashHelper.runScript("dd if=/dev/zero of=src_large.txt bs=1024 count=100", tempDir.toFile())
+            val srcUri = "file://${tempDir.toAbsolutePath()}/src_large.txt"
+            val destUri = "file://${tempDir.toAbsolutePath()}/dest_large.txt"
 
-            val gSrc = File.newForUri("file://${srcFile.absolutePath}")
-            val gDest = File.newForUri("file://${destFile.absolutePath}")
+            val gSrc = File.newForUri(srcUri)
+            val gDest = File.newForUri(destUri)
 
             var progressCalled = false
             var lastCurrent = 0L
@@ -104,6 +108,7 @@ class GioBackendAsyncTest {
                 }
             )
 
+            val destFile = java.io.File(tempDir.toFile(), "dest_large.txt")
             assertTrue(destFile.exists(), "Destination file should exist after async copy")
             assertTrue(progressCalled, "Progress callback should have been called")
             assertTrue(lastCurrent > 0, "Progress should have reported bytes copied")
@@ -115,21 +120,19 @@ class GioBackendAsyncTest {
         withGlibPump {
             val backend = GioBackend()
             
-            // Create a deep tree: root/sub/file.txt
-            val rootDir = java.io.File(tempDir.toFile(), "root")
-            rootDir.mkdir()
-            val subDir = java.io.File(rootDir, "sub")
-            subDir.mkdir()
-            val file = java.io.File(subDir, "file.txt")
-            file.writeText("recursive move test")
+            BashHelper.runScript("""
+                mkdir -p root/sub
+                echo -n "recursive move test" > root/sub/file.txt
+            """.trimIndent(), tempDir.toFile())
             
-            val destDir = java.io.File(tempDir.toFile(), "root_moved")
+            val rootUri = "file://${tempDir.toAbsolutePath()}/root"
+            val destUri = "file://${tempDir.toAbsolutePath()}/root_moved"
             
             val job = FileJob(
                 id = Uuid.random(),
                 opType = "move",
-                source = "file://${rootDir.absolutePath}",
-                dest = "file://${destDir.absolutePath}"
+                source = rootUri,
+                dest = destUri
             )
             
             // Execute move
@@ -139,7 +142,10 @@ class GioBackendAsyncTest {
             }
             
             // Verify
+            val rootDir = java.io.File(tempDir.toFile(), "root")
             assertFalse(rootDir.exists(), "Source root should be gone")
+            
+            val destDir = java.io.File(tempDir.toFile(), "root_moved")
             assertTrue(destDir.exists(), "Destination root should exist")
             val movedFile = java.io.File(destDir, "sub/file.txt")
             assertTrue(movedFile.exists(), "Nested file should exist in destination")
@@ -156,29 +162,29 @@ class GioBackendAsyncTest {
         withGlibPump {
             val backend = GioBackend()
             
-            // Create files
-            val rootDir = tempDir.toFile()
-            java.io.File(rootDir, "match_1.txt").writeText("content")
-            java.io.File(rootDir, "match_2.log").writeText("content")
-            java.io.File(rootDir, "other.txt").writeText("content")
-            
-            val subDir = java.io.File(rootDir, "sub")
-            subDir.mkdir()
-            java.io.File(subDir, "match_3.txt").writeText("content")
+            BashHelper.runScript("""
+                echo -n "content" > match_1.txt
+                echo -n "content" > match_2.log
+                echo -n "content" > other.txt
+                mkdir sub
+                echo -n "content" > sub/match_3.txt
+            """.trimIndent(), tempDir.toFile())
+
+            val rootUri = "file://${tempDir.toAbsolutePath()}"
 
             // 1. Basic search
-            val query1 = VfsQuery(text = "match", rootUri = "file://${rootDir.absolutePath}")
+            val query1 = VfsQuery(text = "match", rootUri = rootUri)
             val results1 = backend.search(query1).toList()
             assertEquals(3, results1.size)
 
             // 2. MIME filter
-            val query2 = VfsQuery(text = "match", rootUri = "file://${rootDir.absolutePath}", mimeFilter = "text/plain")
+            val query2 = VfsQuery(text = "match", rootUri = rootUri, mimeFilter = "text/plain")
             val results2 = backend.search(query2).toList()
             // Note: .log might be text/plain or text/x-log depending on system
             assertTrue(results2.size >= 2, "Should find at least 2 text files")
 
             // 3. Non-recursive
-            val query3 = VfsQuery(text = "match", rootUri = "file://${rootDir.absolutePath}", recursive = false)
+            val query3 = VfsQuery(text = "match", rootUri = rootUri, recursive = false)
             val results3 = backend.search(query3).toList()
             assertEquals(2, results3.size)
         }

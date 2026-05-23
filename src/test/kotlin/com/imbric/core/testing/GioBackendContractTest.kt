@@ -2,7 +2,6 @@ package com.imbric.core.testing
 
 import com.imbric.core.ifs.IOBackend
 import com.imbric.core.ifs.backends.GioBackend
-import java.io.File
 
 class GioBackendContractTest : IOBackendContractTest() {
     private val testDir = "/tmp/imbric-gio-contract-test"

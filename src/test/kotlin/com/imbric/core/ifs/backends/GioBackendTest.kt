@@ -8,8 +8,8 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.io.TempDir
+import com.imbric.core.testing.BashHelper
 import org.gnome.glib.MainContext
-import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.*
@@ -29,17 +29,14 @@ class GioBackendTest {
     fun testPhysicalListAndExists(@TempDir tempDir: Path) = runTest {
         TestUtils.withGlibPump {
             val dirUri = "file://${tempDir.toAbsolutePath()}"
-            val file1 = java.io.File(tempDir.toFile(), "alpha.txt")
-            val file2 = java.io.File(tempDir.toFile(), "beta.txt")
+            BashHelper.runScript("""
+                echo -n "hello" > alpha.txt
+                echo -n "world" > beta.txt
+                mkdir subdir
+            """.trimIndent(), tempDir.toFile())
 
-            file1.writeText("hello")
-            file2.writeText("world")
-
-            val subDir = java.io.File(tempDir.toFile(), "subdir")
-            subDir.mkdir()
-
-            assertTrue(backend.exists("file://${file1.absolutePath}"))
-            assertFalse(backend.exists("file://${tempDir.toAbsolutePath()}/missing.txt"))
+            assertTrue(backend.exists("$dirUri/alpha.txt"))
+            assertFalse(backend.exists("$dirUri/missing.txt"))
 
             val children = backend.list(dirUri).toList()
 
@@ -54,6 +51,7 @@ class GioBackendTest {
 
             val alphaInfo = children.find { it.name == "alpha.txt" }
             assertTrue(alphaInfo?.isDirectory == false)
+            // echo -n gives exactly 5 bytes
             assertEquals(5L, alphaInfo?.size)
         }
     }
@@ -61,9 +59,8 @@ class GioBackendTest {
     @Test
     fun testPhysicalMetadata(@TempDir tempDir: Path) = runTest {
         withGlibPump {
-            val file = java.io.File(tempDir.toFile(), "metadata_target.txt")
-            file.writeText("metadata test content")
-            val fileUri = "file://${file.absolutePath}"
+            BashHelper.runScript("echo -n 'metadata test content' > metadata_target.txt", tempDir.toFile())
+            val fileUri = "file://${tempDir.toAbsolutePath()}/metadata_target.txt"
 
             val result = backend.getMetadata(fileUri)
             assertTrue(result.isSuccess)
@@ -80,13 +77,12 @@ class GioBackendTest {
     @Test
     fun testPhysicalSymlinkMetadata(@TempDir tempDir: Path) = runTest {
         withGlibPump {
-            val target = java.io.File(tempDir.toFile(), "target.txt")
-            target.writeText("target")
+            BashHelper.runScript("""
+                echo -n "target" > target.txt
+                ln -s target.txt link.txt
+            """.trimIndent(), tempDir.toFile())
 
-            val link = tempDir.resolve("link.txt")
-            Files.createSymbolicLink(link, target.toPath())
-
-            val linkUri = "file://${link.toAbsolutePath()}"
+            val linkUri = "file://${tempDir.toAbsolutePath()}/link.txt"
             val result = backend.getMetadata(linkUri)
 
             assertTrue(result.isSuccess)
@@ -101,12 +97,14 @@ class GioBackendTest {
     @Test
     fun testRecursiveCopy(@TempDir tempDir: Path) = runTest {
         withGlibPump {
+            BashHelper.runScript("""
+                mkdir -p src/subdir
+                echo -n "hello" > src/file.txt
+                echo -n "world" > src/subdir/inner.txt
+            """.trimIndent(), tempDir.toFile())
+
             val src = tempDir.resolve("src")
             val dest = tempDir.resolve("dest")
-            Files.createDirectory(src)
-            Files.createDirectory(src.resolve("subdir"))
-            Files.writeString(src.resolve("file.txt"), "hello")
-            Files.writeString(src.resolve("subdir/inner.txt"), "world")
 
             val job = FileJob(
                 id = Uuid.random(),
@@ -117,22 +115,24 @@ class GioBackendTest {
 
             backend.copy(job).toList()
 
-            assertTrue(Files.exists(dest))
-            assertTrue(Files.exists(dest.resolve("file.txt")))
-            assertTrue(Files.exists(dest.resolve("subdir/inner.txt")))
-            assertEquals("hello", Files.readString(dest.resolve("file.txt")))
-            assertEquals("world", Files.readString(dest.resolve("subdir/inner.txt")))
+            assertTrue(dest.toFile().exists())
+            assertTrue(dest.resolve("file.txt").toFile().exists())
+            assertTrue(dest.resolve("subdir/inner.txt").toFile().exists())
+            assertEquals("hello", dest.resolve("file.txt").toFile().readText())
+            assertEquals("world", dest.resolve("subdir/inner.txt").toFile().readText())
         }
     }
 
     @Test
     fun testRecursiveMove(@TempDir tempDir: Path) = runTest {
         withGlibPump {
+            BashHelper.runScript("""
+                mkdir -p src/subdir
+                echo -n "hello" > src/file.txt
+            """.trimIndent(), tempDir.toFile())
+
             val src = tempDir.resolve("src")
             val dest = tempDir.resolve("dest")
-            Files.createDirectory(src)
-            Files.createDirectory(src.resolve("subdir"))
-            Files.writeString(src.resolve("file.txt"), "hello")
 
             val job = FileJob(
                 id = Uuid.random(),
@@ -143,20 +143,24 @@ class GioBackendTest {
 
             backend.move(job).toList()
 
-            assertTrue(Files.exists(dest))
-            assertTrue(Files.exists(dest.resolve("file.txt")))
-            assertTrue(Files.exists(dest.resolve("subdir")))
-            assertFalse(Files.exists(src), "Source directory should be deleted after move")
+            assertTrue(dest.toFile().exists())
+            assertTrue(dest.resolve("file.txt").toFile().exists())
+            assertTrue(dest.resolve("subdir").toFile().exists())
+            assertEquals("hello", dest.resolve("file.txt").toFile().readText())
+            assertFalse(src.toFile().exists(), "Source directory should be deleted after move")
         }
     }
 
     @Test
     fun testCopyConflictThrowsVfsException(@TempDir tempDir: Path) = runTest {
         withGlibPump {
+            BashHelper.runScript("""
+                echo -n "source" > src.txt
+                echo -n "destination" > dest.txt
+            """.trimIndent(), tempDir.toFile())
+
             val src = tempDir.resolve("src.txt")
             val dest = tempDir.resolve("dest.txt")
-            Files.writeString(src, "source")
-            Files.writeString(dest, "destination")
 
             val job = FileJob(
                 id = Uuid.random(),
