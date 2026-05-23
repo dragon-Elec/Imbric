@@ -31,7 +31,10 @@ class GioSearchBackendTest {
         override suspend fun canPerform(action: FileAction, uri: String): Boolean = true
         override fun getCapabilities(uri: String): BackendCapabilities = BackendCapabilities(Locality.LOCAL, LatencyProfile.LOW)
         override fun list(uri: String): Flow<FileInfo> = flowOf()
-        override suspend fun getMetadata(uri: String): Result<FileInfo> = Result.failure(Exception("Not implemented"))
+        override suspend fun getMetadata(uri: String): Result<FileInfo> {
+            val result = mockResults.find { it.uri == uri }
+            return if (result != null) Result.success(result) else Result.failure(Exception("Not found"))
+        }
         override fun exists(uri: String): Boolean = false
         override suspend fun readHeader(uri: String, size: Long): Result<ByteArray> = Result.failure(Exception("Not implemented"))
         override suspend fun copy(job: FileJob): Flow<TransferProgress> = flowOf()
@@ -72,6 +75,63 @@ class GioSearchBackendTest {
 
         assertEquals(1, results.size)
         assertEquals("test.txt", results[0].name)
+        assertEquals(true, mockFallback.searchCalled, "Fallback backend should have been called")
+    }
+
+    @Test
+    fun testTrackerSearchSuccess() = runTest {
+        val mockFileInfo = FileInfo(
+            uri = "file:///tmp/test.txt",
+            path = "/tmp/test.txt",
+            name = "test.txt",
+            size = 123L,
+            isDirectory = false,
+            mimeType = "text/plain"
+        )
+        val mockFallback = MockFallbackBackend(listOf(mockFileInfo))
+        val searchBackend = object : GioSearchBackend(fallback = mockFallback) {
+            override fun runTrackerSearch(query: VfsQuery): Flow<String> {
+                return flowOf("file:///tmp/test.txt")
+            }
+        }
+
+        val query = VfsQuery(text = "test", rootUri = "file:///tmp")
+
+        val results = searchBackend.search(query).toList()
+
+        assertEquals(1, results.size)
+        assertEquals("test.txt", results[0].name)
+        assertEquals(false, mockFallback.searchCalled, "Fallback backend should NOT have been called")
+    }
+
+    @Test
+    fun testTrackerSearchFailsDuringCollection() = runTest {
+        val mockFileInfo = FileInfo(
+            uri = "file:///tmp/test.txt",
+            path = "/tmp/test.txt",
+            name = "test.txt",
+            size = 123L,
+            isDirectory = false,
+            mimeType = "text/plain"
+        )
+        val mockFallback = MockFallbackBackend(listOf(mockFileInfo))
+        val searchBackend = object : GioSearchBackend(fallback = mockFallback) {
+            override fun runTrackerSearch(query: VfsQuery): Flow<String> = kotlinx.coroutines.flow.flow {
+                emit("file:///tmp/test.txt")
+                throw Exception("Failed during collection")
+            }
+        }
+
+        val query = VfsQuery(text = "test", rootUri = "file:///tmp")
+
+        val results = searchBackend.search(query).toList()
+
+        // Since it emits one before failing, but trackerSuccess becomes false
+        // it falls back to manual walk and emits from fallback.
+        // We will get one from the tracker, and one from the fallback.
+        assertEquals(2, results.size)
+        assertEquals("test.txt", results[0].name)
+        assertEquals("test.txt", results[1].name)
         assertEquals(true, mockFallback.searchCalled, "Fallback backend should have been called")
     }
 }
