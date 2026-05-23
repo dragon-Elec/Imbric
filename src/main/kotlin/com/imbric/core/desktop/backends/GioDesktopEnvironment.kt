@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import org.gnome.gio.*
 import org.gnome.glib.GLib
 import kotlin.coroutines.resume
@@ -22,8 +25,12 @@ class GioDesktopEnvironment : DesktopEnvironment {
 
     override fun observeDrives(): Flow<List<DesktopDrive>> = callbackFlow {
         val updateDrives = {
-            val drives = volumeMonitor.connectedDrives.mapNotNull { it?.let { mapDrive(it) } }
-            trySend(drives)
+            launch {
+                val deferreds = volumeMonitor.connectedDrives.mapNotNull { gioDrive ->
+                    gioDrive?.let { async { mapDrive(it) } }
+                }
+                send(deferreds.awaitAll())
+            }
             Unit
         }
 
@@ -176,7 +183,7 @@ class GioDesktopEnvironment : DesktopEnvironment {
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun mapDrive(gioDrive: org.gnome.gio.Drive): DesktopDrive {
+    private suspend fun mapDrive(gioDrive: org.gnome.gio.Drive): DesktopDrive {
         val volume = gioDrive.volumes.firstOrNull()
         val mount = volume?.mount
         val mountUri = mount?.root?.uri
@@ -185,13 +192,15 @@ class GioDesktopEnvironment : DesktopEnvironment {
         var free = 0L
         
         if (mountUri != null) {
-            try {
-                val gfile = org.gnome.gio.File.newForUri(mountUri)
-                val info = gfile.queryFilesystemInfo("filesystem::size,filesystem::free", null)
-                total = info.getAttributeUint64("filesystem::size")
-                free = info.getAttributeUint64("filesystem::free")
-            } catch (e: Exception) {
-                // Ignore FS info errors
+            withContext(Dispatchers.IO) {
+                try {
+                    val gfile = org.gnome.gio.File.newForUri(mountUri)
+                    val info = gfile.queryFilesystemInfo("filesystem::size,filesystem::free", null)
+                    total = info.getAttributeUint64("filesystem::size")
+                    free = info.getAttributeUint64("filesystem::free")
+                } catch (e: Exception) {
+                    // Ignore FS info errors
+                }
             }
         }
 
