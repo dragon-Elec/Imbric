@@ -4,7 +4,7 @@
 - **Name:** ImbricFS ("Imbric")
 - **Root Package:** `com.imbric`
 - **Core VFS abstraction:** `ifs`
-- **Language:** Kotlin 2.3.20+ (K2 compiler) on **Kotlin/JVM** (not Kotlin/Native)
+- **Language:** Kotlin 2.3.21+ (K2 compiler) on **Kotlin/JVM** (not Kotlin/Native)
 - **JVM target:** JDK 25
 - **Build system:** Gradle 9.5.1
 - **UI Strategy:** Compose Multiplatform (Kotlin) — **not GTK**
@@ -12,8 +12,7 @@
 ## Repository
 - Path: `/home/ray/Desktop/files/wrk/Imbric/imbric-kt`
 - Standalone Git repo (no shared history with Python original)
-- 71 commits on `main`
-- **Test count:** 188 passing
+- **Test count:** 189 passing
 
 ---
 
@@ -92,55 +91,14 @@ imbric-kt/
 │   │       ├── DesktopDirectory.kt    # XDG desktop directory
 │   │       ├── SandboxDetector.kt     # Flatpak/sandbox detection
 │   │       └── ImbricDesktop.kt       # Desktop integration coordinator
-│   └── app/                            # Application layer (not started)
-│       └── bootstrap/
-│           ├── Main.kt                # Entry point
-│           └── MainContextPump.kt     # GLib MainContext iteration pump
-├── src/test/kotlin/com/imbric/core/   # 188 tests
-│   ├── ifs/
-│   │   ├── IOBackendTest.kt
-│   │   ├── backends/
-│   │   │   ├── GioBackendAsyncTest.kt
-│   │   │   ├── GioSearchBackendTest.kt
-│   │   │   └── VfsQueryFilterTest.kt
-│   │   ├── provider/
-│   │   │   ├── DirStateTest.kt
-│   │   │   └── DirectoryTypeTest.kt
-│   │   └── services/
-│   │       └── ThumbnailStateTrackerTest.kt
-│   ├── models/
-│   │   ├── FileInfoTest.kt
-│   │   ├── FileJobTest.kt
-│   │   └── VfsQueryTest.kt
-│   ├── transactions/
-│   │   ├── TransferOrchestratorTest.kt
-│   │   ├── UndoManagerTest.kt
-│   │   └── HardeningIntegrationTest.kt
-│   ├── desktop/
-│   │   ├── DeviceManagerTest.kt
-│   │   ├── DesktopDirectoryTest.kt
-│   │   ├── ImbricDesktopTest.kt
-│   │   └── backends/
-│   │       ├── GioRecentBackendTest.kt
-│   │       └── GioRecentBackendBenchmark.kt
-│   └── testing/
-│       ├── InMemoryBackend.kt         # HashMap-based test double
-│       ├── InMemoryBackendContractTest.kt
-│       ├── GioBackendContractTest.kt   # Ensures both backends behave identically
-│       └── BashHelper.kt             # Bash script helper for complex filesystem state setup
-└── ref/                                # Reference documentation (untracked)
-    ├── java-gi_patched/                # Patched java-gi generator (tracked in git)
-    │   ├── generator/src/main/java/org/javagi/
-    │   │   ├── gir/Callable.java       # Simplified isAsync() using finishFunc
-    │   │   ├── gir/Parameter.java      # sharesAsyncCallbackArena() + findPrimaryAsyncCallback()
-    │   │   ├── generators/TypedValueGenerator.java  # Shared arena + IllegalStateException for malformed GIR
-    │   │   ├── generators/PreprocessingGenerator.java  # Skip arena allocation for progress callbacks
-    │   │   └── generators/PostprocessingGenerator.java # Skip arena close for progress callbacks
-    │   └── ext/gir-files/              # Official upstream GIR files (restored)
-    ├── java-gi-remote/                 # Clean upstream clone (for diffing)
-    ├── codeberg-reply.md               # Draft reply for Codeberg maintainer
-    ├── CODEBERG_PROPOSAL_ASYNC_ARENA.md # RcArena + Isolated Teardown architecture proposal
-    └── JAVA-GI-REFERENCE.md            # java-gi repo structure documentation
+│   └── app/                            # Application layer
+│       ├── bootstrap/
+│       │   ├── Main.kt                # Entry point
+│       │   ├── ImbricApp.kt           # Main application shell with animations
+│       │   └── MainContextPump.kt     # GLib MainContext iteration pump
+│       └── ui/
+│           ├── AddressBar.kt          # Path breadcrumbs segment navigator + list/grid layout toggle
+│           └── DirectoryView.kt       # Unified LIST and GRID view layouts supporting native thumbnails
 ```
 
 ---
@@ -148,23 +106,14 @@ imbric-kt/
 ## Current Status (What Works)
 
 ### ✅ Completed (Stable, Verified)
-| Component | Status | Notes |
-|:---|---:|:---|
-| **ifs abstraction** | ✅ Hardened | V2 with smart routing, dynamic capabilities, VfsError hierarchy, URI parsing |
-| **IOBackend** | ✅ Full Surface | list, copy, move, trash, delete, rename, getMetadata, deepCount, thumbnail, search, mount/unmount |
-| **InMemoryBackend** | ✅ Contract-Tested | IOBackendContractTest ensures behavioral parity with GioBackend |
-| **FileInfo** | ✅ Nautilus-Grade | 20+ fields: timestamps (birth/access/modify), capability flags (canMount/canEject/canTrash), visibility (isHidden/shouldShow), sort functions, permissions, owner/group, child count, isArchive, isLaunchable, isStarred, trashTime, recency, activationUri |
-| **DirState** | ✅ Strategy-Based | ListingStrategy sealed interface (Standard/Search/Starred/Virtual), DirStateRegistry with WeakReference caching, whenReady/whenEnriched StateFlows, deep count enrichment |
-| **GioBackend** | ✅ Fully Async | All mutating ops use `awaitGioAsync` bridge. Recursive ops (copyRecursive/deleteRecursive) use sequential async with `yield()` for cancellation. Backend-aware semaphores (Local: 32, Network: 8). |
-| **GioCoroutineBridge** | ✅ Battle-Tested | `startMainContextPump(scope)` + `awaitGioAsync(block, finish)`. GLib.idleAdd dispatch, Source.remove() cleanup, cont.isActive check for double-resume safety. |
-| **VfsError** | ✅ Typed Hierarchy | Sealed class (not interface) extending Exception. 12 variants: AlreadyExists, NotFound, WouldRecurse, PermissionDenied, NoSpace, ReadOnly, Cancelled, NotSupported, IsDirectory, NotDirectory, Busy, IoError |
-| **UndoAction** | ✅ Type-Driven | Sealed interface: TransferUndo, TrashUndo, RenameUndo, CreateUndo, MetadataUndo. Full URI recovery for trash restore. |
-| **Bookmarks** | ✅ GTK-Synced | JSON primary store + bidirectional sync with `~/.config/gtk-3.0/bookmarks`. GFileMonitor for external edits. 500ms debounce. |
-| **Search** | ✅ Tracker3 + Fallback | VfsQuery with depth/MIME/hidden/date/size/content filters. Progress reporting. Flow-based result streaming. |
-| **TrashMonitor** | ✅ Real-Time | GFileMonitor on `trash:///` with TRASH_ITEM_COUNT optimization. Debounced StateFlow. |
-| **ThumbnailStateTracker** | ✅ Observable | StateFlow-based thumbnail tracking. Per-URI VFS ops on IOBackend. |
-| **Desktop Integration** ✅ | DeviceManager, DesktopLink, DesktopDirectory, SandboxDetector, StarredManager, SettingsProvider — all injectable via interfaces for testability. |
-| **BulkDispatcher** | ✅ Safe Parallelism | `limitedParallelism()` for concurrent I/O. Local: 32 threads, Network: 8. |
+- **Unique Child URIs Bug Fix (`GioBackend.kt`):** Resolved a major bug in the `list()` loop where listed child items were assigned the parent directory's URI instead of their unique subpath. This previously collapsed folder items into a single entry inside `DirState` and caused Jetpack Compose to deadlock or freeze in `LazyVerticalGrid` due to duplicate keys.
+- **Empirical Non-UI Diagnostic CLI Mode (`Main.kt`):** Built a powerful diagnostic shell tool intercepting CLI arguments `./gradlew run --args="file:///path"`. Emulates the App-layer `DirState` flow, pumps the GLib context, prints state transitions, lists VFS details, and cleanly cancels monitoring loops on exit.
+- **Compose Transition Deadlock Fixed (`ImbricApp.kt`):** Refactored `AnimatedContent` inside `FileBrowserContent` to target `state.uri` instead of the full state block. This confines vertical page animations purely to folder-change navigation events, allowing Compose to instantly and cleanly recompose loading/empty/directory states in-place.
+- **GIO FFI Test Stability:** Added `@BeforeEach` GIO initialization safeguards to integration tests (`GioRecentBackendTest`, `GioBackendTest`, `DesktopDirectoryTest`, `ImbricDesktopTest`). Calls `Gio.javagi$ensureInitialized()` before GObject interaction, preventing SIGSEGV native pointer clean-up crashes on JVM garbage collection.
+- **Hot Reload Integration (JBR 25):** Wired up JetBrains DCEVM Runtime (`/opt/jbr-25`) inside gradle.properties, enabling instant, live class swapping for Compose elements in the CLI via the Compose Hot Reload plugin.
+- **Process Guard & Daemon Hardening:** Modified `scripts/ib/daemon.py` and `scripts/ib/process.py` to run atomic cleanup `ProcessManager.kill_all(force=True, include_daemons=False)` before starting each compilation round. Distinguishes daemon and app instances, successfully eliminating the "Two Windows" duplicate process bug.
+- **Atomic Navigation State:** Introduced a unified, atomic `FileBrowserState` flow in `FileBrowserViewModel.kt`. This completely eliminates the navigation race condition where changing paths momentarily flashed an "Empty Folder" view for folders that actually contained files.
+- **Layout views (`DirectoryView.kt`):** Refactored stub-level `FileList.kt` into `DirectoryView.kt` with support for `LayoutMode` (LIST / GRID). 
 
 ---
 
@@ -188,90 +137,6 @@ Step 5: Post-Processing
          → Remove module-info.java
 ```
 
-### The Patches We Maintain (in ref/java-gi_patched)
-
-| Patch | File | What | Why |
-|:---|:---|:---|:---|
-| **Shared Arena** | `Parameter.java` | `sharesAsyncCallbackArena()` detects progress callbacks in async functions | GNOME GIR marks progress callbacks as `scope="call"` instead of `scope="notified"` |
-| **Arena Sharing** | `TypedValueGenerator.java` | Progress callbacks reuse primary callback's `_asyncScope` arena | Prevents SIGSEGV from premature arena close |
-| **Fail-Fast** | `TypedValueGenerator.java` | Throws `IllegalStateException` if no primary callback found | Prevents silent memory leaks from malformed GIR data |
-| **Arena Skip** | `PreprocessingGenerator.java` | Skips arena allocation for progress callbacks | They share the primary's arena |
-| **Close Skip** | `PostprocessingGenerator.java` | Skips arena close for progress callbacks | Primary callback's arena handles cleanup |
-| **isAsync()** | `Callable.java` | Simplified to `finishFunc != null` | More reliable than string heuristic |
-| **Override Priority** | `Library.java` | CLI-provided GIR files override internal bundle | Generator ignores user GIR files without this |
-
-### java-gi Fork Strategy
-
-- **`ref/java-gi_patched/`** — Patched local clone (tracked in git). Edge development. Pushes to Codeberg fork.
-- **`ref/java-gi-remote/`** — Clean upstream clone (untracked). For diffing against official and submitting PRs.
-- **Codeberg fork:** `codeberg.org/dragon-Elec/java-gi` (origin) — for PRs to maintainer
-- **GitHub fork:** `github.com/dragon-Elec/java-gi` (github remote) — for ahead/behind UI visibility
-- **Official:** `codeberg.org/java-gi/java-gi` (upstream) — for pulling updates
-
----
-
-## Nautilus Parity Scorecard
-
-| Audit Section | Status | Core/App | Notes |
-|:---|---:|:---|:---|
-| 1. FileInfo model | ✅ 90% | Core | All Nautilus fields present except emblem icons and GIcon pipeline |
-| 2. Directory model | ✅ 85% | Core | DirState + ListingStrategy + Registry. Missing: async deep count for UI |
-| 3. File Operations | ✅ 95% | Core | Full async with progress + cancellation. Missing: attribute preservation edge cases |
-| 4. Trash Monitor | ✅ 90% | Core | Real-time GFileMonitor. Missing: cross-volume trash detection |
-| 5. Undo/Redo | ✅ 95% | Core | Typed UndoAction. Missing: batch undo UI |
-| 6. Search | ✅ 80% | Core | VfsQuery + Tracker3. Missing: result ranking, composite search |
-| 7. Thumbnails | ✅ 70% | Core | ThumbnailStateTracker skeleton. Missing: actual thumbnail generation pipeline |
-| 8. Bookmarks | ✅ 95% | Core | JSON + GTK sync. Complete for v1 |
-| 9. Sidebar | ❌ 0% | App | Purely app-layer. No core work needed |
-| 10. Monitoring | ✅ 90% | Core | DirectoryMonitor + TrashMonitor + DesktopLinkMonitor |
-| 11. Error Reporting | ✅ 95% | Core | VfsError hierarchy with human-readable messages |
-| 12. Preferences | ✅ 60% | Core | SettingsProvider interface. Missing: app-layer preference UI |
-| 13. DBus | ❌ 0% | App | org.freedesktop.FileManager1 is pure app-layer |
-| 14. Icon Names | ❌ 0% | App | GIO already returns icon strings. App maps to Compose icons |
-| 15-22. Remaining | ⏳ Planned | Mixed | Symlink creation, recent CRUD, SELinux, compression primitives |
-
-**Overall:** ~65% Nautilus parity. ~75% of remaining work is core, ~25% app-layer.
-
----
-
-## Architecture Decisions (Key "Why"s)
-
-### 1. Async for Writes, Sync for Reads
-- **Reads** (list, metadata, enumerate): Synchronous GIO wrapped in `Dispatchers.IO`. Fast, simple, no GLib Main Context dependency.
-- **Writes** (copy, move, trash, delete, rename): `awaitGioAsync` bridge. Non-blocking, cancellation-aware, progress-reporting.
-
-### 2. Injectable Singletons (Testability)
-All `core/desktop/` singletons are accessed via interfaces (`TrashStateProvider`, `StarredStateProvider`, `SettingsProvider`). Production uses real implementations; tests inject fakes. No test ever mutates the host OS.
-
-### 3. Services vs IOBackend
-- **IOBackend method:** Per-URI VFS operation. Each backend can override. Examples: `deepCount()`, `getThumbnailPath()`.
-- **Service:** State coordinator wrapping IOBackend calls, exposing StateFlow for UI. Example: `ThumbnailStateTracker`.
-- **Desktop singleton:** System-wide state without a URI. Example: `TrashMonitor`, `StarredManager`.
-
-### 4. Typed Undo (Not Operation-Driven)
-`UndoAction` sealed interface defines actions by *how* they are reversed (delete, move back, rename back, restore), not *what button the user clicked* (duplicate, template, starred). Keeps undo engine small and generic.
-
-### 5. Compose over GTK
-- Compose is Kotlin-native with first-class coroutine/Flow integration
-- GTK signal system would add unnecessary bridging
-- Internal communication uses `StateFlow`/`SharedFlow` — no GObject signals needed
-
----
-
-## GioBackend Initialization Pattern (Mandatory)
-
-Every class that uses GIO types must call `Gio.javagi$ensureInitialized()` before using GIO static methods:
-
-```kotlin
-class GioBackend : IOBackend {
-    init {
-        org.gnome.gio.Gio.`javagi$ensureInitialized`()
-    }
-}
-```
-
-Without this: `UnsupportedOperationException: Cannot find function 'g_file_new_for_uri'`
-
 ---
 
 ## Testing Workflow
@@ -280,45 +145,52 @@ Without this: `UnsupportedOperationException: Cannot find function 'g_file_new_f
 # Quick check — specific test class (~7s)
 ./gradlew test --tests "ClassName" --console=plain 2>&1 | python3 scripts/filter_gradle.py
 
-# Full suite (~50s)
+# Full suite (~40s)
 ./gradlew test --console=plain 2>&1 | python3 scripts/filter_gradle.py
-
-# Regenerate bindings + compile + test
-./scripts/generate_bindings.sh && ./gradlew test --console=plain 2>&1 | python3 scripts/filter_gradle.py
 ```
-
-- `filter_gradle.py` prints `.` for PASSED, full error blocks for FAILED, always shows `error:`/`Exception`/`BUILD`
-- Use `2>&1` to merge stderr into stdout when piping
-- `BashHelper.kt` for setting up complex filesystem states (symlinks, permissions) via bash scripts
-- `IOBackendContractTest` enforces identical behavior across `GioBackend` and `InMemoryBackend`
 
 ---
 
-## Known Issues & Gotchas
+## Hard-Won Learnings
 
-1. **URI String Manipulation:** `trimEnd('/')` on `file:///` gives `file:` — breaks scheme detection. Always check `isRootUri()` first.
-2. **Plain paths have no scheme:** Handle `schemeEnd == -1` separately from `scheme://` URIs.
-3. **Enum shorthand doesn't work:** `.PENDING` doesn't compile — use full `TransactionStatus.PENDING`.
-4. **CancellationException must be re-thrown:** Any catch block in coroutine code must `if (e is CancellationException) throw e` or coroutines hang on cancel.
-5. **Never hardcode dispatchers in suspend functions:** `.flowOn(Dispatchers.IO)` inside suspend/Flow bypasses test dispatchers.
-6. **Bot PRs must be compile-checked:** Static analysis often flags required imports as unused. Always verify before merging.
+1. **Kotlin Coroutine Self-Cancellation Prevention:** When launching a cancellable background job inside a class (like DirState's `refreshJob`), always capture the mutable job reference locally *before* launching the new coroutine:
+   ```kotlin
+   val oldJob = refreshJob
+   refreshJob = scope.launch(ioDispatcher) {
+       oldJob?.cancelAndJoin()
+       ...
+   }
+   ```
+   Otherwise, the asynchronous coroutine will read the newly assigned job and call `cancelAndJoin()` on itself, silently deadlocking the job and leaving `isLoading` at `true` forever.
+
+2. **VFS Child URI Integrity Contract:** Integration and contract tests for directory listings must explicitly assert that listed child items have unique, correct URIs conforming to `"$parentUri/$name"`. Previously, passing the parent folder handle instead of a resolved child handle in `GioBackend.kt` caused all items to share the parent URI, causing StateFlow map collisions and deadlocking Jetpack Compose's `LazyVerticalGrid` stable key layout.
+
+3. **GIO JNI SIGSEGV Safety:** Any test suite or benchmark that interacts with native GIO or GLib FFI bindings must run `Gio.javagi$ensureInitialized()` in a `@BeforeEach` or `@BeforeAll` block. Bypassing this creates half-constructed GObject proxy wrappers that cause native `SIGSEGV` crashes when the JVM Garbage Collector runs `MemoryCleaner` and invokes `g_object_unref`.
+
+---
+
+## Missing Test Types (Testing Gaps Audit)
+
+1. **Real-Ground VFS Stress Tests:**
+   * **Hostile/Broken Filesystems:** We need integration tests running on mock/temp directories populated with broken symlinks, nested hidden structures, and circular symlink references. This asserts that `deepCount` and search algorithms handle cyclic paths without infinite loops or thread hangs.
+   * **Locked/Restricted Permissions:** Tests for files with no read/write access (`000` or `r--` owned by other users) to ensure that `getMetadata` and `Strategy.list` return robust `VfsError.PermissionDenied` exceptions rather than native crashes.
+   * **Corrupt/Over-sized File Enrichment:** Tests where metadata collectors are fed 100MB+ corrupt or partially written image headers. This asserts that `PixbufLoader` handles parsing failures cleanly without JNI native memory overflows.
+
+2. **High-Concurrency & Interruption Tests:**
+   * **Bulk Operation Race Conditions:** High-load transaction tests launching concurrent copy and delete actions on the same 1,000-file directories. This validates that our pre-flight locking checks and Sticky Arbiter policies prevent race states, dirty directory reads, or orphaned lock files.
+   * **Mid-Transfer Scope Cancellation:** Tests that abruptly cancel the coroutine scope during a long active transfer. This asserts that `GCancellable` immediately halts native FFI writes, native heap buffers are deallocated, and incomplete files are rolled back cleanly.
+
+3. **App-Layer Compose UI Tests:**
+   * **Component & Gesture Tests:** Desktop-specific `runComposeUiTest` blocks rendering `DirectoryView` (list and grid layouts) to assert that cell outlines, selections, and MIME icon lookups reactively respond to user interactions and scroll positions are retained during Stale-While-Revalidate cycles.
 
 ---
 
 ## Next Steps
 
-### Phase 2 — App Layer (Not Started)
-1. **Sidebar Aggregator:** Combine bookmarks, recent, DeviceManager into unified sidebar model
-2. **Thumbnail Pipeline:** Coil 3 + custom GNOME fetcher (symlink resolution, local fast-path, theme icon fallback)
-3. **Main Application Bridge:** Compose Desktop + GApplication.register() + MainContext pump
-4. **Visual Prototype:** First interactive frontend consuming transaction engine
-
-### Phase 2 — Core Polish
-1. **Symlink creation** via `IOBackend.createSymlink()`
-2. **Recent file CRUD** (add/remove from recent:/// list)
-3. **Attribute preservation** on copy/move edge cases
-4. **Compression primitives** for archive integration
+1. **Sidebar Aggregator:** Combine bookmarks, recent, DeviceManager into unified sidebar model.
+2. **Batch Operations UI:** Multi-select context menu actions (Copy, Cut, Delete, Star) in DirectoryView.
+3. **Visual Enhancements:** Add animations and transitions to grid view elements during list mutations.
 
 ---
 
-*Updated after Sessions 1-20+. 71 commits, 188 tests passing. Core engine complete. App layer not started.*
+*Updated after Session 22. Unique child URI bug successfully fixed, pure-terminal VFS consumer CLI mode built, Compose transition deadlock resolved on loading empty/parent folders, GIO test suite native memory crashes eliminated. All 189 unit and integration tests pass green.*

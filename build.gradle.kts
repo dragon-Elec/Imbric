@@ -1,8 +1,9 @@
 plugins {
-    kotlin("jvm") version "2.3.20"
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.3.20"
-    id("org.jetbrains.compose") version "1.7.3"
-    id("org.jetbrains.kotlin.plugin.compose") version "2.3.20"
+    kotlin("jvm") version "2.3.21"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.3.21"
+    id("org.jetbrains.compose") version "1.11.0"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.3.21"
+    id("org.jetbrains.compose.hot-reload") version "1.1.0"
 }
 
 group = "com.imbric"
@@ -20,40 +21,29 @@ repositories {
 }
 
 dependencies {
-    // Kotlin Stdlib
-    implementation(kotlin("stdlib"))
-    
-    // Compose
-    implementation(compose.desktop.currentOs)
-    implementation(compose.runtime)
-    implementation(compose.foundation)
-    implementation(compose.material3)
-    implementation(compose.components.resources)
+    // Force a single version of kotlinx-datetime to prevent Hot Reload classpath collisions
+    configurations.all {
+        resolutionStrategy.force("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
+    }
 
-    // Coroutines
+    implementation(compose.desktop.currentOs)
+    implementation(compose.material3)
+    implementation(compose.materialIconsExtended)
+    implementation("com.materialkolor:material-kolor:2.0.0")
     
-    // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.0")
+    // Use api to ensure visibility in Hot Reload isolated classpath
+    api("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
     
-    // DateTime
-    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
-    
-    // JSON Serialization
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-    
-    // UUID (Kotlin 2.1+ native - bundled in stdlib, no extra dependency needed)
-    // implementation(kotlin("kotlin-uuid")) // Uncomment if using Kotlin < 2.1
-    
-    // Logging
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
     implementation("io.github.microutils:kotlin-logging-jvm:3.0.5")
+    
+    // GIO Bindings foundation
+    compileOnly("org.jspecify:jspecify:1.0.0")
     implementation("org.java-gi:gtk:0.15.0") {
         exclude(group = "org.java-gi", module = "glib")
         exclude(group = "org.java-gi", module = "gdkpixbuf")
     }
-
-    
-    // Java-GI base annotations
-    compileOnly("org.jspecify:jspecify:1.0.0")
 
     // Testing
     testImplementation(kotlin("test"))
@@ -64,6 +54,10 @@ kotlin {
     jvmToolchain {
         languageVersion.set(JavaLanguageVersion.of(25))
     }
+}
+
+composeCompiler {
+    // OptimizeNonSkippingGroups is enabled by default in Compose 1.11.0
 }
 
 tasks.test {
@@ -79,5 +73,6 @@ compose.desktop {
     application {
         mainClass = "com.imbric.app.bootstrap.MainKt"
         jvmArgs += "--enable-native-access=ALL-UNNAMED"
+        jvmArgs += "-XX:+AllowEnhancedClassRedefinition"
     }
 }

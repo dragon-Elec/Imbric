@@ -35,7 +35,7 @@ SKIP_NAMES = {
 _RE_DECL = re.compile(
     r"""
     ^\s*
-    (?:(?:private|internal|protected|public|override|abstract|open|final|expect|actual|data|sealed|inline|suspend|operator|infix|tailrec|external|const|lateinit)\s+)*
+    (?:(?:private|internal|protected|public|override|abstract|open|final|expect|actual|data|sealed|inline|suspend|operator|infix|tailrec|external|const|lateinit|inner|value|fun)\s+)*
     (?P<kind>fun|val|var|class|interface|object|enum\s+class)
     \s+
     (?:[a-zA-Z_]\w*\.)?                     # optional receiver type (extension fun/val)
@@ -57,26 +57,25 @@ _RE_HAS_CLASS_KW = re.compile(r"\b(class|interface|object)\b")
 _RE_HAS_BLOCK_KW = re.compile(r"\b(init|get|set)\b")
 
 
-def _strip_comments(text: str) -> str:
-    """Remove // and /* */ comments from Kotlin source.
-
-    Block comments are stripped FIRST because KDoc / Javadoc lines often
-    contain ``//`` inside URLs (e.g. ``smb://server/file``).  If we stripped
-    single-line comments first, the ``//`` would match and eat the closing
-    ``*/`` of the block comment.
-    """
-    # 1. Block comments (non-greedy; does NOT handle nesting — fine for a
-    #    documentation validator where we only need shallow stripping).
-    while "/*" in text:
-        start = text.index("/*")
-        end = text.index("*/", start + 2)
-        if end == -1:
-            break  # unclosed block comment — stop to avoid infinite loop
-        text = text[:start] + text[end + 2:]
-
-    # 2. Single-line comments
-    text = re.sub(r"//.*$", "", text, flags=re.MULTILINE)
-    return text
+def _clean_source(text: str) -> str:
+    """Remove comments and string/character literals while preserving newlines."""
+    # Pattern to match block comments, line comments, triple-quoted strings, double-quoted strings, and char literals
+    pattern = re.compile(
+        r"(/\*[\s\S]*?\*/)|(//.*$)|(\"\"\"[\s\S]*?\"\"\")|(\"([^\"\\]|\\.)*\")|('([^'\\]|\\.)*')",
+        re.MULTILINE
+    )
+    def replace(match):
+        item = match.group(0)
+        if item.startswith("/*"):
+            return re.sub(r"[^\n]", " ", item)
+        elif item.startswith("//"):
+            return ""
+        elif item.startswith("\"\"\""):
+            return '""' + re.sub(r"[^\n]", " ", item[3:-3]) + '""'
+        elif item.startswith("\"") or item.startswith("'"):
+            return '""'
+        return item
+    return pattern.sub(replace, text)
 
 
 def extract_public_declarations(source_path: str) -> set[str]:
@@ -107,7 +106,7 @@ def extract_public_declarations(source_path: str) -> set[str]:
              (nested classes are always public API)
     """
     text = Path(source_path).read_text(encoding="utf-8")
-    text = _strip_comments(text)
+    text = _clean_source(text)
 
     declarations: set[str] = set()
     scope_stack: list[tuple[bool, str]] = [(False, "toplevel")]
@@ -116,6 +115,7 @@ def extract_public_declarations(source_path: str) -> set[str]:
     # different line from the keyword (e.g. `class Foo(\n...\n) {` or
     # `fun foo(\n...\n) {`).  Reset when a structural `{` is consumed.
     pending_kind: str | None = None
+    pending_is_private: bool = False
 
     def _current_private() -> bool:
         return scope_stack[-1][0] if scope_stack else False
@@ -131,12 +131,23 @@ def extract_public_declarations(source_path: str) -> set[str]:
         # --- Detect multi-line declaration keywords -----------------------
         # Must be checked BEFORE brace counting — a `fun` keyword on this
         # line may be a multi-line function whose body `{` appears later.
+        line_has_private = False
+        m_decl = _RE_DECL.match(stripped)
+        if m_decl:
+            kind = m_decl.group("kind")
+            before_keyword = stripped.split(kind)[0]
+            before_keyword_stripped = re.sub(r"\(.*\)", "", before_keyword)
+            line_has_private = bool(re.search(r"\b(private|internal)\b", before_keyword_stripped))
+
         if _RE_HAS_COMPANION.search(stripped):
             pending_kind = "companion"
+            pending_is_private = line_has_private
         elif _RE_HAS_FUN.search(stripped) and not _RE_HAS_CLASS_KW.search(stripped):
             pending_kind = "fun"
+            pending_is_private = line_has_private
         elif _RE_HAS_CLASS_KW.search(stripped):
             pending_kind = "class"
+            pending_is_private = line_has_private
 
         opens = stripped.count("{")
         closes = stripped.count("}")
@@ -149,57 +160,63 @@ def extract_public_declarations(source_path: str) -> set[str]:
                 if len(scope_stack) > 1:
                     scope_stack.pop()
 
-        # --- effective visibility for THIS line ----------------------------
-        in_private_scope = _current_private()
-        has_private_mod = bool(_RE_PRIVATE.match(stripped))
-
         # --- extract declarations -----------------------------------------
-        if not in_private_scope and not has_private_mod:
-            m = _RE_DECL.match(stripped)
-            if m:
-                kind = m.group("kind")
-                name = m.group("name")
-                if name in SKIP_NAMES:
-                    continue
+        m = _RE_DECL.match(stripped)
+        if m:
+            kind = m.group("kind")
+            name = m.group("name")
+            before_keyword = stripped.split(kind)[0]
+            # Strip parentheses to avoid constructor param private modifiers
+            before_keyword_stripped = re.sub(r"\(.*\)", "", before_keyword)
+            has_private_mod = bool(re.search(r"\b(private|internal)\b", before_keyword_stripped))
+            in_private_scope = _current_private()
 
-                current = _current_kind()
-                if kind == "fun" and current in ("toplevel", "class", "companion"):
-                    declarations.add(name)
-                elif kind in ("val", "var") and current in ("toplevel", "class", "companion"):
-                    declarations.add(name)
-                elif kind in ("class", "interface", "object", "enum class",
-                              "sealed class", "data class"):
-                    declarations.add(name)
+            if not in_private_scope and not has_private_mod:
+                if name not in SKIP_NAMES:
+                    # Skip overrides to avoid redundant documentation of interface contracts
+                    if not re.search(r"\boverride\b", before_keyword):
+                        current = _current_kind()
+                        if kind == "fun" and current in ("toplevel", "class", "companion"):
+                            declarations.add(name)
+                        elif kind in ("val", "var") and current in ("toplevel", "class", "companion"):
+                            declarations.add(name)
+                        elif kind in ("class", "interface", "object", "enum class",
+                                      "sealed class", "data class"):
+                            declarations.add(name)
 
         # --- push scopes for net-opening braces ---------------------------
         if net > 0:
             before_brace = stripped.split("{")[0] if "{" in stripped else stripped
-
-            new_is_private = (
-                _current_private()
-                or bool(re.search(r"\b(private|internal)\b", before_brace))
-            )
+            # Strip parentheses to avoid constructor param private modifiers
+            before_brace_stripped = re.sub(r"\(.*\)", "", before_brace)
 
             # Scope kind: prefer pending_kind (for multi-line decls), then
             # keyword on the current line, otherwise inherit from parent.
             if pending_kind is not None:
                 new_kind = pending_kind
+                new_is_private = _current_private() or pending_is_private
                 pending_kind = None  # consumed
-            elif _RE_HAS_COMPANION.search(before_brace):
-                new_kind = "companion"
-            elif _RE_HAS_FUN.search(before_brace):
-                new_kind = "fun"
-            elif _RE_HAS_CLASS_KW.search(before_brace):
-                new_kind = "class"
-            elif _RE_HAS_BLOCK_KW.search(before_brace):
-                # init / get / set blocks — treat as function-like scopes
-                # where val/var are local variables, not member properties.
-                new_kind = "lambda"
+                pending_is_private = False
             else:
-                new_kind = _current_kind()
-                # toplevel never gets bare blocks
-                if new_kind == "toplevel":
+                new_is_private = (
+                    _current_private()
+                    or bool(re.search(r"\b(private|internal)\b", before_brace_stripped))
+                )
+                if _RE_HAS_COMPANION.search(before_brace):
+                    new_kind = "companion"
+                elif _RE_HAS_FUN.search(before_brace):
+                    new_kind = "fun"
+                elif _RE_HAS_CLASS_KW.search(before_brace):
+                    new_kind = "class"
+                elif _RE_HAS_BLOCK_KW.search(before_brace):
+                    # init / get / set blocks — treat as function-like scopes
+                    # where val/var are local variables, not member properties.
                     new_kind = "lambda"
+                else:
+                    new_kind = _current_kind()
+                    # toplevel never gets bare blocks
+                    if new_kind == "toplevel":
+                        new_kind = "lambda"
 
             for _ in range(net):
                 scope_stack.append((new_is_private, new_kind))

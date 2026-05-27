@@ -17,3 +17,5 @@ bin/
 .opencode/
 .idea/
 *.iml
+__pycache__/
+languages/
