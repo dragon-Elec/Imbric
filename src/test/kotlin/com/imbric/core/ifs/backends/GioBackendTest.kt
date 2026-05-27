@@ -7,9 +7,11 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Tag
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.io.TempDir
 import com.imbric.core.testing.BashHelper
 import org.gnome.glib.MainContext
+import org.gnome.gio.Gio
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.*
@@ -18,6 +20,11 @@ import kotlin.uuid.Uuid
 
 @Tag("integration")
 class GioBackendTest {
+
+    @BeforeEach
+    fun setup() {
+        Gio.`javagi$ensureInitialized`()
+    }
 
     private val backend = GioBackend()
 
@@ -53,6 +60,12 @@ class GioBackendTest {
             assertTrue(alphaInfo?.isDirectory == false)
             // echo -n gives exactly 5 bytes
             assertEquals(5L, alphaInfo?.size)
+            assertEquals("$dirUri/alpha.txt", alphaInfo?.uri)
+
+            val betaInfo = children.find { it.name == "beta.txt" }
+            assertEquals("$dirUri/beta.txt", betaInfo?.uri)
+
+            assertEquals("$dirUri/subdir", subdirInfo?.uri)
         }
     }
 

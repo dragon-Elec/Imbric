@@ -15,7 +15,7 @@ class VfsQueryFilterTest {
     @BeforeTest
     fun setup() {
         // Create test files with different sizes and dates
-        val now = Clock.System.now()
+        val now = kotlin.time.Clock.System.now()
         backend.fs["memory:///docs"] = FileInfo(
             name = "docs", path = "memory:///docs", uri = "memory:///docs",
             isDirectory = true, size = 0, mimeType = "inode/directory",

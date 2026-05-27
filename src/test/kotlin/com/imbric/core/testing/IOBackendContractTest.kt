@@ -47,6 +47,7 @@ abstract class IOBackendContractTest {
             val children = backend.list(folderUri).toList()
             assertEquals(1, children.size)
             assertEquals("test_file.txt", children[0].name)
+            assertEquals(fileUri, children[0].uri)
         }
     }
 

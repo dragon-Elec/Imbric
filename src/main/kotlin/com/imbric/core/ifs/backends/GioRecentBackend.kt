@@ -7,23 +7,13 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
-import org.gnome.gtk.Gtk
-import org.gnome.gtk.RecentManager
 import org.gnome.gio.File
 import org.gnome.gio.FileQueryInfoFlags
+import org.gnome.glib.BookmarkFile
+import org.gnome.glib.GLib
+import java.nio.file.Paths
 
 class GioRecentBackend : IOBackend {
-    init {
-        org.gnome.gtk.Gtk.`javagi$ensureInitialized`()
-        try {
-            if (!Gtk.isInitialized()) {
-                Gtk.init()
-            }
-        } catch (e: Exception) {
-            // Ignore if already initialized
-        }
-    }
-
     override val scheme: String = "recent"
     override val displayName: String = "Recent Files"
 
@@ -36,14 +26,25 @@ class GioRecentBackend : IOBackend {
 
     override suspend fun canPerform(action: FileAction, uri: String): Boolean = false
 
+    private fun getRecentFilePath(): String {
+        val dataDir = GLib.getUserDataDir().toString()
+        return Paths.get(dataDir, "recently-used.xbel").toString()
+    }
+
     override fun list(uri: String): Flow<FileInfo> = flow {
-        val rm = RecentManager.getDefault()
-        val items = rm.items ?: return@flow
-        
+        val bookmarkFile = BookmarkFile()
+        try {
+            bookmarkFile.loadFromFile(getRecentFilePath())
+        } catch (e: Exception) {
+            // File might not exist yet, which is fine
+            return@flow
+        }
+
+        val uris = bookmarkFile.uris ?: return@flow
         val queryAttributes = "standard::*,time::*,unix::*,owner::*,access::*,trash::*"
-        for (item in items) {
-            if (item == null) continue
-            val itemUri = item.uri ?: continue
+        
+        for (itemUri in uris) {
+            if (itemUri == null) continue
             
             val gfile = File.newForUri(itemUri)
             try {
@@ -75,24 +76,65 @@ class GioRecentBackend : IOBackend {
 
     override suspend fun addToRecent(uri: String, mimeType: String?): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            val rm = RecentManager.getDefault()
-            rm.addItem(uri)
+            val bookmarkFile = BookmarkFile()
+            val path = getRecentFilePath()
+            
+            try {
+                bookmarkFile.loadFromFile(path)
+            } catch (e: Exception) {
+                // Ignore load errors, we'll just create a new file
+            }
+
+            if (mimeType != null) {
+                bookmarkFile.setMimeType(uri, mimeType)
+            } else {
+                bookmarkFile.setMimeType(uri, "application/octet-stream")
+            }
+
+            // Required by XBEL spec for the entry to be valid
+            bookmarkFile.addApplication(uri, "Imbric", "imbric %u")
+            
+            bookmarkFile.toFile(path)
             Unit
         }
     }
 
     override suspend fun removeFromRecent(uri: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            val rm = RecentManager.getDefault()
-            rm.removeItem(uri)
+            val path = getRecentFilePath()
+            if (!java.io.File(path).exists()) {
+                return@runCatching Unit
+            }
+            val bookmarkFile = BookmarkFile()
+            bookmarkFile.loadFromFile(path)
+            bookmarkFile.removeItem(uri)
+            bookmarkFile.toFile(path)
             Unit
         }
     }
 
     override suspend fun purgeRecent(olderThanMs: Long): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
-            val rm = RecentManager.getDefault()
-            rm.purgeItems()
+            val path = getRecentFilePath()
+            if (!java.io.File(path).exists()) {
+                return@runCatching 0
+            }
+            val bookmarkFile = BookmarkFile()
+            bookmarkFile.loadFromFile(path)
+            val uris = bookmarkFile.uris ?: return@runCatching 0
+            var removed = 0
+            
+            for (uri in uris) {
+                if (uri != null) {
+                    bookmarkFile.removeItem(uri)
+                    removed++
+                }
+            }
+            
+            if (removed > 0) {
+                bookmarkFile.toFile(path)
+            }
+            removed
         }
     }
 }

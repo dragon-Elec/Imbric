@@ -15,6 +15,8 @@ object BackendRegistry {
         defaultIo = backend
     }
 
+    fun getDefaultIo(): IOBackend? = defaultIo
+
     fun getIo(pathOrUri: String): IOBackend? {
         // 1. If it's a raw path (no scheme), prefer defaultIo if it exists
         if (!pathOrUri.contains("://") && defaultIo != null) {

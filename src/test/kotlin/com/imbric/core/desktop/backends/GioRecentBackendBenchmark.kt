@@ -3,11 +3,21 @@ package com.imbric.core.desktop.backends
 import com.imbric.core.ifs.backends.GioRecentBackend
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import org.gnome.gio.Gio
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import kotlin.system.measureTimeMillis
 import kotlin.test.assertTrue
 
 class GioRecentBackendBenchmark {
+    companion object {
+        @JvmStatic
+        @BeforeAll
+        fun setup() {
+            Gio.`javagi$ensureInitialized`()
+        }
+    }
+
     @Test
     fun benchmarkListRecents() = runBlocking {
         val backend = GioRecentBackend()
@@ -29,3 +39,4 @@ class GioRecentBackendBenchmark {
         assertTrue(true)
     }
 }
+

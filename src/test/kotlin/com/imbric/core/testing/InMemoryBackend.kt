@@ -166,7 +166,7 @@ open class InMemoryBackend(
                 name = info.name,
                 originalPath = originalPath,
                 trashPath = "memory-trash://${info.name}",
-                deletionDate = Clock.System.now().toEpochMilliseconds(),
+                deletionDate = kotlin.time.Clock.System.now().toEpochMilliseconds(),
                 size = info.size
             )
         }
@@ -187,7 +187,7 @@ open class InMemoryBackend(
             path = uri, uri = uri, name = name, displayName = name,
             isDirectory = true, isSymlink = false, symlinkTarget = null,
             size = 0, mimeType = "inode/directory",
-            modifiedTime = Clock.System.now(), isHidden = name.startsWith("."), isWritable = true, iconName = "folder"
+            modifiedTime = kotlin.time.Clock.System.now(), isHidden = name.startsWith("."), isWritable = true, iconName = "folder"
         )
         return Result.success(uri)
     }
@@ -198,7 +198,7 @@ open class InMemoryBackend(
             path = uri, uri = uri, name = name, displayName = name,
             isDirectory = false, isSymlink = false, symlinkTarget = null,
             size = 0, mimeType = "text/plain",
-            modifiedTime = Clock.System.now(), isHidden = name.startsWith("."), isWritable = true, iconName = "text-x-generic"
+            modifiedTime = kotlin.time.Clock.System.now(), isHidden = name.startsWith("."), isWritable = true, iconName = "text-x-generic"
         )
         return Result.success(uri)
     }

@@ -12,7 +12,7 @@ value class IfsUri(val uriString: String) {
     val isNative: Boolean
         get() = scheme == "file" || scheme == "trash" || scheme == "recent"
 
-    private fun isRootUri(): Boolean = uriString.matches(Regex("^\\w+:/{2,3}$"))
+    fun isRootUri(): Boolean = uriString.matches(Regex("^\\w+:/{2,3}$"))
 
     val name: String
         get() {

@@ -1,13 +1,20 @@
 package com.imbric.core.desktop
-
+ 
 import com.imbric.core.ifs.BackendRegistry
+import org.junit.jupiter.api.BeforeEach
+import org.gnome.gio.Gio
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.gnome.gtk.Gtk
 import org.gnome.gio.Vfs
-
+ 
 class ImbricDesktopTest {
+    @BeforeEach
+    fun setup() {
+        Gio.`javagi$ensureInitialized`()
+    }
+
     @Test
     fun testInitializeRegistersExpectedSchemes() {
         if (!Gtk.isInitialized()) Gtk.init()

@@ -176,6 +176,9 @@ class GioBackendAsyncTest {
             val query1 = VfsQuery(text = "match", rootUri = rootUri)
             val results1 = backend.search(query1).toList()
             assertEquals(3, results1.size)
+            assertTrue(results1.any { it.uri == "$rootUri/match_1.txt" }, "Should find match_1.txt with correct URI")
+            assertTrue(results1.any { it.uri == "$rootUri/match_2.log" }, "Should find match_2.log with correct URI")
+            assertTrue(results1.any { it.uri == "$rootUri/sub/match_3.txt" }, "Should find sub/match_3.txt with correct URI")
 
             // 2. MIME filter
             val query2 = VfsQuery(text = "match", rootUri = rootUri, mimeFilter = "text/plain")

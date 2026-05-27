@@ -1,10 +1,17 @@
 package com.imbric.core.desktop
-
+ 
 import com.imbric.core.ifs.backends.TestUtils
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.BeforeEach
+import org.gnome.gio.Gio
 import kotlin.test.*
-
+ 
 class DesktopDirectoryTest {
+    @BeforeEach
+    fun setup() {
+        Gio.`javagi$ensureInitialized`()
+    }
+
     @Test
     fun `test desktop directory URI format`() = runTest {
         TestUtils.withGlibPump {

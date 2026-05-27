@@ -117,7 +117,9 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         try {
             var info = enumerator?.nextFile(null)
             while (info != null) {
-                emit(GioTypeMappers.toImbricFileInfo(gfile, info))
+                val name = info.name?.toString() ?: ""
+                val childFile = gfile.getChild(name)
+                emit(GioTypeMappers.toImbricFileInfo(childFile, info))
                 info = enumerator?.nextFile(null)
             }
         } finally {
@@ -745,7 +747,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                     
                     // Match filename against query (case-insensitive)
                     if (name.lowercase().contains(queryLower)) {
-                        val fileInfo = GioTypeMappers.toImbricFileInfo(dir, info)
+                        val fileInfo = GioTypeMappers.toImbricFileInfo(child, info)
                         
                         // Apply filters
                         val matchesMime = query.mimeFilter == null || fileInfo.mimeType.startsWith(query.mimeFilter)

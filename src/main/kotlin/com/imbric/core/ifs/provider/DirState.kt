@@ -66,7 +66,7 @@ class DirState(
      */
     val items: StateFlow<List<FileInfo>> = _itemsList.asStateFlow()
 
-    private val _isLoading = MutableStateFlow(false)
+    private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading
 
     private val _loadError = MutableStateFlow<Exception?>(null)
@@ -94,8 +94,9 @@ class DirState(
      */
     fun refresh() {
         if (isDestroyed.get()) return
+        val oldJob = refreshJob
         val newJob = scope.launch(ioDispatcher) {
-            refreshJob?.cancelAndJoin() // Wait for old job to finish before clearing state
+            oldJob?.cancelAndJoin() // Wait for old job to finish before clearing state
             startWatching() // Ensure monitoring is active after a stop()
             _isLoading.value = true
             _loadError.value = null
@@ -116,7 +117,9 @@ class DirState(
                         yield()
                     }
             } catch (e: Exception) {
-                _loadError.value = e
+                if (e !is CancellationException) {
+                    _loadError.value = e
+                }
             } finally {
                 _isLoading.value = false
             }
@@ -233,26 +236,6 @@ class DirState(
                 currentInfo = enrichedInfo
             }
 
-            if (currentInfo.isDirectory) {
-                val caps = backend.getCapabilities(currentInfo.uri)
-                // Latency Guard: skip deep counting on remote backends
-                if (caps.locality != Locality.NETWORK && caps.locality != Locality.VIRTUAL) {
-                    try {
-                        val count = backend.deepCount(currentInfo.uri).last()
-                        val countInfo = currentInfo.copy(
-                            attributes = currentInfo.attributes + mapOf(
-                                "std::deep-count" to count,
-                                "std::child-count" to count.totalItems
-                            )
-                        )
-                        updateItem(countInfo.uri, countInfo)
-                        currentInfo = countInfo
-                    } catch (_: Exception) {
-                        // Deep count failed — not critical, skip silently
-                    }
-                }
-            }
-
             // Mark enrichment complete — used by whenEnriched() readiness flow
             val enrichedMarker = currentInfo.copy(
                 attributes = currentInfo.attributes + ("std::enriched" to true)
@@ -328,6 +311,38 @@ class DirState(
         }.take(1)
 
     // --- Lifecycle ---
+
+    /**
+     * Called when this DirState becomes actively viewed by the UI.
+     * Restarts monitoring and triggers a background check/sync without clearing current items or showing the spinner.
+     */
+    fun onActive() {
+        if (isDestroyed.get()) return
+        startWatching() // Ensure monitoring is active
+
+        // Fast background revalidation (Stale-While-Revalidate)
+        val oldJob = refreshJob
+        val newJob = scope.launch(ioDispatcher) {
+            oldJob?.cancelAndJoin()
+            try {
+                val fetched = mutableMapOf<String, FileInfo>()
+                strategy.list(backend, uri).collect { item ->
+                    fetched[item.uri] = item
+                }
+                val current = _items.value
+                if (current != fetched) {
+                    _items.value = fetched
+                    _itemsList.value = fetched.values.toList()
+                    fetched.values.forEach { enrichItem(it) }
+                }
+            } catch (e: Exception) {
+                if (e !is CancellationException) {
+                    _loadError.value = e
+                }
+            }
+        }
+        refreshJob = newJob
+    }
 
     /**
      * Stops monitoring and enrichment, but keeps the current data in memory.

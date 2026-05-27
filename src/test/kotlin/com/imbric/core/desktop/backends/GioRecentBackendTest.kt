@@ -5,11 +5,17 @@ import com.imbric.core.ifs.backends.GioRecentBackend
 import com.imbric.core.models.FileJob
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.gnome.gio.Gio
 import kotlin.test.assertTrue
 import kotlin.test.assertIs
 
 class GioRecentBackendTest {
+    @BeforeEach
+    fun setup() {
+        Gio.`javagi$ensureInitialized`()
+    }
     @Test
     fun testListRecents() = runBlocking {
         val backend = GioRecentBackend()
