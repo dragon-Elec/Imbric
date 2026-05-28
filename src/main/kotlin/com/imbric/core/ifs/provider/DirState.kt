@@ -326,6 +326,9 @@ class DirState(
         if (isDestroyed.get()) return
         startWatching() // Ensure monitoring is active
 
+        // If we are already loading (e.g. from init), don't cancel it!
+        if (_isLoading.value) return
+
         // Fast background revalidation (Stale-While-Revalidate)
         val oldJob = refreshJob
         val newJob = scope.launch(ioDispatcher) {

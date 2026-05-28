@@ -15,12 +15,12 @@ import kotlin.uuid.ExperimentalUuidApi
 object GioTypeMappers {
 
     fun toImbricFileInfo(
-        gfile: org.gnome.gio.File, 
+        uri: String,
+        path: String,
         gioInfo: org.gnome.gio.FileInfo,
         backendId: String = "gio",
         extractAllAttributes: Boolean = false
     ): FileInfo {
-        val uri = gfile.uri?.toString() ?: ""
         val name = gioInfo.name?.toString() ?: ""
         val pathType = determinePathType(uri)
         val nativeId = getNativeId(gioInfo)
@@ -28,7 +28,7 @@ object GioTypeMappers {
         return FileInfo(
             nativeId = nativeId,
             name = name,
-            path = gfile.path?.toString() ?: uri,
+            path = path,
             uri = uri,
             pathType = pathType,
             displayName = gioInfo.displayName?.toString() ?: name,
@@ -78,6 +78,21 @@ object GioTypeMappers {
                     gioInfo.getAttributeStringv("metadata::emblems")?.let { put("metadata::emblems", it.toList()) }
                 }
             }
+        )
+    }
+
+    fun toImbricFileInfo(
+        gfile: org.gnome.gio.File, 
+        gioInfo: org.gnome.gio.FileInfo,
+        backendId: String = "gio",
+        extractAllAttributes: Boolean = false
+    ): FileInfo {
+        return toImbricFileInfo(
+            uri = gfile.uri?.toString() ?: "",
+            path = gfile.path?.toString() ?: gfile.uri?.toString() ?: "",
+            gioInfo = gioInfo,
+            backendId = backendId,
+            extractAllAttributes = extractAllAttributes
         )
     }
 
