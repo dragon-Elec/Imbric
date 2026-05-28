@@ -90,14 +90,13 @@ class TransferOrchestrator(
             val destBackend = backendRegistry.getIo(dest) ?: return
 
             val srcMeta = srcBackend.getMetadata(src).getOrNull() ?: return
-            val destExists = destBackend.exists(dest)
+            val destMeta = destBackend.getMetadata(dest).getOrNull()
 
-            if (!destExists) {
+            if (destMeta == null) {
                 validatedOps.add(ValidatedOp(src, dest, false))
                 return
             }
 
-            val destMeta = destBackend.getMetadata(dest).getOrNull() ?: return
             val conflictType = XferArbiter.classifyConflict(srcMeta, destMeta)
             val conflictContext = ConflictContext(src, dest, srcMeta, destMeta, conflictType)
 

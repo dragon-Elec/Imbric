@@ -63,6 +63,8 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     }
 
     override suspend fun canPerform(action: FileAction, uri: String): Boolean = withContext(Dispatchers.IO) {
+        if (action == FileAction.WATCH) return@withContext !uri.startsWith("recent://")
+        
         val gfile = File.newForUri(uri)
         val info = gfile.queryInfo("access::*,standard::*", FileQueryInfoFlags.NONE, null) ?: return@withContext false
         
@@ -76,7 +78,6 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
             FileAction.LIST_CHILDREN -> info.fileType == FileType.DIRECTORY
             FileAction.COPY_SOURCE -> info.getAttributeBoolean("access::can-read")
             FileAction.MOVE_SOURCE -> info.getAttributeBoolean("access::can-delete") && info.getAttributeBoolean("access::can-read")
-            FileAction.WATCH -> !uri.startsWith("recent://")
         }
     }
 
@@ -105,26 +106,49 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     override fun list(uri: String): Flow<FileInfo> = flow {
         val gfile = File.newForUri(uri)
         val scheme = uri.substringBefore("://", "file")
+        val timer = PipelineTimer.current()
 
-        // Time only the GIO round-trip (enumerateChildren), not the emit loop
-        var enumerator: org.gnome.gio.FileEnumerator? = null
-        val timeTaken = measureTimeMillis {
-            enumerator = gfile.enumerateChildren(queryAttributes, FileQueryInfoFlags.NONE, null)
-        }
-        latencyProfiler.recordSample(scheme, timeTaken)
+        timer?.mark("gio_list_start", detail = uri)
 
-        // Emit loop is outside the timer — consumer speed doesn't pollute the profile
+        val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
+            block = { cancellable, callback ->
+                gfile.enumerateChildrenAsync(queryAttributes, FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, callback)
+            },
+            finish = { result ->
+                gfile.enumerateChildrenFinish(result)
+            }
+        )
+
+        timer?.mark("gio_enumerate_done")
+
+        var totalEmitted = 0
         try {
-            var info = enumerator?.nextFile(null)
-            while (info != null) {
-                val name = info.name?.toString() ?: ""
-                val childFile = gfile.getChild(name)
-                emit(GioTypeMappers.toImbricFileInfo(childFile, info))
-                info = enumerator?.nextFile(null)
+            while (true) {
+                val fileInfos = GioCoroutineBridge.awaitGioAsync<org.gnome.glib.List<org.gnome.gio.FileInfo>>(
+                    block = { cancellable, callback ->
+                        enumerator.nextFilesAsync(200, GLib.PRIORITY_DEFAULT, cancellable, callback)
+                    },
+                    finish = { result ->
+                        enumerator.nextFilesFinish(result)
+                    }
+                )
+
+                if (fileInfos.isEmpty()) break
+
+                for (info in fileInfos) {
+                    if (info == null) continue
+                    val name = info.name?.toString() ?: ""
+                    val childFile = gfile.getChild(name)
+                    emit(GioTypeMappers.toImbricFileInfo(childFile, info))
+                    totalEmitted++
+                }
+                timer?.mark("gio_batch_emitted", itemCount = totalEmitted)
             }
         } finally {
-            enumerator?.close(null)
+            enumerator.close(null)
         }
+
+        timer?.mark("gio_list_done", itemCount = totalEmitted)
     }.flowOn(Dispatchers.IO)
 
     override suspend fun getMetadata(uri: String): Result<FileInfo> = withVfsErrorHandling(uri) {

@@ -13,12 +13,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.imbric.app.NavTimer
 import com.imbric.app.ui.AddressBar
 import com.imbric.app.ui.DirectoryView
 import com.imbric.app.ui.LayoutMode
 import com.imbric.app.viewmodel.FileBrowserViewModel
 import com.imbric.app.viewmodel.FileBrowserState
+import com.imbric.core.ifs.backends.PipelineTimer
 import com.imbric.core.ifs.provider.DirStateRegistry
 import com.imbric.core.models.FileInfo
 
@@ -39,9 +39,6 @@ fun ImbricApp(registry: DirStateRegistry) {
 
     val state by viewModel.state.collectAsState()
     val layoutMode by viewModel.layoutMode.collectAsState()
-
-    // Navigation timing: track click-to-render latency
-    val navTimer = remember { mutableStateOf<NavTimer?>(null) }
 
     Scaffold(
         topBar = {
@@ -76,12 +73,11 @@ fun ImbricApp(registry: DirStateRegistry) {
         FileBrowserContent(
             state = state,
             layoutMode = layoutMode,
-            navTimer = navTimer,
             onItemClick = { item ->
                 if (item.isDirectory) {
-                    // Start navigation timer for performance tracing
-                    NavTimer.setRef()  // Global reference for composable render timing
-                    navTimer.value = NavTimer("navigateTo").also { it.mark("click", uri = item.uri) }
+                    val timer = PipelineTimer("navigateTo")
+                    timer.mark("ui_click", detail = item.uri)
+                    viewModel.pipelineTimer = timer
                     viewModel.navigateTo(item.uri)
                 }
             },
@@ -96,19 +92,9 @@ fun ImbricApp(registry: DirStateRegistry) {
 private fun FileBrowserContent(
     state: FileBrowserState,
     layoutMode: LayoutMode,
-    navTimer: MutableState<NavTimer?>,
     onItemClick: (FileInfo) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Navigation timing: log when data arrives in UI
-    LaunchedEffect(state.isLoading, state.items) {
-        val t = navTimer.value
-        if (t != null && !state.isLoading && state.items.isNotEmpty()) {
-            t.mark("data_ready", state.items.size)
-            t.log("ui_rendered")
-            navTimer.value = null
-        }
-    }
     Box(modifier = modifier) {
         AnimatedContent(
             targetState = state.uri,

@@ -10,6 +10,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlin.coroutines.EmptyCoroutineContext
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -26,7 +27,9 @@ class DirState(
     private val backend: IOBackend,
     private val parentScope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
-    private val strategy: ListingStrategy = ListingStrategy.Standard
+    private val strategy: ListingStrategy = ListingStrategy.Standard,
+    /** Optional pipeline timing tracer for performance debugging. */
+    val pipelineTimer: com.imbric.core.ifs.backends.PipelineTimer? = null
 ) {
     /** Child job tied to this DirState's lifecycle. Cancelled on [destroy]. */
     private val job = SupervisorJob(parentScope.coroutineContext[Job])
@@ -95,9 +98,12 @@ class DirState(
     fun refresh() {
         if (isDestroyed.get()) return
         val oldJob = refreshJob
-        val newJob = scope.launch(ioDispatcher) {
-            oldJob?.cancelAndJoin() // Wait for old job to finish before clearing state
-            startWatching() // Ensure monitoring is active after a stop()
+        val timer = pipelineTimer
+        val timerContext = timer?.asContextElement() ?: EmptyCoroutineContext
+        val newJob = scope.launch(ioDispatcher + timerContext) {
+            oldJob?.cancelAndJoin()
+            startWatching()
+            timer?.mark("dir_refresh_start")
             _isLoading.value = true
             _loadError.value = null
             _items.value = emptyMap()
@@ -107,13 +113,12 @@ class DirState(
                 strategy.list(backend, uri)
                     .chunked(50)
                     .collect { chunk ->
+                        timer?.mark("dir_chunk_collected", itemCount = chunk.size)
                         val updatedMap = _items.updateAndGet { current ->
                             current + chunk.associateBy { it.uri }
                         }
                         _itemsList.value = updatedMap.values.toList()
-                        // Start enrichment for this chunk
                         chunk.forEach { enrichItem(it) }
-                        
                         yield()
                     }
             } catch (e: Exception) {
@@ -122,6 +127,7 @@ class DirState(
                 }
             } finally {
                 _isLoading.value = false
+                timer?.mark("dir_refresh_done", itemCount = _items.value.size)
             }
         }
         refreshJob = newJob

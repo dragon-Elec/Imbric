@@ -28,7 +28,9 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class DirStateRegistry(
     private val backend: IOBackend,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    /** Optional pipeline timer. Passed to DirState instances for performance tracing. */
+    var pipelineTimer: com.imbric.core.ifs.backends.PipelineTimer? = null
 ) {
     private val cache = ConcurrentHashMap<String, WeakReference<DirState>>()
     private val accessCount = AtomicInteger(0)
@@ -42,7 +44,7 @@ class DirStateRegistry(
     fun getOrCreate(uri: String): DirState {
         var retries = 0
         while (retries < 3) {
-            val ref = cache.computeIfAbsent(uri) { WeakReference(DirState(uri, backend, scope)) }
+            val ref = cache.computeIfAbsent(uri) { WeakReference(DirState(uri, backend, scope, pipelineTimer = pipelineTimer)) }
             val state = ref.get()
             when {
                 state == null -> {
@@ -64,8 +66,8 @@ class DirStateRegistry(
         }
         // If we exhausted retries, ensure we still return a cached instance
         // to maintain the singleton-per-URI invariant
-        return cache.computeIfAbsent(uri) { WeakReference(DirState(uri, backend, scope)) }
-            .get() ?: DirState(uri, backend, scope)
+        return cache.computeIfAbsent(uri) { WeakReference(DirState(uri, backend, scope, pipelineTimer = pipelineTimer)) }
+            .get() ?: DirState(uri, backend, scope, pipelineTimer = pipelineTimer)
     }
 
     /**

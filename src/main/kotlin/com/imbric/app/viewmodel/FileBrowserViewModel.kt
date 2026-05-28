@@ -2,6 +2,7 @@ package com.imbric.app.viewmodel
 
 import com.imbric.app.ui.LayoutMode
 import com.imbric.core.ifs.IfsUri
+import com.imbric.core.ifs.backends.PipelineTimer
 import com.imbric.core.ifs.provider.DirState
 import com.imbric.core.ifs.provider.DirStateRegistry
 import com.imbric.core.models.FileInfo
@@ -36,6 +37,13 @@ class FileBrowserViewModel(
 
     private val _layoutMode = MutableStateFlow(LayoutMode.GRID)
     val layoutMode: StateFlow<LayoutMode> = _layoutMode.asStateFlow()
+
+    /** Optional pipeline timer. Set to non-null to enable timing traces. */
+    var pipelineTimer: PipelineTimer? = null
+        set(value) {
+            field = value
+            registry.pipelineTimer = value
+        }
 
     private val dirStateFlow = _currentUri.map { uri ->
         val dirState = registry.getOrCreate(uri)
@@ -79,7 +87,7 @@ class FileBrowserViewModel(
     fun navigateTo(uri: String) {
         val oldUri = _currentUri.value
         if (oldUri != uri) {
-            // Stop monitoring the old directory but keep it cached in memory for fast back/forward navigation
+            pipelineTimer?.mark("vm_navigate_to", detail = uri)
             registry.getOrCreate(oldUri).stop()
             _currentUri.value = uri
         }
