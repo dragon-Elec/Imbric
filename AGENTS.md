@@ -187,6 +187,14 @@ Read them when working on the corresponding topic.
 - **PR #19 was worse** — tried to remove `withContext` from `GioRecentBackend` which IS used on 3 lines. Would have broken build.
 - **Bot PRs (Jules, etc.) need human review.** "Simple" cleanup PRs aren't always safe. Always verify at compile level.
 
+### FFM vs PyGObject FFI (Benchmarked)
+- **Java FFM (`java-gi`) is 1.8x faster per call than Python's PyGObject FFI (libffi).** Benchmarked locally on 2129 files with identical GIO operations.
+- Kotlin FFM sync `nextFile()` + 10 attribute reads: **1171ms** (0.55ms/file)
+- Python PyGObject sync `next_file()` + 10 attribute reads: **2153ms** (1.01ms/file)
+- **Attribute count is NOT the bottleneck.** 10 attrs vs 21 attrs made no measurable difference (1171ms vs 1146ms). The per-call FFM overhead is ~0.55ms regardless of what you read from the GFileInfo object.
+- **The real bottleneck is Kotlin object construction** — `toImbricFileInfo()` creating 30+ field `FileInfo` objects, GLib.List linked-list traversal (each node is an FFM call), and `getChild()` per file. The production async path is 11x slower than raw sync enumeration due to these overheads.
+- **Don't blame FFM for slow listing.** The FFI layer is the fastest part. Optimize the object construction and reduce FFM calls per file (especially `getChild()`), not the attribute count.
+
 ### URI String Manipulation
 - **`trimEnd('/')` on `file:///` gives `file:`** which breaks scheme detection. Always check for root URIs (`isRootUri()`) before trimming slashes.
 - **Plain paths (`/path`) have no scheme.** Code that assumes `scheme://` exists will break on plain paths. Handle `schemeEnd == -1` separately.

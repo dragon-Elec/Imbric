@@ -114,7 +114,7 @@ class DirState(
             enrichedUris.clear()
             try {
                 strategy.list(backend, uri)
-                    .chunked(initialSize = 50, size = 200)
+                    .chunked(initialSize = 75, size = 200)
                     .collect { chunk ->
                         timer?.mark("dir_chunk_collected", itemCount = chunk.size)
                         val updatedMap = _items.updateAndGet { current ->

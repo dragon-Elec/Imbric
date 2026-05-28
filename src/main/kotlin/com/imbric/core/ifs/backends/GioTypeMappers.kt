@@ -38,6 +38,9 @@ object GioTypeMappers {
 
     private val CHARS_NEED_ENCODE = charArrayOf('#', '?', '%', ' ')
 
+    /** Sentinel UUID for listing mode — avoids Uuid.random() crypto overhead per file. */
+    private val LISTING_SENTINEL_UUID = Uuid.fromLongs(0, 0)
+
     fun toImbricFileInfo(
         uri: String,
         path: String,
@@ -73,8 +76,12 @@ object GioTypeMappers {
         val isDir = gioInfo.fileType == org.gnome.gio.FileType.DIRECTORY
 
         if (listingMode) {
-            // Minimal mode: only populate fields the UI needs for rendering
+            // Minimal mode: only populate fields the UI needs for rendering + sorting
+            // Skip isExecutable (1 FFM call) — isLaunchable will default to false,
+            // but the UI can still launch files via double-click
+            // Use a fixed sentinel UUID to avoid Uuid.random() crypto overhead per file
             return FileInfo(
+                id = LISTING_SENTINEL_UUID,
                 name = name,
                 path = childPath,
                 uri = childUri,
@@ -82,8 +89,8 @@ object GioTypeMappers {
                 isDirectory = isDir,
                 size = gioInfo.size,
                 mimeType = gioInfo.contentType?.toString() ?: "application/octet-stream",
+                modifiedTime = gioInfo.modificationDateTime?.let { Instant.fromEpochSeconds(it.toUnix()) },
                 isHidden = gioInfo.isHidden,
-                isExecutable = gioInfo.getAttributeBoolean("access::can-execute"),
                 backendId = backendId,
                 isInTrash = (parentUri ?: uri).startsWith("trash:///"),
                 isInRecent = (parentUri ?: uri).startsWith("recent:///"),
