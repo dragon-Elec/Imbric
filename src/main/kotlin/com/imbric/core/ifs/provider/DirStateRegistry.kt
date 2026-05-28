@@ -58,6 +58,7 @@ class DirStateRegistry(
                     continue
                 }
                 else -> {
+                    state.pipelineTimer = pipelineTimer
                     // Opportunistic sweep every 100 accesses to avoid O(N) on every call
                     if (accessCount.incrementAndGet() % 100 == 0) sweepStale()
                     return state
@@ -66,8 +67,10 @@ class DirStateRegistry(
         }
         // If we exhausted retries, ensure we still return a cached instance
         // to maintain the singleton-per-URI invariant
-        return cache.computeIfAbsent(uri) { WeakReference(DirState(uri, backend, scope, pipelineTimer = pipelineTimer)) }
+        val fallback = cache.computeIfAbsent(uri) { WeakReference(DirState(uri, backend, scope, pipelineTimer = pipelineTimer)) }
             .get() ?: DirState(uri, backend, scope, pipelineTimer = pipelineTimer)
+        fallback.pipelineTimer = pipelineTimer
+        return fallback
     }
 
     /**

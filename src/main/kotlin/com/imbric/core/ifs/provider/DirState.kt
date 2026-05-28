@@ -29,7 +29,7 @@ class DirState(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val strategy: ListingStrategy = ListingStrategy.Standard,
     /** Optional pipeline timing tracer for performance debugging. */
-    val pipelineTimer: com.imbric.core.ifs.backends.PipelineTimer? = null
+    var pipelineTimer: com.imbric.core.ifs.backends.PipelineTimer? = null
 ) {
     /** Child job tied to this DirState's lifecycle. Cancelled on [destroy]. */
     private val job = SupervisorJob(parentScope.coroutineContext[Job])
