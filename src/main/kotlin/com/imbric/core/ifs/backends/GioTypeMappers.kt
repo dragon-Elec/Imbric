@@ -17,7 +17,8 @@ object GioTypeMappers {
     fun toImbricFileInfo(
         gfile: org.gnome.gio.File, 
         gioInfo: org.gnome.gio.FileInfo,
-        backendId: String = "gio"
+        backendId: String = "gio",
+        extractAllAttributes: Boolean = false
     ): FileInfo {
         val uri = gfile.uri?.toString() ?: ""
         val name = gioInfo.name?.toString() ?: ""
@@ -70,7 +71,13 @@ object GioTypeMappers {
             // Security
             selinuxContext = gioInfo.getAttributeString("xattr::selinux"),
             
-            attributes = extractAttributes(gioInfo)
+            attributes = if (extractAllAttributes) {
+                extractAttributes(gioInfo)
+            } else {
+                buildMap {
+                    gioInfo.getAttributeStringv("metadata::emblems")?.let { put("metadata::emblems", it.toList()) }
+                }
+            }
         )
     }
 
@@ -88,7 +95,7 @@ object GioTypeMappers {
                     org.gnome.gio.FileAttributeType.UINT64 -> gioInfo.getAttributeUint64(attr)
                     org.gnome.gio.FileAttributeType.INT64 -> gioInfo.getAttributeInt64(attr)
                     org.gnome.gio.FileAttributeType.OBJECT -> gioInfo.getAttributeObject(attr)
-                    org.gnome.gio.FileAttributeType.STRINGV -> gioInfo.getAttributeStringv(attr)
+                    org.gnome.gio.FileAttributeType.STRINGV -> gioInfo.getAttributeStringv(attr)?.toList()
                     else -> null
                 }
             }

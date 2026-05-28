@@ -90,7 +90,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         return vfs.supportedUriSchemes?.contains(scheme) == true
     }
 
-    private val queryAttributes = "standard::*,time::*,unix::*,owner::*,access::*,trash::*,recent::modified,metadata::activation-uri,xattr::selinux"
+    private val queryAttributes = "standard::name,standard::display-name,standard::type,standard::is-hidden,standard::size,standard::content-type,standard::is-symlink,standard::symlink-target,time::modified,time::access,time::created,access::can-read,access::can-write,access::can-execute,unix::mode,owner::user,owner::group,standard::icon,standard::symbolic-icon,standard::thumbnail-path,metadata::emblems"
 
     private fun resolveUniqueTarget(uri: String): String {
         var current = uri
@@ -154,7 +154,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     override suspend fun getMetadata(uri: String): Result<FileInfo> = withVfsErrorHandling(uri) {
         val gfile = File.newForUri(uri)
         val info = gfile.queryInfo(queryAttributes, FileQueryInfoFlags.NONE, null)
-        GioTypeMappers.toImbricFileInfo(gfile, info)
+        GioTypeMappers.toImbricFileInfo(gfile, info, extractAllAttributes = true)
     }
 
     override suspend fun copy(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.channelFlow {
