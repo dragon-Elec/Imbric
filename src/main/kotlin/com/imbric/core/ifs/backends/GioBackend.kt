@@ -819,15 +819,14 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
     override suspend fun enrichMetadata(info: FileInfo): FileInfo = withContext(Dispatchers.IO) {
         var currentInfo = info
-        // currentInfo = enrichImageMetadata(currentInfo)
+        currentInfo = enrichImageMetadata(currentInfo)
         currentInfo = enrichDesktopMetadata(currentInfo)
         currentInfo
     }
 
-    /*
     private suspend fun enrichImageMetadata(info: FileInfo): FileInfo {
         val mime = info.mimeType.lowercase()
-        val isImage = mime.startsWith("image/") || mime.endsWith("/webp") || mime.endsWith("/heic") || mime.endsWith("/avif")
+        val isImage = mime.startsWith("image/") || mime.endsWith("/webp") || mime.endsWith("/heic") || mime.endsWith("/avif") || mime.endsWith("/jxl")
         
         if (!info.isDirectory && isImage) {
             val bytesResult = readHeader(info.uri, 65536)
@@ -835,30 +834,45 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 val bytes = bytesResult.getOrThrow()
                 var width = 0
                 var height = 0
+                
+                // 1. Try Skia Codec first (extremely fast, pure Java/Kotlin, no native overhead)
                 try {
-                    val loader = PixbufLoader()
-                    loader.onSizePrepared { w, h ->
-                        width = w
-                        height = h
-                    }
-                    loader.write(bytes)
-                    try { loader.close() } catch (e: Exception) { }
-                    
-                    if (width > 0 && height > 0) {
-                        val newAttrs = mapOf(
-                            "std::dimensions" to "${width}x${height}",
-                            "std::aspect-ratio" to width.toDouble() / height
-                        )
-                        return info.copy(attributes = info.attributes + newAttrs)
+                    val data = org.jetbrains.skia.Data.makeFromBytes(bytes)
+                    val codec = org.jetbrains.skia.Codec.makeFromData(data)
+                    if (codec != null) {
+                        width = codec.width
+                        height = codec.height
                     }
                 } catch (e: Exception) {
-                    // Ignore parsing errors for partial/corrupt images
+                    // Skia failed or format not supported (e.g. JXL in pre-built Skiko)
+                }
+                
+                // 2. Fall back to native PixbufLoader if Skia failed
+                if (width <= 0 || height <= 0) {
+                    try {
+                        val loader = PixbufLoader()
+                        loader.onSizePrepared { w, h ->
+                            width = w
+                            height = h
+                        }
+                        loader.write(bytes)
+                        try { loader.close() } catch (e: Exception) { }
+                    } catch (e: Exception) {
+                        // Ignore parsing errors for partial/corrupt images
+                    }
+                }
+                
+                if (width > 0 && height > 0) {
+                    val newAttrs = mapOf(
+                        "std::dimensions" to "${width}x${height}",
+                        "std::aspect-ratio" to width.toDouble() / height
+                    )
+                    return info.copy(attributes = info.attributes + newAttrs)
                 }
             }
         }
         return info
     }
-    */
 
     private suspend fun enrichDesktopMetadata(info: FileInfo): FileInfo {
         var currentInfo = info
