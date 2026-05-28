@@ -74,6 +74,7 @@ fun ImbricApp(registry: DirStateRegistry) {
             state = state,
             layoutMode = layoutMode,
             pipelineTimer = viewModel.pipelineTimer,
+            onReportDone = { viewModel.pipelineTimer = null },
             onItemClick = { item ->
                 if (item.isDirectory) {
                     val timer = PipelineTimer("navigateTo")
@@ -94,13 +95,15 @@ private fun FileBrowserContent(
     state: FileBrowserState,
     layoutMode: LayoutMode,
     pipelineTimer: PipelineTimer?,
+    onReportDone: () -> Unit,
     onItemClick: (FileInfo) -> Unit,
     modifier: Modifier = Modifier
 ) {
     LaunchedEffect(state.isLoading, state.items) {
-        if (pipelineTimer != null && !state.isLoading && state.items.isNotEmpty()) {
+        if (pipelineTimer != null && !state.isLoading) {
             pipelineTimer.mark("ui_rendered", state.items.size)
             pipelineTimer.report()
+            onReportDone()
         }
     }
     Box(modifier = modifier) {

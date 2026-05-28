@@ -70,12 +70,13 @@ def main():
 
     # We will register command plugins here later
     try:
-        from .commands import clean, doctor, generate, exec_cmd, history
+        from .commands import clean, doctor, generate, exec_cmd, history, run
         clean.register(sub)
         doctor.register(sub)
         generate.register(sub)
         exec_cmd.register(sub)
         history.register(sub)
+        run.register(sub)
     except ImportError as e:
         pass # Optional commands
 
@@ -93,13 +94,14 @@ def main():
         cmds[args.command](args)
     else:
         # Delegate to command plugins
-        from .commands import clean, doctor, generate, exec_cmd, history
+        from .commands import clean, doctor, generate, exec_cmd, history, run
         cmd_modules = {
             "clean": clean.run,
             "doctor": doctor.run,
             "generate": generate.run,
             "exec": exec_cmd.run,
             "history": history.run,
+            "run": run.run,
         }
         if args.command in cmd_modules:
             cmd_modules[args.command](args)

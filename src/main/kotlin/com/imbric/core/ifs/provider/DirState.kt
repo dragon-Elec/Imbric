@@ -9,6 +9,8 @@ import com.imbric.core.models.FileInfo
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.delay
 import kotlin.coroutines.EmptyCoroutineContext
 import java.util.Collections
@@ -31,6 +33,7 @@ class DirState(
     /** Optional pipeline timing tracer for performance debugging. */
     var pipelineTimer: com.imbric.core.ifs.backends.PipelineTimer? = null
 ) {
+    private val enrichmentSemaphore = Semaphore(4)
     /** Child job tied to this DirState's lifecycle. Cancelled on [destroy]. */
     private val job = SupervisorJob(parentScope.coroutineContext[Job])
     private val scope = CoroutineScope(parentScope.coroutineContext + job)
@@ -236,7 +239,9 @@ class DirState(
 
         scope.launch(ioDispatcher) {
             // Asynchronous backend enrichment (Pixbuf, .desktop files, etc.)
-            val enrichedInfo = backend.enrichMetadata(currentInfo)
+            val enrichedInfo = enrichmentSemaphore.withPermit {
+                backend.enrichMetadata(currentInfo)
+            }
             if (enrichedInfo != currentInfo) {
                 updateItem(enrichedInfo.uri, enrichedInfo)
                 currentInfo = enrichedInfo
@@ -331,9 +336,12 @@ class DirState(
 
         // Fast background revalidation (Stale-While-Revalidate)
         val oldJob = refreshJob
-        val newJob = scope.launch(ioDispatcher) {
+        val timer = pipelineTimer
+        val timerContext = timer?.asContextElement() ?: EmptyCoroutineContext
+        val newJob = scope.launch(ioDispatcher + timerContext) {
             oldJob?.cancelAndJoin()
             try {
+                timer?.mark("dir_revalidate_start", detail = uri)
                 val fetched = mutableMapOf<String, FileInfo>()
                 strategy.list(backend, uri).collect { item ->
                     fetched[item.uri] = item
@@ -344,6 +352,7 @@ class DirState(
                     _itemsList.value = fetched.values.toList()
                     fetched.values.forEach { enrichItem(it) }
                 }
+                timer?.mark("dir_revalidate_done", detail = uri)
             } catch (e: Exception) {
                 if (e !is CancellationException) {
                     _loadError.value = e

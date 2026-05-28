@@ -93,6 +93,10 @@ class OutputFilter:
             self._flush_dots()
             return line
 
+        if line.startswith("[PIPELINE]"):
+            self._flush_dots()
+            return f"\033[1;36m{line}\033[0m"
+
         if not line.startswith("> ") and not line.startswith("* "):
             return line
 
