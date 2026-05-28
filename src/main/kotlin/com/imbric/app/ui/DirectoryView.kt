@@ -145,12 +145,16 @@ fun FileRow(
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(8.dp),
-        color = if (isHovered) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
-        interactionSource = interactionSource,
-        modifier = modifier.fillMaxWidth()
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (isHovered) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                onClick = onClick
+            )
     ) {
         ListItem(
             headlineContent = {
@@ -181,7 +185,7 @@ fun FileRow(
                 )
             },
             colors = ListItemDefaults.colors(
-                containerColor = if (isHovered) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
+                containerColor = Color.Transparent
             )
         )
     }
@@ -196,15 +200,17 @@ fun FileGridCell(
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        color = if (isHovered) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
-        interactionSource = interactionSource,
+    Box(
         modifier = modifier
-            .width(120.dp)
             .height(130.dp)
             .padding(4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isHovered) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                onClick = onClick
+            )
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
