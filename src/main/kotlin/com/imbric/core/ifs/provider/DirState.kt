@@ -114,7 +114,7 @@ class DirState(
             enrichedUris.clear()
             try {
                 strategy.list(backend, uri)
-                    .chunked(200)
+                    .chunked(initialSize = 50, size = 200)
                     .collect { chunk ->
                         timer?.mark("dir_chunk_collected", itemCount = chunk.size)
                         val updatedMap = _items.updateAndGet { current ->
@@ -391,14 +391,19 @@ class DirState(
 
 /**
  * Utility to batch flow emissions into lists.
+ * @param initialSize The size of the first chunk (for fast initial render)
+ * @param size The size of subsequent chunks (to prevent UI thrashing)
  */
-private fun <T> Flow<T>.chunked(size: Int): Flow<List<T>> = flow {
+private fun <T> Flow<T>.chunked(initialSize: Int, size: Int): Flow<List<T>> = flow {
     val chunk = mutableListOf<T>()
+    var isFirstChunk = true
     collect { value ->
         chunk.add(value)
-        if (chunk.size >= size) {
+        val currentTargetSize = if (isFirstChunk) initialSize else size
+        if (chunk.size >= currentTargetSize) {
             emit(chunk.toList())
             chunk.clear()
+            isFirstChunk = false
         }
     }
     if (chunk.isNotEmpty()) {
