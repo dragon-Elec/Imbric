@@ -141,9 +141,8 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 for (info in fileInfos) {
                     if (info == null) continue
                     val name = info.name?.toString() ?: ""
-                    val childUri = "$parentUri/$name"
-                    val childPath = if (parentPath != null) "$parentPath/$name" else childUri
-                    emit(GioTypeMappers.toImbricFileInfo(childUri, childPath, info))
+                    val childFile = gfile.getChild(name)
+                    emit(GioTypeMappers.toImbricFileInfo(childFile, info))
                     totalEmitted++
                 }
                 timer?.mark("gio_batch_emitted", itemCount = totalEmitted)
