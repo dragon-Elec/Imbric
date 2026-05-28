@@ -23,11 +23,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.imbric.app.NavTimer
 import com.imbric.core.models.FileInfo
+import kotlin.math.max
 
 enum class LayoutMode {
     LIST, GRID
@@ -95,7 +97,15 @@ fun FileList(
 
         VerticalScrollbar(
             adapter = rememberScrollbarAdapter(state),
-            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight()
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(12.dp),
+            style = ScrollbarStyle(
+                minimalHeight = 16.dp,
+                thickness = 8.dp,
+                shape = RoundedCornerShape(4.dp),
+                hoverDurationMillis = 300,
+                unhoverColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                hoverColor = MaterialTheme.colorScheme.outline
+            )
         )
     }
 }
@@ -108,9 +118,16 @@ fun FileGrid(
 ) {
     NavTimer.record("grid_render")
     val state = rememberLazyGridState()
-    Box(modifier = modifier.fillMaxSize()) {
+
+    // Pre-calculate column count from available width for justified layout
+    // This avoids GridCells.Adaptive's per-recomposition column width calculation
+    val density = LocalDensity.current
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val columns = max(1, (maxWidth / 120.dp).toInt())
+        val cellWidth = maxWidth / columns
+
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 120.dp),
+            columns = GridCells.Fixed(columns),
             state = state,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -131,7 +148,15 @@ fun FileGrid(
 
         VerticalScrollbar(
             adapter = rememberScrollbarAdapter(state),
-            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight()
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(12.dp),
+            style = ScrollbarStyle(
+                minimalHeight = 16.dp,
+                thickness = 8.dp,
+                shape = RoundedCornerShape(4.dp),
+                hoverDurationMillis = 300,
+                unhoverColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                hoverColor = MaterialTheme.colorScheme.outline
+            )
         )
     }
 }

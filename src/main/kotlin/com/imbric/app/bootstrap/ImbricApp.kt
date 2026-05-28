@@ -1,9 +1,7 @@
 package com.imbric.app.bootstrap
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -106,34 +104,44 @@ private fun FileBrowserContent(
             onReportDone()
         }
     }
+
+    // Smart loading indicator: only shows after 150ms delay (represents a hang, not progress)
+    // If items arrive within 150ms, no indicator is shown — items appear instantly
+    var showLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(state.uri) {
+        showLoading = false
+        kotlinx.coroutines.delay(150)
+        if (state.items.isEmpty() && state.isLoading) {
+            showLoading = true
+        }
+    }
+
+    // If items arrive after indicator was shown, hide it
+    LaunchedEffect(state.items.size) {
+        if (state.items.isNotEmpty()) {
+            showLoading = false
+        }
+    }
+
     Box(modifier = modifier) {
-        AnimatedContent(
-            targetState = state.uri,
-            transitionSpec = {
-                // M3 motion: enter = decelerate (fast start, gentle settle)
-                //            exit = accelerate (slow start, quick departure)
-                // Enter = 300ms, Exit = 200ms (exit is always faster)
-                val enterEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)   // EmphasizedDecelerate
-                val exitEasing = CubicBezierEasing(0.3f, 0.0f, 0.8f, 0.15f)    // EmphasizedAccelerate
-                (slideInVertically(animationSpec = tween(300, easing = enterEasing)) { it / 4 } +
-                    fadeIn(animationSpec = tween(300, easing = enterEasing))
-                ) togetherWith
-                (slideOutVertically(animationSpec = tween(200, easing = exitEasing)) { -it / 4 } +
-                    fadeOut(animationSpec = tween(200, easing = exitEasing))
-                )
-            }
-        ) { targetUri ->
-            if (state.isLoading && state.items.isEmpty()) {
-                LoadingView()
-            } else if (state.items.isEmpty()) {
-                EmptyFolderView(targetUri)
-            } else {
-                DirectoryView(
-                    items = state.items,
-                    layoutMode = layoutMode,
-                    onItemClick = onItemClick
-                )
-            }
+        // Directory content — always visible, no animation delay
+        if (state.items.isEmpty() && !state.isLoading) {
+            EmptyFolderView(state.uri)
+        } else if (state.items.isNotEmpty()) {
+            DirectoryView(
+                items = state.items,
+                layoutMode = layoutMode,
+                onItemClick = onItemClick
+            )
+        }
+
+        // Loading indicator — fades in only after 150ms of no data
+        AnimatedVisibility(
+            visible = showLoading && state.isLoading,
+            enter = fadeIn(animationSpec = tween(200)),
+            exit = fadeOut(animationSpec = tween(150))
+        ) {
+            LoadingView()
         }
     }
 }
