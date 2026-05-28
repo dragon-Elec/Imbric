@@ -129,6 +129,7 @@ API:
     - fun add(bookmark: Bookmark, index: Int = -1): Boolean
     - fun remove(uri: String)
     - fun moveItem(fromIndex: Int, toIndex: Int)
+    - fun dispose()
     - companion object getInstance(): BookmarkList
 
 

@@ -39,6 +39,7 @@ API:
     - val directoryType: DirectoryType
     - val isDestroyedState: Boolean
     - val isNotEmpty: Boolean
+    - var pipelineTimer: PipelineTimer?
     - fun refresh()
     - fun onActive()
     - fun stop()
@@ -63,6 +64,7 @@ Role: Cache manager storing and resolving unique DirState singletons using WeakR
 API:
   - DirStateRegistry:
     - val size: Int
+    - var pipelineTimer: PipelineTimer?
     - fun getOrCreate(uri: String): DirState
     - fun contains(uri: String): Boolean
     - fun remove(uri: String)
