@@ -819,11 +819,12 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
     override suspend fun enrichMetadata(info: FileInfo): FileInfo = withContext(Dispatchers.IO) {
         var currentInfo = info
-        currentInfo = enrichImageMetadata(currentInfo)
+        // currentInfo = enrichImageMetadata(currentInfo)
         currentInfo = enrichDesktopMetadata(currentInfo)
         currentInfo
     }
 
+    /*
     private suspend fun enrichImageMetadata(info: FileInfo): FileInfo {
         val mime = info.mimeType.lowercase()
         val isImage = mime.startsWith("image/") || mime.endsWith("/webp") || mime.endsWith("/heic") || mime.endsWith("/avif")
@@ -857,6 +858,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         }
         return info
     }
+    */
 
     private suspend fun enrichDesktopMetadata(info: FileInfo): FileInfo {
         var currentInfo = info
