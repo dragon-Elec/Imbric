@@ -74,7 +74,7 @@ class StarredManager private constructor(
                 try {
                     var info = enumerator.nextFile(null)
                     while (info != null) {
-                        val uri = info.getAttributeString("standard::uri")
+                        val uri = info.getAttributeAsString("standard::uri")
                         val starredFlag = info.getAttributeBoolean("metadata::nautilus-tags-starred")
                         if (uri != null && starredFlag) {
                             starred.add(uri)

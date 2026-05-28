@@ -14,25 +14,93 @@ import kotlin.uuid.ExperimentalUuidApi
  */
 object GioTypeMappers {
 
+    /**
+     * Fast child URI construction. Encodes only the characters that break URI parsing (#, ?, %).
+     * Returns null if the name contains characters that need encoding — caller should fall back to getChild().
+     */
+    fun fastChildUri(parentUri: String, name: String): String? {
+        if (name.indexOfAny(CHARS_NEED_ENCODE) >= 0) return null
+        return "$parentUri/$name"
+    }
+
+    /**
+     * Extract local filesystem path from a file:// URI without FFM calls.
+     * Returns null for non-local URIs or if decoding fails.
+     */
+    fun localPathFromFileUri(fileUri: String): String? {
+        if (!fileUri.startsWith("file://")) return null
+        return try {
+            java.net.URI(fileUri).path
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private val CHARS_NEED_ENCODE = charArrayOf('#', '?', '%', ' ')
+
     fun toImbricFileInfo(
         uri: String,
         path: String,
         gioInfo: org.gnome.gio.FileInfo,
         backendId: String = "gio",
-        extractAllAttributes: Boolean = false
+        extractAllAttributes: Boolean = false,
+        listingMode: Boolean = false,
+        parentUri: String? = null,
+        parentPath: String? = null
     ): FileInfo {
         val name = gioInfo.name?.toString() ?: ""
-        val pathType = determinePathType(uri)
+
+        // Compute child URI and path — fast path avoids getChild() FFM call
+        val childUri: String
+        val childPath: String
+        if (parentUri != null) {
+            childUri = fastChildUri(parentUri, name) ?: uri // fallback to provided uri (from getChild)
+            childPath = parentPath?.let { "$it/$name" }
+                ?: localPathFromFileUri(childUri)
+                ?: path
+        } else {
+            childUri = uri
+            childPath = path
+        }
+
+        val pathType = if (parentUri != null) {
+            // Parent context already known — skip per-child recalculation
+            determinePathType(parentUri)
+        } else {
+            determinePathType(uri)
+        }
+
+        val isDir = gioInfo.fileType == org.gnome.gio.FileType.DIRECTORY
+
+        if (listingMode) {
+            // Minimal mode: only populate fields the UI needs for rendering
+            return FileInfo(
+                name = name,
+                path = childPath,
+                uri = childUri,
+                pathType = pathType,
+                isDirectory = isDir,
+                size = gioInfo.size,
+                mimeType = gioInfo.contentType?.toString() ?: "application/octet-stream",
+                isHidden = gioInfo.isHidden,
+                isExecutable = gioInfo.getAttributeBoolean("access::can-execute"),
+                backendId = backendId,
+                isInTrash = (parentUri ?: uri).startsWith("trash:///"),
+                isInRecent = (parentUri ?: uri).startsWith("recent:///"),
+                isRemote = if (parentUri != null) isRemoteUri(parentUri) else isRemoteUri(uri)
+            )
+        }
+
         val nativeId = getNativeId(gioInfo)
-        
+
         return FileInfo(
             nativeId = nativeId,
             name = name,
-            path = path,
-            uri = uri,
+            path = childPath,
+            uri = childUri,
             pathType = pathType,
             displayName = gioInfo.displayName?.toString() ?: name,
-            isDirectory = gioInfo.fileType == org.gnome.gio.FileType.DIRECTORY,
+            isDirectory = isDir,
             isSymlink = gioInfo.isSymlink,
             symlinkTarget = if (gioInfo.isSymlink) gioInfo.symlinkTarget?.toString() else null,
             size = gioInfo.size,
@@ -45,32 +113,32 @@ object GioTypeMappers {
             isWritable = gioInfo.getAttributeBoolean("access::can-write"),
             isExecutable = gioInfo.getAttributeBoolean("access::can-execute"),
             permissions = gioInfo.getAttributeUint32("unix::mode").takeIf { it > 0 }?.toString(8) ?: "",
-            owner = gioInfo.getAttributeString("owner::user") ?: "",
-            group = gioInfo.getAttributeString("owner::group") ?: "",
+            owner = gioInfo.getAttributeAsString("owner::user") ?: "",
+            group = gioInfo.getAttributeAsString("owner::group") ?: "",
             iconName = getIconName(gioInfo),
-            thumbnailPath = gioInfo.getAttributeString("standard::thumbnail-path"),
+            thumbnailPath = gioInfo.getAttributeByteString("standard::thumbnail-path"),
             backendId = backendId,
-            
-            // Location Flags
-            isInTrash = uri.startsWith("trash:///"),
-            isInRecent = uri.startsWith("recent:///"),
-            isRemote = isRemoteUri(uri),
-            
+
+            // Location Flags — reuse parent context
+            isInTrash = (parentUri ?: uri).startsWith("trash:///"),
+            isInRecent = (parentUri ?: uri).startsWith("recent:///"),
+            isRemote = if (parentUri != null) isRemoteUri(parentUri) else isRemoteUri(uri),
+
             // Mount Capabilities
             canMount = gioInfo.getAttributeBoolean("access::can-mount"),
             canUnmount = gioInfo.getAttributeBoolean("access::can-unmount"),
             canEject = gioInfo.getAttributeBoolean("access::can-eject"),
-            
+
             // Virtual timestamps
             trashTime = getTrashTime(gioInfo),
             recency = getTimestamp(gioInfo, "recent::modified"),
-            
+
             // Activation URI (from metadata or .desktop file)
-            activationUri = gioInfo.getAttributeString("metadata::activation-uri"),
-            
+            activationUri = gioInfo.getAttributeAsString("metadata::activation-uri"),
+
             // Security
-            selinuxContext = gioInfo.getAttributeString("xattr::selinux"),
-            
+            selinuxContext = gioInfo.getAttributeAsString("xattr::selinux"),
+
             attributes = if (extractAllAttributes) {
                 extractAttributes(gioInfo)
             } else {
@@ -85,14 +153,20 @@ object GioTypeMappers {
         gfile: org.gnome.gio.File, 
         gioInfo: org.gnome.gio.FileInfo,
         backendId: String = "gio",
-        extractAllAttributes: Boolean = false
+        extractAllAttributes: Boolean = false,
+        listingMode: Boolean = false,
+        parentUri: String? = null,
+        parentPath: String? = null
     ): FileInfo {
         return toImbricFileInfo(
             uri = gfile.uri?.toString() ?: "",
             path = gfile.path?.toString() ?: gfile.uri?.toString() ?: "",
             gioInfo = gioInfo,
             backendId = backendId,
-            extractAllAttributes = extractAllAttributes
+            extractAllAttributes = extractAllAttributes,
+            listingMode = listingMode,
+            parentUri = parentUri,
+            parentPath = parentPath
         )
     }
 
@@ -132,7 +206,7 @@ object GioTypeMappers {
 
     private fun getNativeId(gioInfo: org.gnome.gio.FileInfo): String? {
         return gioInfo.getAttributeUint64("unix::inode").takeIf { it > 0 }?.toString()
-            ?: gioInfo.getAttributeString("standard::name")
+            ?: gioInfo.getAttributeAsString("standard::name")
     }
 
     private fun getTimestamp(gioInfo: org.gnome.gio.FileInfo, attribute: String): Instant? {
@@ -140,7 +214,7 @@ object GioTypeMappers {
     }
 
     private fun getTrashTime(gioInfo: org.gnome.gio.FileInfo): Instant? {
-        return gioInfo.getAttributeString("trash::deletion-date")?.let {
+        return gioInfo.getAttributeAsString("trash::deletion-date")?.let {
             try { Instant.parse(it) } catch (_: Exception) { null }
         }
     }

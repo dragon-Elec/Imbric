@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.yield
 import kotlin.uuid.Uuid
 import kotlin.uuid.ExperimentalUuidApi
 import org.gnome.gio.File
@@ -92,6 +95,9 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
     private val queryAttributes = "standard::name,standard::display-name,standard::type,standard::is-hidden,standard::size,standard::content-type,standard::is-symlink,standard::symlink-target,time::modified,time::access,time::created,access::can-read,access::can-write,access::can-execute,unix::mode,owner::user,owner::group,standard::icon,standard::symbolic-icon,standard::thumbnail-path,metadata::emblems"
 
+    /** Minimal attributes for directory listing — only what the UI needs for rendering. */
+    private val listingQueryAttributes = "standard::name,standard::type,standard::is-hidden,standard::size,standard::content-type,standard::is-symlink,access::can-execute"
+
     private fun resolveUniqueTarget(uri: String): String {
         var current = uri
         while (exists(current)) {
@@ -110,42 +116,42 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
         timer?.mark("gio_list_start", detail = uri)
 
-        val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
-            block = { cancellable, callback ->
-                gfile.enumerateChildrenAsync(queryAttributes, FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, callback)
-            },
-            finish = { result ->
-                gfile.enumerateChildrenFinish(result)
-            }
-        )
+        // Sync enumeration — avoids GList allocation and linked-list FFM traversal
+        val enumerator = gfile.enumerateChildren(listingQueryAttributes, FileQueryInfoFlags.NONE, null)
 
         timer?.mark("gio_enumerate_done")
 
         val parentUri = uri.trimEnd('/')
         val parentPath = gfile.path?.toString()?.trimEnd('/')
+            ?: GioTypeMappers.localPathFromFileUri(parentUri)
 
         var totalEmitted = 0
         try {
-            while (true) {
-                val fileInfos = GioCoroutineBridge.awaitGioAsync<org.gnome.glib.List<org.gnome.gio.FileInfo>>(
-                    block = { cancellable, callback ->
-                        enumerator.nextFilesAsync(200, GLib.PRIORITY_DEFAULT, cancellable, callback)
-                    },
-                    finish = { result ->
-                        enumerator.nextFilesFinish(result)
-                    }
-                )
+            val ctx = currentCoroutineContext()
+            while (ctx.isActive) {
+                val info = enumerator.nextFile(null) ?: break
+                val name = info.name?.toString() ?: ""
 
-                if (fileInfos.isEmpty()) break
-
-                for (info in fileInfos) {
-                    if (info == null) continue
-                    val name = info.name?.toString() ?: ""
+                // Fast path: construct child URI without FFM getChild() call (Opt 3)
+                val fastUri = GioTypeMappers.fastChildUri(parentUri, name)
+                if (fastUri != null) {
+                    emit(GioTypeMappers.toImbricFileInfo(
+                        uri = fastUri,
+                        path = "$parentPath/$name",
+                        gioInfo = info,
+                        listingMode = true,
+                        parentUri = parentUri,
+                        parentPath = parentPath
+                    ))
+                } else {
+                    // Special chars present — fall back to getChild() for safe encoding
                     val childFile = gfile.getChild(name)
-                    emit(GioTypeMappers.toImbricFileInfo(childFile, info))
-                    totalEmitted++
+                    emit(GioTypeMappers.toImbricFileInfo(childFile, info, listingMode = true, parentUri = parentUri, parentPath = parentPath))
                 }
-                timer?.mark("gio_batch_emitted", itemCount = totalEmitted)
+                totalEmitted++
+
+                // Cooperative cancellation — yield every 50 files
+                if (totalEmitted % 50 == 0) yield()
             }
         } finally {
             enumerator.close(null)
@@ -387,7 +393,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 val origPathAttr = info.getAttributeByteString("trash::orig-path")
                 val origPath = origPathAttr ?: ""
                 
-                val dateStr = info.getAttributeString("trash::deletion-date") ?: ""
+                val dateStr = info.getAttributeAsString("trash::deletion-date") ?: ""
                 val deletionDate = try { kotlinx.datetime.Instant.parse(dateStr).toEpochMilliseconds() } catch (e: Exception) { 0L }
 
                 items.add(TrashItem(
@@ -936,8 +942,8 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 FileQueryInfoFlags.NONE,
                 null
             )
-            info?.getAttributeString("thumbnail::path")
-                ?: info?.getAttributeString("standard::thumbnail-path")
+            info?.getAttributeByteString("thumbnail::path")
+                ?: info?.getAttributeByteString("standard::thumbnail-path")
         } catch (e: Exception) {
             null
         }
@@ -964,8 +970,8 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                     gfile.queryInfoFinish(result)
                 }
             )
-            val path = info?.getAttributeString("thumbnail::path")
-                ?: info?.getAttributeString("standard::thumbnail-path")
+            val path = info?.getAttributeByteString("thumbnail::path")
+                ?: info?.getAttributeByteString("standard::thumbnail-path")
             Result.success(path)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
