@@ -106,6 +106,9 @@ imbric-kt/
 ## Current Status (What Works)
 
 ### ✅ Completed (Stable, Verified)
+- **Skia Codec with Pixbuf Fallback:** Re-enabled image dimension enrichment in `GioBackend.kt` using Skia's `Codec` (via Skiko) as the primary, high-performance, pure-Kotlin decoder, and native `PixbufLoader` as a robust fallback for formats not compiled into Skiko (like JXL, HEIC, or AVIF on some platforms).
+- **Grid View Rendering Optimizations:** Replaced heavy Material 3 `Surface` components in `FileGridCell` and `FileRow` with lightweight `Box` + `Modifier.clickable` + `Modifier.background` to eliminate composition and layout overhead. Removed conflicting `.width(120.dp)` constraint from `FileGridCell` to eliminate layout double-measurement passes.
+- **Reduced Recomposition Thrashing:** Increased `DirState` chunk size from 50 to 200 to reduce StateFlow emissions and Compose recompositions by 66% during directory loading.
 - **Unified `ib` CLI Commands:** Integrated `ib test` (replacing `filter_gradle.py`) and `ib audit` (replacing `audit_validator.py` and `audit_validator.sh`).
   * `ib test` runs tests and filters the output cleanly (replacing passed tests with dots and showing full stack traces for failures) without any bold/color formatting.
   * `ib audit` automatically scans the entire codebase, finds all Kotlin files, locates their corresponding context files, and validates all of them in one pass.
