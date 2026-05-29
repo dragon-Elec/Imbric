@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -28,7 +29,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.imbric.app.NavTimer
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.FileEntry
 import kotlin.math.max
 
 enum class LayoutMode {
@@ -37,21 +38,22 @@ enum class LayoutMode {
 
 @Composable
 fun DirectoryView(
-    items: List<FileInfo>,
+    items: List<FileEntry>,
     layoutMode: LayoutMode,
-    onItemClick: (FileInfo) -> Unit,
+    onItemClick: (FileEntry) -> Unit,
+    onVisibleItemsChanged: ((List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     when (layoutMode) {
-        LayoutMode.LIST -> FileList(items = items, onItemClick = onItemClick, modifier = modifier)
-        LayoutMode.GRID -> FileGrid(items = items, onItemClick = onItemClick, modifier = modifier)
+        LayoutMode.LIST -> FileList(items = items, onItemClick = onItemClick, onVisibleItemsChanged = onVisibleItemsChanged, modifier = modifier)
+        LayoutMode.GRID -> FileGrid(items = items, onItemClick = onItemClick, onVisibleItemsChanged = onVisibleItemsChanged, modifier = modifier)
     }
 }
 
 /**
- * Maps a FileInfo object to an appropriate Material Design icon based on its MIME type.
+ * Maps a FileEntry object to an appropriate Material Design icon based on its MIME type.
  */
-fun getIconForFile(item: FileInfo): ImageVector {
+fun getIconForFile(item: FileEntry): ImageVector {
     if (item.isDirectory) return Icons.Default.Folder
     if (item.isArchive) return Icons.Default.Archive
 
@@ -70,12 +72,22 @@ fun getIconForFile(item: FileInfo): ImageVector {
 
 @Composable
 fun FileList(
-    items: List<FileInfo>,
-    onItemClick: (FileInfo) -> Unit,
+    items: List<FileEntry>,
+    onItemClick: (FileEntry) -> Unit,
+    onVisibleItemsChanged: ((List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     NavTimer.record("list_render")
     val state = rememberLazyListState()
+    
+    // Report visible items when items list changes (not on every scroll/layout change)
+    LaunchedEffect(items) {
+        if (onVisibleItemsChanged != null && items.isNotEmpty()) {
+            val visibleItems = state.layoutInfo.visibleItemsInfo.map { it.key as String }
+            onVisibleItemsChanged(visibleItems)
+        }
+    }
+    
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
             state = state,
@@ -112,12 +124,21 @@ fun FileList(
 
 @Composable
 fun FileGrid(
-    items: List<FileInfo>,
-    onItemClick: (FileInfo) -> Unit,
+    items: List<FileEntry>,
+    onItemClick: (FileEntry) -> Unit,
+    onVisibleItemsChanged: ((List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     NavTimer.record("grid_render")
     val state = rememberLazyGridState()
+
+    // Report visible items when items list changes (not on every scroll/layout change)
+    LaunchedEffect(items) {
+        if (onVisibleItemsChanged != null && items.isNotEmpty()) {
+            val visibleItems = state.layoutInfo.visibleItemsInfo.map { it.key as String }
+            onVisibleItemsChanged(visibleItems)
+        }
+    }
 
     // Pre-calculate column count from available width for justified layout
     // This avoids GridCells.Adaptive's per-recomposition column width calculation
@@ -163,7 +184,7 @@ fun FileGrid(
 
 @Composable
 fun FileRow(
-    item: FileInfo, 
+    item: FileEntry, 
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -218,7 +239,7 @@ fun FileRow(
 
 @Composable
 fun FileGridCell(
-    item: FileInfo,
+    item: FileEntry,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {

@@ -1,6 +1,6 @@
 package com.imbric.core.ifs
 
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.*
 import kotlinx.coroutines.flow.Flow
 
 object BackendRegistry {
@@ -51,6 +51,6 @@ object BackendRegistry {
     }
 
     // Convenience
-    fun list(uri: String): Flow<FileInfo>? = getIo(uri)?.list(uri)
+    fun list(uri: String): Flow<FileEntry>? = getIo(uri)?.list(uri)
     suspend fun getMetadata(uri: String): Result<FileInfo>? = getIo(uri)?.getMetadata(uri)
 }

@@ -1,7 +1,7 @@
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.ifs.backends
 
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.*
 import com.imbric.core.models.PathType
 import kotlinx.datetime.Instant
 import kotlin.uuid.Uuid
@@ -13,6 +13,36 @@ import kotlin.uuid.ExperimentalUuidApi
  * so that backends stay clean.
  */
 object GioTypeMappers {
+
+    fun toListingFile(
+        name: String,
+        parentUri: String,
+        parentPath: String,
+        gioInfo: org.gnome.gio.FileInfo,
+        parentPathType: PathType,
+        parentIsRemote: Boolean
+    ): ListingFile {
+        val childUri = fastChildUri(parentUri, name) ?: "$parentUri/$name"
+        val childPath = "$parentPath/$name"
+        val isDir = gioInfo.fileType == org.gnome.gio.FileType.DIRECTORY
+        
+        return ListingFile(
+            name = name,
+            uri = childUri,
+            path = childPath,
+            pathType = parentPathType,
+            isDirectory = isDir,
+            // Directories: skip 3 FFM calls (size, contentType, modificationDateTime)
+            size = if (isDir) 0L else gioInfo.size,
+            mimeType = if (isDir) "inode/directory" else gioInfo.contentType?.toString() ?: "application/octet-stream",
+            modifiedTime = if (isDir) null else gioInfo.modificationDateTime?.let { kotlinx.datetime.Instant.fromEpochSeconds(it.toUnix()) },
+            isHidden = name.startsWith("."),
+            isInTrash = parentUri.startsWith("trash:///"),
+            isInRecent = parentUri.startsWith("recent:///"),
+            isRemote = parentIsRemote
+        )
+    }
+
 
     /**
      * Fast child URI construction. Encodes only the characters that break URI parsing (#, ?, %).
@@ -47,11 +77,19 @@ object GioTypeMappers {
         gioInfo: org.gnome.gio.FileInfo,
         backendId: String = "gio",
         extractAllAttributes: Boolean = false,
-        listingMode: Boolean = false,
         parentUri: String? = null,
-        parentPath: String? = null
+        parentPath: String? = null,
+        // Pre-computed parent context — avoids per-child recalculation
+        parentPathType: PathType? = null,
+        parentIsRemote: Boolean? = null
     ): FileInfo {
-        val name = gioInfo.name?.toString() ?: ""
+        // Use name from parentUri if available, otherwise from gioInfo
+        val name = if (parentUri != null) {
+            // Extract name from URI — we already have it from getChild()
+            uri.substringAfterLast('/')
+        } else {
+            gioInfo.name?.toString() ?: ""
+        }
 
         // Compute child URI and path — fast path avoids getChild() FFM call
         val childUri: String
@@ -66,37 +104,11 @@ object GioTypeMappers {
             childPath = path
         }
 
-        val pathType = if (parentUri != null) {
-            // Parent context already known — skip per-child recalculation
-            determinePathType(parentUri)
-        } else {
-            determinePathType(uri)
-        }
+        // Use pre-computed parent context if available, otherwise compute per-child
+        val pathType = parentPathType ?: determinePathType(if (parentUri != null) parentUri else uri)
+        val isRemote = parentIsRemote ?: isRemoteUri(if (parentUri != null) parentUri else uri)
 
         val isDir = gioInfo.fileType == org.gnome.gio.FileType.DIRECTORY
-
-        if (listingMode) {
-            // Minimal mode: only populate fields the UI needs for rendering + sorting
-            // Skip isExecutable (1 FFM call) — isLaunchable will default to false,
-            // but the UI can still launch files via double-click
-            // Use a fixed sentinel UUID to avoid Uuid.random() crypto overhead per file
-            return FileInfo(
-                id = LISTING_SENTINEL_UUID,
-                name = name,
-                path = childPath,
-                uri = childUri,
-                pathType = pathType,
-                isDirectory = isDir,
-                size = gioInfo.size,
-                mimeType = gioInfo.contentType?.toString() ?: "application/octet-stream",
-                modifiedTime = gioInfo.modificationDateTime?.let { Instant.fromEpochSeconds(it.toUnix()) },
-                isHidden = gioInfo.isHidden,
-                backendId = backendId,
-                isInTrash = (parentUri ?: uri).startsWith("trash:///"),
-                isInRecent = (parentUri ?: uri).startsWith("recent:///"),
-                isRemote = if (parentUri != null) isRemoteUri(parentUri) else isRemoteUri(uri)
-            )
-        }
 
         val nativeId = getNativeId(gioInfo)
 
@@ -129,7 +141,7 @@ object GioTypeMappers {
             // Location Flags — reuse parent context
             isInTrash = (parentUri ?: uri).startsWith("trash:///"),
             isInRecent = (parentUri ?: uri).startsWith("recent:///"),
-            isRemote = if (parentUri != null) isRemoteUri(parentUri) else isRemoteUri(uri),
+            isRemote = isRemote,
 
             // Mount Capabilities
             canMount = gioInfo.getAttributeBoolean("access::can-mount"),
@@ -161,9 +173,11 @@ object GioTypeMappers {
         gioInfo: org.gnome.gio.FileInfo,
         backendId: String = "gio",
         extractAllAttributes: Boolean = false,
-        listingMode: Boolean = false,
         parentUri: String? = null,
-        parentPath: String? = null
+        parentPath: String? = null,
+        // Pre-computed parent context — avoids per-child recalculation
+        parentPathType: PathType? = null,
+        parentIsRemote: Boolean? = null
     ): FileInfo {
         return toImbricFileInfo(
             uri = gfile.uri?.toString() ?: "",
@@ -171,9 +185,10 @@ object GioTypeMappers {
             gioInfo = gioInfo,
             backendId = backendId,
             extractAllAttributes = extractAllAttributes,
-            listingMode = listingMode,
             parentUri = parentUri,
-            parentPath = parentPath
+            parentPath = parentPath,
+            parentPathType = parentPathType,
+            parentIsRemote = parentIsRemote
         )
     }
 
@@ -199,7 +214,7 @@ object GioTypeMappers {
         return attributeMap
     }
 
-    private fun determinePathType(uri: String): PathType {
+    internal fun determinePathType(uri: String): PathType {
         return when {
             uri.startsWith("trash://") || uri.startsWith("recent://") -> PathType.VIRTUAL
             else -> PathType.PHYSICAL
@@ -226,7 +241,7 @@ object GioTypeMappers {
         }
     }
 
-    private fun isRemoteUri(uri: String): Boolean {
+    internal fun isRemoteUri(uri: String): Boolean {
         return uri.contains("://") && !uri.startsWith("file://") && !uri.startsWith("trash://") && !uri.startsWith("recent://")
     }
 }

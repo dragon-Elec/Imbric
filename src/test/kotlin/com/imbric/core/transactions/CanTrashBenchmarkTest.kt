@@ -6,7 +6,7 @@ import com.imbric.core.ifs.BackendCapabilities
 import com.imbric.core.ifs.Locality
 import com.imbric.core.ifs.LatencyProfile
 import com.imbric.core.ifs.FileAction
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.*
 import com.imbric.core.models.FileJob
 import com.imbric.core.models.TransferProgress
 import com.imbric.core.models.TrashItem
@@ -19,7 +19,7 @@ class DummyBackend : IOBackend {
     override val scheme = "slow"
     override val displayName = "Slow Backend"
 
-    override fun list(uri: String): Flow<FileInfo> = emptyFlow()
+    override fun list(uri: String): Flow<FileEntry> = emptyFlow()
     override suspend fun getMetadata(uri: String): Result<FileInfo> = Result.failure(Exception())
     override suspend fun readHeader(uri: String, size: Long): Result<ByteArray> = Result.failure(Exception())
 

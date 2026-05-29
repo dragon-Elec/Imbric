@@ -18,7 +18,8 @@ import com.imbric.app.viewmodel.FileBrowserViewModel
 import com.imbric.app.viewmodel.FileBrowserState
 import com.imbric.core.ifs.backends.PipelineTimer
 import com.imbric.core.ifs.provider.DirStateRegistry
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.FileEntry
+import com.imbric.core.models.*
 
 /**
  * Root composable for Imbric.
@@ -35,15 +36,16 @@ fun ImbricApp(registry: DirStateRegistry) {
     val initialUri = "file:///home/ray/Pictures/empty folder"
     val viewModel = remember { FileBrowserViewModel(registry, initialUri, scope) }
 
-    val state by viewModel.state.collectAsState()
+    val state = viewModel.state.collectAsState()
     val layoutMode by viewModel.layoutMode.collectAsState()
+    val sortKey by viewModel.sortKey.collectAsState()
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     AddressBar(
-                        uri = state.uri,
+                        uri = state.value.uri,
                         layoutMode = layoutMode,
                         onToggleLayoutMode = { viewModel.toggleLayoutMode() },
                         modifier = Modifier.fillMaxWidth().padding(end = 16.dp),
@@ -53,7 +55,7 @@ fun ImbricApp(registry: DirStateRegistry) {
                 navigationIcon = {
                     IconButton(
                         onClick = { viewModel.goUp() },
-                        enabled = state.canGoUp
+                        enabled = state.value.canGoUp
                     ) {
                         Icon(
                             imageVector = Icons.Default.ArrowUpward,
@@ -69,8 +71,9 @@ fun ImbricApp(registry: DirStateRegistry) {
         }
     ) { innerPadding ->
         FileBrowserContent(
-            state = state,
+            state = state.value,
             layoutMode = layoutMode,
+            sortKey = sortKey,
             pipelineTimer = viewModel.pipelineTimer,
             onReportDone = { viewModel.pipelineTimer = null },
             onItemClick = { item ->
@@ -80,6 +83,9 @@ fun ImbricApp(registry: DirStateRegistry) {
                     viewModel.pipelineTimer = timer
                     viewModel.navigateTo(item.uri)
                 }
+            },
+            onVisibleItemsChanged = { visibleUris ->
+                viewModel.enrichVisibleItems(visibleUris)
             },
             modifier = Modifier
                 .fillMaxSize()
@@ -92,14 +98,22 @@ fun ImbricApp(registry: DirStateRegistry) {
 private fun FileBrowserContent(
     state: FileBrowserState,
     layoutMode: LayoutMode,
+    sortKey: SortKey,
     pipelineTimer: PipelineTimer?,
     onReportDone: () -> Unit,
-    onItemClick: (FileInfo) -> Unit,
+    onItemClick: (FileEntry) -> Unit,
+    onVisibleItemsChanged: ((List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    LaunchedEffect(state.isLoading, state.items) {
+    // Sort items reactively when either items or sortKey changes
+    val sortedItems = remember(state.items, sortKey) {
+        val comparator = FileEntry.comparatorFor(sortKey)
+        state.items.sortedWith(comparator)
+    }
+
+    LaunchedEffect(state.isLoading, sortedItems) {
         if (pipelineTimer != null && !state.isLoading) {
-            pipelineTimer.mark("ui_rendered", state.items.size)
+            pipelineTimer.mark("ui_rendered", sortedItems.size)
             pipelineTimer.report()
             onReportDone()
         }
@@ -111,28 +125,33 @@ private fun FileBrowserContent(
     LaunchedEffect(state.uri) {
         showLoading = false
         kotlinx.coroutines.delay(150)
-        if (state.items.isEmpty() && state.isLoading) {
+        if (sortedItems.isEmpty() && state.isLoading) {
             showLoading = true
         }
     }
 
     // If items arrive after indicator was shown, hide it
-    LaunchedEffect(state.items.size) {
-        if (state.items.isNotEmpty()) {
+    LaunchedEffect(sortedItems.size) {
+        if (sortedItems.isNotEmpty()) {
             showLoading = false
         }
     }
 
     Box(modifier = modifier) {
         // Directory content — always visible, no animation delay
-        if (state.items.isEmpty() && !state.isLoading) {
+        if (sortedItems.isEmpty() && !state.isLoading) {
             EmptyFolderView(state.uri)
-        } else if (state.items.isNotEmpty()) {
-            DirectoryView(
-                items = state.items,
-                layoutMode = layoutMode,
-                onItemClick = onItemClick
-            )
+        } else if (sortedItems.isNotEmpty()) {
+            // key(state.uri) forces Compose to recreate DirectoryView when directory changes,
+            // which resets the scroll position to top
+            key(state.uri) {
+                DirectoryView(
+                    items = sortedItems,
+                    layoutMode = layoutMode,
+                    onItemClick = onItemClick,
+                    onVisibleItemsChanged = onVisibleItemsChanged
+                )
+            }
         }
 
         // Loading indicator — fades in only after 150ms of no data

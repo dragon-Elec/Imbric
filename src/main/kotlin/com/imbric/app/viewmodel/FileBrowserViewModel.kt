@@ -5,7 +5,8 @@ import com.imbric.core.ifs.IfsUri
 import com.imbric.core.ifs.backends.PipelineTimer
 import com.imbric.core.ifs.provider.DirState
 import com.imbric.core.ifs.provider.DirStateRegistry
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.FileEntry
+import com.imbric.core.models.SortKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
@@ -17,7 +18,7 @@ import kotlinx.coroutines.launch
  */
 data class FileBrowserState(
     val uri: String,
-    val items: List<FileInfo> = emptyList(),
+    val items: List<FileEntry> = emptyList(),
     val isLoading: Boolean = true,
     val canGoUp: Boolean = false
 )
@@ -37,6 +38,9 @@ class FileBrowserViewModel(
 
     private val _layoutMode = MutableStateFlow(LayoutMode.GRID)
     val layoutMode: StateFlow<LayoutMode> = _layoutMode.asStateFlow()
+
+    private val _sortKey = MutableStateFlow(SortKey.NAME)
+    val sortKey: StateFlow<SortKey> = _sortKey.asStateFlow()
 
     /** Optional pipeline timer. Set to non-null to enable timing traces. */
     var pipelineTimer: PipelineTimer? = null
@@ -102,5 +106,19 @@ class FileBrowserViewModel(
 
     fun toggleLayoutMode() {
         _layoutMode.value = if (_layoutMode.value == LayoutMode.LIST) LayoutMode.GRID else LayoutMode.LIST
+    }
+
+    fun setSortKey(key: SortKey) {
+        _sortKey.value = key
+        // Update DirState's sort key so it fetches the right attributes on next refresh
+        dirStateFlow.value.sortKey = key
+    }
+
+    /**
+     * Viewport-driven enrichment: only enrich items visible in the viewport.
+     * Called by the UI when the visible items change (scroll, resize).
+     */
+    fun enrichVisibleItems(visibleUris: List<String>) {
+        dirStateFlow.value.enrichVisibleItems(visibleUris)
     }
 }

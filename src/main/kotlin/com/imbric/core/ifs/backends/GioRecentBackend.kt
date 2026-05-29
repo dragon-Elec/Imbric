@@ -31,7 +31,7 @@ class GioRecentBackend : IOBackend {
         return Paths.get(dataDir, "recently-used.xbel").toString()
     }
 
-    override fun list(uri: String): Flow<FileInfo> = flow {
+    override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> = flow {
         val bookmarkFile = BookmarkFile()
         try {
             bookmarkFile.loadFromFile(getRecentFilePath())

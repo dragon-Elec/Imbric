@@ -3,9 +3,10 @@ package com.imbric.core.ifs.provider
 
 import com.imbric.core.ifs.FileEvent
 import com.imbric.core.ifs.IOBackend
+import com.imbric.core.ifs.ListingDispatchers
 import com.imbric.core.ifs.Locality
 import com.imbric.core.models.DeepCount
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.channels.Channel
@@ -65,14 +66,15 @@ class DirState(
      * away from a directory.
      */
 
-    private val _items = MutableStateFlow<Map<String, FileInfo>>(emptyMap())
-    private val _itemsList = MutableStateFlow<List<FileInfo>>(emptyList())
+    private val _items = MutableStateFlow<Map<String, FileEntry>>(emptyMap())
+    private val _itemsList = MutableStateFlow<List<FileEntry>>(emptyList())
+    private val _uiUpdateChannel = Channel<Unit>(Channel.CONFLATED)
     
     /**
      * The current list of files in the directory.
      * Updates automatically as the file system changes.
      */
-    val items: StateFlow<List<FileInfo>> = _itemsList.asStateFlow()
+    val items: StateFlow<List<FileEntry>> = _itemsList.asStateFlow()
 
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading
@@ -136,15 +138,19 @@ class DirState(
         }
     }
 
-    private fun flushEnrichmentBatch(batch: List<FileInfo>) {
+    private fun flushEnrichmentBatch(batch: List<FileEntry>) {
         val mutable = _items.value.toMutableMap()
         batch.forEach { mutable[it.uri] = it }
         _items.value = mutable
         _itemsList.value = mutable.values.toList()
     }
 
+    /** The current sort key. UI sets this, DirState adapts attribute fetching. */
+    var sortKey: SortKey = SortKey.NAME
+    private val fileCache = LinkedHashMap<String, FileEntry>(512)
+
     /**
-     * Forces a full reload of the directory contents.
+     * Re-loads the directory contents and updates the cache.
      * Cancels any in-progress refresh to prevent interleaved data.
      * Restarts monitoring if it was stopped.
      */
@@ -153,39 +159,70 @@ class DirState(
         val oldJob = refreshJob
         val timer = pipelineTimer
         val timerContext = timer?.asContextElement() ?: EmptyCoroutineContext
-        val newJob = scope.launch(ioDispatcher + timerContext) {
+        // Set loading flag SYNCHRONOUSLY before launching coroutine to prevent onActive() race
+        _isLoading.value = true
+        _loadError.value = null
+        System.err.println("[DEBUG-REFRESH] uri=$uri oldJob=${oldJob?.hashCode()} _isLoading=${_isLoading.value}")
+        val newJob = scope.launch(ListingDispatchers.Listing + timerContext) {
+            System.err.println("[DEBUG-REFRESH-COROUTINE] uri=$uri START oldJob=${oldJob?.hashCode()} isActive=$isActive")
             oldJob?.cancelAndJoin()
+            System.err.println("[DEBUG-REFRESH-COROUTINE] uri=$uri AFTER cancelAndJoin isActive=$isActive")
             startWatching()
             timer?.mark("dir_refresh_start")
-            _isLoading.value = true
-            _loadError.value = null
-            _items.value = emptyMap()
-            _itemsList.value = emptyList()
             enrichedUris.clear()
+            
+            val localItems = HashMap<String, FileEntry>(512)
+            
             try {
-                // Chunked collect — progressive rendering
-                strategy.list(backend, uri)
-                    .chunked(initialSize = 75, size = 200)
-                    .collect { chunk ->
-                        timer?.mark("dir_chunk_collected", itemCount = chunk.size)
-                        val updatedMap = _items.updateAndGet { current ->
-                            current + chunk.associateBy { it.uri }
+                var totalCollected = 0
+                var lastEmittedCount = 0
+                
+                // Collect items and emit sorted batches every 200 items
+                strategy.list(backend, uri, sortKey)
+                    .collect { item ->
+                        val cached = fileCache[item.uri]
+                        val itemToStore = if (cached != null && cached.modifiedTime == item.modifiedTime && cached.size == item.size) {
+                            cached
+                        } else {
+                            item
                         }
-                        _itemsList.value = updatedMap.values.toList()
-                        chunk.forEach { enrichItem(it) }
-                        yield()
+                        localItems[itemToStore.uri] = itemToStore
+                        totalCollected++
+                        if (totalCollected == 1) System.err.println("[DEBUG-REFRESH-COLLECT] uri=$uri FIRST_ITEM uri=${itemToStore.uri}")
+                        if (totalCollected % 100 == 0) System.err.println("[DEBUG-REFRESH-COLLECT] uri=$uri totalCollected=$totalCollected")
+                        
+                        // Emit sorted batch every 200 items
+                        if (totalCollected - lastEmittedCount >= 200) {
+                            val sorted = localItems.values.sortedWith(FileEntry.comparatorFor(sortKey))
+                            _items.value = sorted.associateBy { it.uri }
+                            _itemsList.value = sorted
+                            if (lastEmittedCount == 0) timer?.mark("first_chunk_rendered", itemCount = totalCollected)
+                            lastEmittedCount = totalCollected
+                        }
                     }
-                // Enrich AFTER listing completes — eliminates 880 StateFlow emissions
-                // during critical listing path
-                // DISABLED FOR BENCHMARKING — re-enable after measuring
-                // allItems.forEach { enrichItem(it) }
+                
+                // Final emission — sort and emit all remaining items
+                val sorted = localItems.values.sortedWith(FileEntry.comparatorFor(sortKey))
+                _items.value = sorted.associateBy { it.uri }
+                _itemsList.value = sorted
+                if (lastEmittedCount == 0) timer?.mark("first_chunk_rendered", itemCount = totalCollected)
+                
+                timer?.mark("dir_list_done", itemCount = totalCollected)
+                
+                // Update cache
+                fileCache.clear()
+                fileCache.putAll(localItems)
+                
+                // Enrichment AFTER listing completes
+                val infosToEnrich = localItems.values.filterIsInstance<FileInfo>()
+                infosToEnrich.forEach { enrichItem(it) }
             } catch (e: Exception) {
-                if (e !is CancellationException) {
+                if (e !is kotlinx.coroutines.CancellationException) {
                     _loadError.value = e
                 }
             } finally {
                 _isLoading.value = false
-                timer?.mark("dir_refresh_done", itemCount = _items.value.size)
+                timer?.mark("dir_refresh_done", itemCount = localItems.size)
             }
         }
         refreshJob = newJob
@@ -300,6 +337,20 @@ class DirState(
         enrichmentChannel.trySend(currentInfo)
     }
 
+    /**
+     * Viewport-driven enrichment: only enrich items visible in the viewport.
+     * Called by the UI when the visible items change (scroll, resize).
+     */
+    fun enrichVisibleItems(visibleUris: List<String>) {
+        val items = _items.value
+        visibleUris.forEach { uri ->
+            val entry = items[uri] ?: return@forEach
+            if (!enrichedUris.contains(uri) && entry is FileInfo) {
+                enrichItem(entry)
+            }
+        }
+    }
+
     private fun updateItem(uri: String, info: FileInfo) {
         val updatedMap = _items.updateAndGet { current ->
             current + (uri to info)
@@ -316,15 +367,15 @@ class DirState(
     /** Returns true if the directory contains a file with the given URI. */
     fun containsFile(uri: String): Boolean = _items.value.containsKey(uri)
 
-    /** Returns the FileInfo for the file with the given name, or null if not found. */
-    fun getFileByName(name: String): FileInfo? = _itemsList.value.find { it.name == name }
+    /** Returns the FileEntry for the file with the given name, or null if not found. */
+    fun getFileByName(name: String): FileEntry? = _itemsList.value.find { it.name == name }
 
     /**
      * Returns all files in the directory that match the given glob pattern.
      * Compiles the pattern once and filters all items, avoiding per-file regex compilation.
      */
-    fun matchPattern(pattern: String): List<FileInfo> {
-        val regex = FileInfo.compileGlob(pattern)
+    fun matchPattern(pattern: String): List<FileEntry> {
+        val regex = FileEntry.compileGlob(pattern)
         return _itemsList.value.filter { regex.matches(it.name) }
     }
 
@@ -341,7 +392,7 @@ class DirState(
      * }
      * ```
      */
-    fun whenReady(predicate: (List<FileInfo>) -> Boolean): Flow<List<FileInfo>> =
+    fun whenReady(predicate: (List<FileEntry>) -> Boolean): Flow<List<FileEntry>> =
         _itemsList.filter { list -> !_isLoading.value && predicate(list) }.take(1)
 
     /**
@@ -359,10 +410,10 @@ class DirState(
      * }
      * ```
      */
-    fun whenEnriched(uri: String): Flow<FileInfo> =
+    fun whenEnriched(uri: String): Flow<FileEntry> =
         _itemsList.mapNotNull { list ->
             list.find { info ->
-                info.uri == uri && info.attributes.containsKey("std::enriched")
+                info.uri == uri && (info is FileInfo && info.attributes.containsKey("std::enriched"))
             }
         }.take(1)
 
@@ -375,33 +426,42 @@ class DirState(
     fun onActive() {
         if (isDestroyed.get()) return
         startWatching() // Ensure monitoring is active
+        System.err.println("[DEBUG-ONACTIVE] uri=$uri _isLoading=${_isLoading.value} refreshJob=${refreshJob?.hashCode()}")
 
         // If we are already loading (e.g. from init), don't cancel it!
-        if (_isLoading.value) return
+        if (_isLoading.value) {
+            System.err.println("[DEBUG-ONACTIVE] uri=$uri RETURN EARLY _isLoading=true")
+            return
+        }
 
         // Fast background revalidation (Stale-While-Revalidate)
         val oldJob = refreshJob
+        System.err.println("[DEBUG-ONACTIVE] uri=$uri ENTERING REVALIDATION oldJob=${oldJob?.hashCode()}")
         val timer = pipelineTimer
         val timerContext = timer?.asContextElement() ?: EmptyCoroutineContext
-        val newJob = scope.launch(ioDispatcher + timerContext) {
+        // Set loading flag SYNCHRONOUSLY before launching coroutine
+        _isLoading.value = true
+        val newJob = scope.launch(ListingDispatchers.Listing + timerContext) {
             oldJob?.cancelAndJoin()
             try {
                 timer?.mark("dir_revalidate_start", detail = uri)
-                val fetched = mutableMapOf<String, FileInfo>()
-                strategy.list(backend, uri).collect { item ->
+                val fetched = mutableMapOf<String, FileEntry>()
+                strategy.list(backend, uri, sortKey).collect { item ->
                     fetched[item.uri] = item
                 }
                 val current = _items.value
                 if (current != fetched) {
                     _items.value = fetched
                     _itemsList.value = fetched.values.toList()
-                    fetched.values.forEach { enrichItem(it) }
+                    fetched.values.filterIsInstance<FileInfo>().forEach { enrichItem(it) }
                 }
-                timer?.mark("dir_revalidate_done", detail = uri)
+                timer?.mark("dir_revalidate_done", detail = uri, itemCount = fetched.size)
             } catch (e: Exception) {
                 if (e !is CancellationException) {
                     _loadError.value = e
                 }
+            } finally {
+                _isLoading.value = false
             }
         }
         refreshJob = newJob

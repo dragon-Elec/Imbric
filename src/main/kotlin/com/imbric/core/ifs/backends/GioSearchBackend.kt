@@ -5,7 +5,7 @@ import com.imbric.core.ifs.BackendCapabilities
 import com.imbric.core.ifs.LatencyProfile
 import com.imbric.core.ifs.Locality
 import com.imbric.core.ifs.FileAction
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.*
 import com.imbric.core.models.FileJob
 import com.imbric.core.models.TransferProgress
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +34,7 @@ open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IO
         return uri.startsWith("search://")
     }
 
-    override fun list(uri: String): Flow<FileInfo> {
+    override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> {
         // search:///query?root=...&mime=...
         val text = uri.substringAfter("search:///", "").substringBefore("?")
         val params = uri.substringAfter("?", "").split("&").associate {
@@ -47,7 +47,7 @@ open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IO
         return search(com.imbric.core.models.VfsQuery(text = text, rootUri = root, mimeFilter = mime))
     }
 
-    override fun search(query: com.imbric.core.models.VfsQuery): Flow<FileInfo> = flow {
+    override fun search(query: com.imbric.core.models.VfsQuery): Flow<FileEntry> = flow {
         if (query.text.isBlank()) return@flow
 
         // 1. Try Tracker3

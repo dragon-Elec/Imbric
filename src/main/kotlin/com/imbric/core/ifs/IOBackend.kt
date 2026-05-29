@@ -1,7 +1,7 @@
 @file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 package com.imbric.core.ifs
 
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.*
 import com.imbric.core.models.FileJob
 import com.imbric.core.models.TransferProgress
 import com.imbric.core.models.TrashItem
@@ -42,7 +42,7 @@ interface IOBackend {
     suspend fun canPerform(action: FileAction, uri: String): Boolean
 
     // Reads
-    fun list(uri: String): Flow<FileInfo>
+    fun list(uri: String, sortKey: SortKey = SortKey.NAME): Flow<FileEntry>
     suspend fun getMetadata(uri: String): Result<FileInfo>
     
     // Bulk metadata default implementation
@@ -199,7 +199,7 @@ interface IOBackend {
     suspend fun isTrashEmpty(uri: String): Boolean = true
 
     // Optional (default no-ops)
-    fun search(query: com.imbric.core.models.VfsQuery): Flow<FileInfo> = flow {
+    fun search(query: com.imbric.core.models.VfsQuery): Flow<FileEntry> = flow {
         val stack = ArrayDeque<Pair<String, Int>>()
         stack.add(query.rootUri to 0)
         
@@ -232,7 +232,7 @@ interface IOBackend {
                                        (query.maxSize == null || info.size <= query.maxSize)
                     if (!matchesSize) return@collect
                     
-                    if (query.starredOnly && !info.isStarred) return@collect
+                    if (query.starredOnly && (info !is FileInfo || !info.isStarred)) return@collect
                     
                     emit(info)
                 }

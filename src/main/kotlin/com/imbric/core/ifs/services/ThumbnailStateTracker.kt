@@ -1,6 +1,6 @@
 package com.imbric.core.ifs.services
 
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.*
 import com.imbric.core.ifs.IOBackend
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*

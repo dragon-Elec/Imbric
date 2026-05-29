@@ -6,7 +6,7 @@ import com.imbric.core.ifs.FileAction
 import com.imbric.core.ifs.IOBackend
 import com.imbric.core.ifs.LatencyProfile
 import com.imbric.core.ifs.Locality
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.*
 import com.imbric.core.models.FileJob
 import com.imbric.core.models.TransferProgress
 import com.imbric.core.models.VfsQuery
@@ -21,7 +21,7 @@ import kotlin.uuid.ExperimentalUuidApi
 
 class GioSearchBackendTest {
 
-    class MockFallbackBackend(private val mockResults: List<FileInfo>) : IOBackend {
+    class MockFallbackBackend(private val mockResults: List<FileEntry>) : IOBackend {
         override val scheme: String = "mock"
         override val displayName: String = "Mock Backend"
 
@@ -30,9 +30,9 @@ class GioSearchBackendTest {
 
         override suspend fun canPerform(action: FileAction, uri: String): Boolean = true
         override fun getCapabilities(uri: String): BackendCapabilities = BackendCapabilities(Locality.LOCAL, LatencyProfile.LOW)
-        override fun list(uri: String): Flow<FileInfo> = flowOf()
+        override fun list(uri: String): Flow<FileEntry> = flowOf()
         override suspend fun getMetadata(uri: String): Result<FileInfo> {
-            val result = mockResults.find { it.uri == uri }
+            val result = mockResults.find { it.uri == uri } as? FileInfo
             return if (result != null) Result.success(result) else Result.failure(Exception("Not found"))
         }
         override fun exists(uri: String): Boolean = false
@@ -46,7 +46,7 @@ class GioSearchBackendTest {
         override suspend fun createFile(parentUri: String, name: String): Result<String> = Result.failure(Exception("Not implemented"))
         override suspend fun rename(uri: String, newName: String): Result<String> = Result.failure(Exception("Not implemented"))
 
-        override fun search(query: VfsQuery): Flow<FileInfo> {
+        override fun search(query: VfsQuery): Flow<FileEntry> {
             searchCalled = true
             return flowOf(*mockResults.toTypedArray())
         }

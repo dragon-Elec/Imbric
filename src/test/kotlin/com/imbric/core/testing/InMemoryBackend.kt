@@ -37,7 +37,7 @@ open class InMemoryBackend(
     private val thumbnailFailures = mutableSetOf<String>()
     private val thumbnailUnsupported = mutableSetOf<String>()
 
-    override fun list(uri: String): Flow<FileInfo> {
+    override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> {
         if (failingUris.contains(uri.removeSuffix("/"))) return emptyFlow()
         val normalizedUri = uri.removeSuffix("/")
         val children = fs.values.filter { 

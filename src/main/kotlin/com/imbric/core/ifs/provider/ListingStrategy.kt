@@ -1,10 +1,9 @@
 package com.imbric.core.ifs.provider
 
 import com.imbric.core.desktop.StarredManager
-import com.imbric.core.models.FileInfo
-import com.imbric.core.models.VfsQuery
+import com.imbric.core.models.*
+import com.imbric.core.models.SortKey
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 
@@ -25,8 +24,8 @@ sealed interface ListingStrategy {
      * This is the default strategy for normal directory browsing.
      */
     data object Standard : ListingStrategy {
-        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String): Flow<FileInfo> =
-            backend.list(uri)
+        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<FileEntry> =
+            backend.list(uri, sortKey)
 
         override fun watchable(): Boolean = true
     }
@@ -36,7 +35,7 @@ sealed interface ListingStrategy {
      * Used for search result directories where the content is defined by a query.
      */
     data class Search(val query: VfsQuery) : ListingStrategy {
-        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String): Flow<FileInfo> =
+        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<FileEntry> =
             backend.search(query)
 
         override fun watchable(): Boolean = false // Search results don't have a real directory to watch
@@ -50,7 +49,7 @@ sealed interface ListingStrategy {
      * for the "Starred" view.
      */
     data class Starred(val starredManager: StarredManager) : ListingStrategy {
-        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String): Flow<FileInfo> = flow {
+        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<FileEntry> = flow {
             val uris = starredManager.starredUris.value
             if (uris.isNotEmpty()) {
                 val results = backend.getMetadata(uris.toList())
@@ -67,8 +66,8 @@ sealed interface ListingStrategy {
      * Provides a static list of items. Used for virtual directories
      * like bookmarks, network shares, or custom aggregations.
      */
-    data class Virtual(val items: List<FileInfo>) : ListingStrategy {
-        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String): Flow<FileInfo> = flow {
+    data class Virtual(val items: List<FileEntry>) : ListingStrategy {
+        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<FileEntry> = flow {
             items.forEach { emit(it) }
         }
 
@@ -79,7 +78,7 @@ sealed interface ListingStrategy {
      * Produces a [Flow] of [FileInfo] for the initial directory listing.
      * Called by [DirState.refresh] to populate the directory contents.
      */
-    fun list(backend: com.imbric.core.ifs.IOBackend, uri: String): Flow<FileInfo>
+    fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey = SortKey.NAME): Flow<FileEntry>
 
     /**
      * Returns true if this strategy supports real-time file monitoring.

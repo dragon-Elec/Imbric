@@ -100,8 +100,8 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
     private val queryAttributes = "standard::name,standard::display-name,standard::type,standard::is-hidden,standard::size,standard::content-type,standard::is-symlink,standard::symlink-target,time::modified,time::access,time::created,access::can-read,access::can-write,access::can-execute,unix::mode,owner::user,owner::group,standard::icon,standard::symbolic-icon,standard::thumbnail-path,metadata::emblems"
 
-    /** Minimal attributes for directory listing — only what the UI needs for rendering. */
-    private val listingQueryAttributes = "standard::name,standard::type,standard::is-hidden,standard::size,standard::content-type,standard::is-symlink,access::can-execute"
+    /** Minimal attributes for directory listing — only what toListingFile() actually reads. */
+    private val listingQueryAttributes = "standard::name,standard::type,standard::size,standard::content-type,time::modified"
 
     private fun resolveUniqueTarget(uri: String): String {
         var current = uri
@@ -117,7 +117,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     // ═══════════════════════════════════════════════════════════════════════════
     // SYNC list() — commented out for async batching. Kept for reference.
     // ═══════════════════════════════════════════════════════════════════════════
-    // override fun list(uri: String): Flow<FileInfo> = flow {
+    // override fun list(uri: String): Flow<FileEntry> = flow {
     //     val gfile = File.newForUri(uri)
     //     val scheme = uri.substringBefore("://", "file")
     //     val timer = PipelineTimer.current()
@@ -171,22 +171,25 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     // ═══════════════════════════════════════════════════════════════════════════
     // ASYNC list() — batches of 200 files with background worker pipeline
     // ═══════════════════════════════════════════════════════════════════════════
-    override fun list(uri: String): Flow<FileInfo> = channelFlow {
+    override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> = channelFlow {
         val gfile = File.newForUri(uri)
         val scheme = uri.substringBefore("://", "file")
         val timer = PipelineTimer.current()
 
         timer?.mark("gio_list_start", detail = uri)
+        System.err.println("[DEBUG-GIO-LIST] uri=$uri START")
 
-        // Async enumeration — batches of 200 files per FFM call (2x faster than sync nextFile loop)
+        // Async enumeration — fetches all items in one call
+        val attributes = FileEntry.listingAttributesFor(sortKey)
         val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
             block = { cancellable, callback ->
-                gfile.enumerateChildrenAsync(listingQueryAttributes, FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, callback)
+                gfile.enumerateChildrenAsync(attributes, FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, callback)
             },
             finish = { result ->
                 gfile.enumerateChildrenFinish(result)
             }
         )
+        System.err.println("[DEBUG-GIO-LIST] uri=$uri ENUMERATE_DONE enumerator=$enumerator")
 
         timer?.mark("gio_enumerate_done")
 
@@ -194,52 +197,48 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         val parentPath = gfile.path?.toString()?.trimEnd('/')
             ?: GioTypeMappers.localPathFromFileUri(parentUri)
 
-        // Semaphore limits concurrent background workers to 8 (matching Python's BatchProcessorWorker)
+        // Dedicated 8-thread pool for construction workers (Python's BatchProcessorWorker pattern)
+        // Eliminates thread contention with shared Dispatchers.IO
         val workerSemaphore = Semaphore(8)
         var totalEmitted = 0
-        var batchIndex = 0
-
-        // Progressive batch sizes: small first batch for fast first render, then larger batches
-        val batchSizes = intArrayOf(75, 100, 300, 500)
 
         try {
             while (currentCoroutineContext().isActive) {
-                // Use progressive batch sizing: 75 → 100 → 300 → 500
-                val batchSize = if (batchIndex < batchSizes.size) batchSizes[batchIndex] else 500
-                batchIndex++
-
-                // Fetch next batch of files asynchronously
+                // Single large batch — fetch all items in one call
+                System.err.println("[DEBUG-GIO-BATCH] uri=$uri BEFORE nextFilesAsync isActive=${currentCoroutineContext().isActive}")
                 val batch = GioCoroutineBridge.awaitGioAsync<org.gnome.glib.List<org.gnome.gio.FileInfo>>(
                     block = { cancellable, callback ->
-                        enumerator.nextFilesAsync(batchSize, GLib.PRIORITY_DEFAULT, cancellable, callback)
+                        enumerator.nextFilesAsync(5000, GLib.PRIORITY_DEFAULT, cancellable, callback)
                     },
                     finish = { result ->
                         enumerator.nextFilesFinish(result)
                     }
                 )
-                if (batch == null || batch.isEmpty()) break
+                if (batch == null || batch.isEmpty()) {
+                    System.err.println("[DEBUG-GIO-BATCH] uri=$uri BATCH_EMPTY breaking")
+                    break
+                }
+                System.err.println("[DEBUG-GIO-BATCH] uri=$uri BATCH_SIZE=${batch.size}")
 
-                // Hand off batch to background worker — main loop continues immediately
+                // Hand off batch to dedicated listing worker — main loop continues immediately
                 // This creates pipeline overlap: GIO I/O and object construction run in parallel
-                // Use Dispatchers.IO for real threads (lower context-switch overhead than coroutines)
-                launch(Dispatchers.IO) {
+                // Uses ListingDispatchers.Listing (dedicated 8-thread pool) instead of shared Dispatchers.IO
+                launch(ListingDispatchers.Listing) {
                     workerSemaphore.withPermit {
+                        // Pre-compute parent context once for all children in this batch
+                        val parentPathType = GioTypeMappers.determinePathType(parentUri)
+                        val parentIsRemote = GioTypeMappers.isRemoteUri(parentUri)
+                        
                         for (info in batch) {
                             val name = info?.name?.toString() ?: continue
-                            val fastUri = GioTypeMappers.fastChildUri(parentUri, name)
-                            val fileInfo = if (fastUri != null) {
-                                GioTypeMappers.toImbricFileInfo(
-                                    uri = fastUri,
-                                    path = "$parentPath/$name",
-                                    gioInfo = info,
-                                    listingMode = true,
-                                    parentUri = parentUri,
-                                    parentPath = parentPath
-                                )
-                            } else {
-                                val childFile = gfile.getChild(name)
-                                GioTypeMappers.toImbricFileInfo(childFile, info, listingMode = true, parentUri = parentUri, parentPath = parentPath)
-                            }
+                            val fileInfo = GioTypeMappers.toListingFile(
+                                name = name,
+                                parentUri = parentUri,
+                                parentPath = parentPath ?: "",
+                                gioInfo = info,
+                                parentPathType = parentPathType,
+                                parentIsRemote = parentIsRemote
+                            )
                             send(fileInfo)
                             totalEmitted++
                         }
@@ -251,7 +250,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         }
 
         timer?.mark("gio_list_done", itemCount = totalEmitted)
-    }.flowOn(Dispatchers.IO).buffer(256)
+    }.flowOn(Dispatchers.IO).buffer(64)
 
     override suspend fun getMetadata(uri: String): Result<FileInfo> = withVfsErrorHandling(uri) {
         val gfile = File.newForUri(uri)
@@ -835,7 +834,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
     override fun exists(uri: String): Boolean = File.newForUri(uri).queryExists(null)
 
-    override fun search(query: com.imbric.core.models.VfsQuery): Flow<FileInfo> = flow {
+    override fun search(query: com.imbric.core.models.VfsQuery): Flow<FileEntry> = flow {
         val rootFile = File.newForUri(query.rootUri)
         val queryLower = query.text.lowercase()
         

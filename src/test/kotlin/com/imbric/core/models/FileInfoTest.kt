@@ -313,7 +313,7 @@ class FileInfoTest {
     @Test
     fun testCompileGlobSpecialCharacters() {
         // Pattern with parentheses should not throw PatternSyntaxException
-        val regex = FileInfo.compileGlob("report(v2).*")
+        val regex = FileEntry.compileGlob("report(v2).*")
         assertTrue(regex.matches("report(v2).txt"))
         assertTrue(regex.matches("report(v2).pdf"))
         assertFalse(regex.matches("reportv2.txt"))
@@ -321,21 +321,21 @@ class FileInfoTest {
 
     @Test
     fun testCompileGlobDotsAndBrackets() {
-        val regex = FileInfo.compileGlob("file[1].txt")
+        val regex = FileEntry.compileGlob("file[1].txt")
         assertTrue(regex.matches("file[1].txt"))
         assertFalse(regex.matches("file1.txt"))
     }
 
     @Test
     fun testCompileGlobPlusAndDollar() {
-        val regex = FileInfo.compileGlob("cost+$100.*")
+        val regex = FileEntry.compileGlob("cost+$100.*")
         assertTrue(regex.matches("cost+$100.txt"))
         assertFalse(regex.matches("cost$100.txt"))
     }
 
     @Test
     fun testCompileGlobBraces() {
-        val regex = FileInfo.compileGlob("backup{1}.zip")
+        val regex = FileEntry.compileGlob("backup{1}.zip")
         assertTrue(regex.matches("backup{1}.zip"))
         assertFalse(regex.matches("backup1.zip"))
         assertFalse(regex.matches("backup11.zip"))
@@ -343,7 +343,7 @@ class FileInfoTest {
 
     @Test
     fun testCompileGlobWildcard() {
-        val regex = FileInfo.compileGlob("*.jpg")
+        val regex = FileEntry.compileGlob("*.jpg")
         assertTrue(regex.matches("photo.jpg"))
         assertTrue(regex.matches("PHOTO.JPG"))
         assertFalse(regex.matches("photo.png"))

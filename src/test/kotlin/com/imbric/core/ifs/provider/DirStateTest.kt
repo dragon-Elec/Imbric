@@ -1,6 +1,6 @@
 package com.imbric.core.ifs.provider
 
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.*
 import com.imbric.core.testing.InMemoryBackend
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -94,7 +94,7 @@ class DirStateTest {
         // Wait for listing and enrichment
         advanceUntilIdle()
         
-        val item = dirState.items.value.first { it.uri == uri }
+        val item = dirState.items.value.first { it.uri == uri } as com.imbric.core.models.FileInfo
         assertEquals("1x1", item.attributes["std::dimensions"])
         assertEquals(1.0, item.attributes["std::aspect-ratio"])
     }
@@ -121,7 +121,7 @@ class DirStateTest {
     @Test
     fun `test load error on failure`() = runTest {
         val backend = object : InMemoryBackend() {
-            override fun list(uri: String): kotlinx.coroutines.flow.Flow<FileInfo> = kotlinx.coroutines.flow.flow {
+            override fun list(uri: String): kotlinx.coroutines.flow.Flow<FileEntry> = kotlinx.coroutines.flow.flow {
                 throw RuntimeException("Permission denied")
             }
         }
@@ -139,7 +139,7 @@ class DirStateTest {
     fun `test load error cleared on refresh`() = runTest {
         var shouldFail = true
         val backend = object : InMemoryBackend() {
-            override fun list(uri: String): kotlinx.coroutines.flow.Flow<FileInfo> = kotlinx.coroutines.flow.flow {
+            override fun list(uri: String): kotlinx.coroutines.flow.Flow<FileEntry> = kotlinx.coroutines.flow.flow {
                 if (shouldFail) throw RuntimeException("Fail")
                 // Empty flow for success
             }
@@ -509,7 +509,7 @@ class DirStateTest {
         advanceUntilIdle()
 
         // whenEnriched should emit once the enrichment pipeline sets std::enriched
-        val result = dirState.whenEnriched("memory://dir/a.txt").first()
+        val result = dirState.whenEnriched("memory://dir/a.txt").first() as com.imbric.core.models.FileInfo
         assertTrue(result.attributes.containsKey("std::enriched"))
     }
 
@@ -532,7 +532,7 @@ class DirStateTest {
         advanceUntilIdle()
 
         // items are children of the listed directory, not the directory itself
-        val childDir = dirState.items.value.find { it.name == "child" }!!
+        val childDir = dirState.items.value.find { it.name == "child" }!! as com.imbric.core.models.FileInfo
         assertTrue(childDir.attributes.containsKey("std::enriched"), "Child should be marked as enriched")
     }
 }

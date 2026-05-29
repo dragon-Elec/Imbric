@@ -1,7 +1,7 @@
 @file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 package com.imbric.core.logic
 
-import com.imbric.core.models.FileInfo
+import com.imbric.core.models.*
 import kotlinx.datetime.Instant
 import kotlin.test.Test
 import kotlin.test.assertTrue

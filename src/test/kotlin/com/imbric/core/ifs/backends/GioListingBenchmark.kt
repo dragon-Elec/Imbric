@@ -196,7 +196,7 @@ class GioListingBenchmark {
                                         )
                                     } else {
                                         val childFile = gfile.getChild(name)
-                                        GioTypeMappers.toImbricFileInfo(childFile, info, listingMode = true, parentUri = parentUri, parentPath = parentPath)
+                                        GioTypeMappers.toListingFile(name = name, parentUri = parentUri, parentPath = parentPath ?: "", gioInfo = info, parentPathType = com.imbric.core.models.PathType.PHYSICAL, parentIsRemote = false)
                                     }
                                     count++
                                 }
@@ -287,7 +287,7 @@ class GioListingBenchmark {
                                 )
                             } else {
                                 val childFile = gfile.getChild(name)
-                                GioTypeMappers.toImbricFileInfo(childFile, info, listingMode = true, parentUri = parentUri, parentPath = parentPath)
+                                GioTypeMappers.toListingFile(name = name, parentUri = parentUri, parentPath = parentPath ?: "", gioInfo = info, parentPathType = com.imbric.core.models.PathType.PHYSICAL, parentIsRemote = false)
                             }
                             count++
                         }

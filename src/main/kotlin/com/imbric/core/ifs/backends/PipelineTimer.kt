@@ -1,5 +1,6 @@
 package com.imbric.core.ifs.backends
 
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
@@ -25,7 +26,7 @@ import kotlin.coroutines.CoroutineContext
  */
 class PipelineTimer(private val label: String) {
     private val startNanos = System.nanoTime()
-    private val marks = mutableListOf<Mark>()
+    private val marks = CopyOnWriteArrayList<Mark>()
 
     data class Mark(
         val stage: String,
