@@ -30,7 +30,7 @@ class GioSearchBackendTest {
 
         override suspend fun canPerform(action: FileAction, uri: String): Boolean = true
         override fun getCapabilities(uri: String): BackendCapabilities = BackendCapabilities(Locality.LOCAL, LatencyProfile.LOW)
-        override fun list(uri: String): Flow<FileEntry> = flowOf()
+        override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> = flowOf()
         override suspend fun getMetadata(uri: String): Result<FileInfo> {
             val result = mockResults.find { it.uri == uri } as? FileInfo
             return if (result != null) Result.success(result) else Result.failure(Exception("Not found"))

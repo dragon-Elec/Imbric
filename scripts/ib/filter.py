@@ -79,7 +79,7 @@ class OutputFilter:
         task_match = self.TASK_PATTERN.match(line)
         if task_match:
             task_name = task_match.group(1)
-            if task_name in ("run", "test", "compileKotlin"):
+            if task_name in ("run", "test", "compileKotlin", "compileTestKotlin", "build"):
                 self._flush_dots()
                 self.last_task = task_name
                 return None

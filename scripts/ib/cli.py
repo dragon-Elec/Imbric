@@ -13,25 +13,8 @@ def cmd_stop(args):
     DaemonManager.stop_daemon()
 
 def cmd_status(args):
-    from .daemon import PID_FILE
-    pid = DaemonManager.read_pid()
-    if pid:
-        print(f"Daemon:  imbric-daemon (PID {pid}) — running")
-    else:
-        print("Daemon:  not running")
-
-    status = ProcessManager.get_status()
-    for p in status["gradle_daemons"]:
-        print(f"Gradle:  GradleDaemon (PID {p.pid}) — {p.mem}")
-    for p in status["kotlin_daemons"]:
-        print(f"Kotlin:  KotlinCompileDaemon (PID {p.pid}) — {p.mem}")
-    for p in status["app_processes"]:
-        print(f"App:     com.imbric.app (PID {p.pid}) — {p.mem}")
-    for p in status["gradlew_processes"]:
-        print(f"Gradlew: gradlew (PID {p.pid}) — {p.mem}")
-        
-    if not any(status.values()):
-        print("No processes running. Safe to start dev.")
+    from .commands.status import run as status_run
+    status_run(args)
 
 def cmd_log(args):
     from .daemon import LOG_FILE
@@ -61,16 +44,16 @@ def main():
     sub.add_parser("dev", help="Start build daemon (continuous mode)")
     sub.add_parser("hot", help="Start hot-reload daemon (JBR DCEVM required)")
     sub.add_parser("stop", help="Stop daemon")
-    sub.add_parser("status", help="Show process status")
     sub.add_parser("kill", help="Kill all Gradle/Kotlin/Imbric processes")
 
     log_p = sub.add_parser("log", help="Show daemon log")
     log_p.add_argument("-f", "--follow", action="store_true")
     log_p.add_argument("-n", "--lines", type=int, default=50)
 
-    # We will register command plugins here later
+    # Register command plugins
     try:
-        from .commands import clean, doctor, generate, exec_cmd, history, run, test, audit
+        from .commands import clean, doctor, generate, exec_cmd, history, run, test, audit, compile
+        from .commands import status, processes, memory, bench, project, lint
         clean.register(sub)
         doctor.register(sub)
         generate.register(sub)
@@ -79,7 +62,15 @@ def main():
         run.register(sub)
         test.register(sub)
         audit.register(sub)
+        compile.register(sub)
+        status.register(sub)
+        processes.register(sub)
+        memory.register(sub)
+        bench.register(sub)
+        project.register(sub)
+        lint.register(sub)
     except ImportError as e:
+        print(f"Warning: Some commands not available: {e}")
         pass # Optional commands
 
     args = parser.parse_args()
@@ -89,23 +80,39 @@ def main():
 
     cmds = {
         "dev": cmd_dev, "hot": cmd_hot, "stop": cmd_stop,
-        "status": cmd_status, "log": cmd_log, "kill": cmd_kill
+        "log": cmd_log, "kill": cmd_kill
     }
     
     if args.command in cmds:
         cmds[args.command](args)
     else:
         # Delegate to command plugins
-        from .commands import clean, doctor, generate, exec_cmd, history, run, test, audit
-        cmd_modules = {
-            "clean": clean.run,
-            "doctor": doctor.run,
-            "generate": generate.run,
-            "exec": exec_cmd.run,
-            "history": history.run,
-            "run": run.run,
-            "test": test.run,
-            "audit": audit.run,
-        }
-        if args.command in cmd_modules:
-            cmd_modules[args.command](args)
+        try:
+            from .commands import clean, doctor, generate, exec_cmd, history, run, test, audit, compile
+            from .commands import status, processes, memory, bench, project, lint
+            cmd_modules = {
+                "clean": clean.run,
+                "doctor": doctor.run,
+                "generate": generate.run,
+                "exec": exec_cmd.run,
+                "history": history.run,
+                "run": run.run,
+                "test": test.run,
+                "audit": audit.run,
+                "compile": compile.run,
+                "status": status.run,
+                "processes": processes.run,
+                "memory": memory.run,
+                "bench": bench.run,
+                "project": project.run,
+                "lint": lint.run,
+            }
+            if args.command in cmd_modules:
+                cmd_modules[args.command](args)
+            else:
+                print(f"Unknown command: {args.command}")
+                parser.print_help()
+                sys.exit(1)
+        except ImportError as e:
+            print(f"Error: Command not available: {e}")
+            sys.exit(1)
