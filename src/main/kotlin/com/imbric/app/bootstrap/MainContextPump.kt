@@ -11,7 +11,12 @@ import org.gnome.glib.MainContext
  * This ensures that native callbacks (GIO async, signals) fire in sync with the UI.
  *
  * Pattern: Pattern C (MainContext.iteration() Pump) from ref/GIO-COROUTINE-BRIDGE.md
+ * 
+ * NOTE: This is currently disabled and commented out in favor of the native OS daemon
+ * thread pump in `GioCoroutineBridge.startMainContextPump()`, which provides zero-latency
+ * native blocking instead of frame-polling.
  */
+/*
 @Composable
 fun MainContextPump() {
     LaunchedEffect(Unit) {
@@ -27,3 +32,4 @@ fun MainContextPump() {
         }
     }
 }
+*/

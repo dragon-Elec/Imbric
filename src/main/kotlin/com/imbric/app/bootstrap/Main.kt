@@ -7,6 +7,7 @@ import androidx.compose.ui.window.application
 import com.imbric.app.ui.theme.ImbricTheme
 import com.imbric.core.desktop.ImbricDesktop
 import com.imbric.core.ifs.BackendRegistry
+import com.imbric.core.ifs.provider.DirState
 import com.imbric.core.ifs.provider.DirStateRegistry
 import org.gnome.gio.Gio
 import mu.KotlinLogging
@@ -62,22 +63,12 @@ fun main(args: Array<String>) {
 
         try {
             kotlinx.coroutines.runBlocking {
-                // Start a background GLib MainContext pump for the diagnostic CLI
-                val pumpJob = launch(kotlinx.coroutines.Dispatchers.IO) {
-                    val context = org.gnome.glib.MainContext.default_()
-                    while (isActive) {
-                        context.iteration(false)
-                        kotlinx.coroutines.delay(10)
-                    }
-                }
+                // Note: GLib MainContext pump is already started natively by ImbricDesktop.initialize()
 
-                // 1. Recreate the exact App-layer registry and scope
-                val registry = DirStateRegistry(defaultBackend, this)
+                val defaultBackend = BackendRegistry.getDefaultIo()
+                requireNotNull(defaultBackend) { "No default IOBackend registered" }
+                val dirState = DirState(args[0], defaultBackend, this)
                 
-                println("[CLI] Getting DirState for: $cleanTarget")
-                val dirState = registry.getOrCreate(cleanTarget)
-                
-                // 2. Collect state transitions with a 10s timeout
                 try {
                     kotlinx.coroutines.withTimeout(10000) {
                         dirState.isLoading.combine(dirState.items) { isLoading, items ->
@@ -99,7 +90,6 @@ fun main(args: Array<String>) {
                     println("[CLI] 🚨 TIMEOUT EXCEEDED! State Flow got stuck.")
                 } finally {
                     dirState.destroy()
-                    pumpJob.cancel()
                 }
             }
             println("[CLI] Done.")
@@ -117,8 +107,8 @@ fun main(args: Array<String>) {
             onCloseRequest = ::exitApplication,
             title = "Imbric"
         ) {
-            // GLib ↔ Compose frame sync
-            MainContextPump()
+            // GLib ↔ Compose frame sync (Disabled in favor of native OS daemon thread pump)
+            // MainContextPump()
 
             val scope = rememberCoroutineScope()
             val defaultBackend = BackendRegistry.getDefaultIo()

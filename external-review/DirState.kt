@@ -34,8 +34,6 @@ class DirState(
     var pipelineTimer: com.imbric.core.ifs.backends.PipelineTimer? = null
 ) {
     private val enrichmentSemaphore = Semaphore(4)
-    private val enrichmentChannel = Channel<FileInfo>(Channel.UNLIMITED)
-    private val enrichmentResults = Channel<FileInfo>(Channel.UNLIMITED)
     /** Child job tied to this DirState's lifecycle. Cancelled on [destroy]. */
     private val job = SupervisorJob(parentScope.coroutineContext[Job])
     private val scope = CoroutineScope(parentScope.coroutineContext + job)
@@ -93,54 +91,6 @@ class DirState(
 
     init {
         refresh() // refresh() calls startWatching() internally
-        startEnrichmentWorkers()
-        startEnrichmentBatcher()
-    }
-
-    private fun startEnrichmentWorkers() {
-        repeat(4) {
-            scope.launch(Dispatchers.Default) {
-                for (info in enrichmentChannel) {
-                    val enriched = try {
-                        backend.enrichMetadata(info)
-                    } catch (_: CancellationException) {
-                        break
-                    } catch (_: Exception) {
-                        info
-                    }
-                    enrichmentResults.send(enriched)
-                }
-            }
-        }
-    }
-
-    private fun startEnrichmentBatcher() {
-        scope.launch {
-            val batch = mutableListOf<FileInfo>()
-            while (isActive) {
-                val item = enrichmentResults.tryReceive().getOrNull()
-                if (item != null) {
-                    batch.add(item)
-                    if (batch.size >= 50) {
-                        flushEnrichmentBatch(batch)
-                        batch.clear()
-                    }
-                } else {
-                    if (batch.isNotEmpty()) {
-                        flushEnrichmentBatch(batch)
-                        batch.clear()
-                    }
-                    delay(16) // Wait for next results (~1 frame)
-                }
-            }
-        }
-    }
-
-    private fun flushEnrichmentBatch(batch: List<FileInfo>) {
-        val mutable = _items.value.toMutableMap()
-        batch.forEach { mutable[it.uri] = it }
-        _items.value = mutable
-        _itemsList.value = mutable.values.toList()
     }
 
     /**
@@ -163,7 +113,6 @@ class DirState(
             _itemsList.value = emptyList()
             enrichedUris.clear()
             try {
-                // Chunked collect — progressive rendering
                 strategy.list(backend, uri)
                     .chunked(initialSize = 75, size = 200)
                     .collect { chunk ->
@@ -175,10 +124,6 @@ class DirState(
                         chunk.forEach { enrichItem(it) }
                         yield()
                     }
-                // Enrich AFTER listing completes — eliminates 880 StateFlow emissions
-                // during critical listing path
-                // DISABLED FOR BENCHMARKING — re-enable after measuring
-                // allItems.forEach { enrichItem(it) }
             } catch (e: Exception) {
                 if (e !is CancellationException) {
                     _loadError.value = e
@@ -289,15 +234,25 @@ class DirState(
             currentInfo = currentInfo.copy(
                 attributes = currentInfo.attributes + mapOf("std::emblems" to emblems)
             )
-            // Inline emblem update — cheap, keeps UI correct
-            val mutable = _items.value.toMutableMap()
-            mutable[currentInfo.uri] = currentInfo
-            _items.value = mutable
-            _itemsList.value = mutable.values.toList()
+            updateItem(currentInfo.uri, currentInfo)
         }
 
-        // Queue for async heavy lifting (pixbuf, .desktop, etc.)
-        enrichmentChannel.trySend(currentInfo)
+        scope.launch(ioDispatcher) {
+            // Asynchronous backend enrichment (Pixbuf, .desktop files, etc.)
+            val enrichedInfo = enrichmentSemaphore.withPermit {
+                backend.enrichMetadata(currentInfo)
+            }
+            if (enrichedInfo != currentInfo) {
+                updateItem(enrichedInfo.uri, enrichedInfo)
+                currentInfo = enrichedInfo
+            }
+
+            // Mark enrichment complete — used by whenEnriched() readiness flow
+            val enrichedMarker = currentInfo.copy(
+                attributes = currentInfo.attributes + ("std::enriched" to true)
+            )
+            updateItem(enrichedMarker.uri, enrichedMarker)
+        }
     }
 
     private fun updateItem(uri: String, info: FileInfo) {

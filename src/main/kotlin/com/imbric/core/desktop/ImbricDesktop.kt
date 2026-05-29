@@ -13,6 +13,9 @@ object ImbricDesktop {
     fun initialize() {
         val gio = GioBackend()
         
+        // Start the native OS daemon thread pump for GIO async callbacks
+        com.imbric.core.ifs.backends.GioCoroutineBridge.startMainContextPump()
+        
         // Register standard VFS handlers
         BackendRegistry.registerIo("file", gio)
         BackendRegistry.registerIo("trash", gio)

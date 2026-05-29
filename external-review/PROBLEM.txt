@@ -1,0 +1,102 @@
+================================================================================
+PROBLEM: 8x Performance Gap in Kotlin Compose Desktop File Listing Pipeline
+================================================================================
+
+CONTEXT
+-------
+We're building a Kotlin Compose Desktop file manager (like GNOME Nautilus) that
+lists files from the local filesystem using GIO (GNOME's file I/O library) via
+Java FFM (Foreign Function & Memory) bindings.
+
+The file listing pipeline works as follows:
+1. GIO async API enumerates files in a directory (enumerateChildrenAsync)
+2. Files are fetched in batches of 200 (nextFilesAsync)
+3. Each file is mapped to a Kotlin data class (FileInfo) via toImbricFileInfo()
+4. Items flow through a channelFlow → buffer(256) → .chunked(75, 200)
+5. DirState collects chunks and updates StateFlow for Compose UI observation
+6. Compose recomposes LazyVerticalGrid when StateFlow emits new list
+
+
+THE PROBLEM
+-----------
+We have a headless benchmark that runs the EXACT same GioBackend.list() code
+path as the production app. The benchmark collects items via:
+    strategy.list(backend, uri).collect { items.add(it) }
+
+Results for 440 files (Screenshots directory):
+- BENCHMARK (headless, same code path): 121ms
+- PRODUCTION UI PIPELINE: ~1000ms
+
+That's an 8x gap. The GIO backend is identical in both cases.
+
+
+CURRENT TIMING (440 items)
+--------------------------
+gio_enumerate_done=+10ms
+gio_list_done=+153ms [28]        ← GIO fetches done, only 28 items processed
+dir_chunk_collected=+194ms [75]  ← first 75 items (time-to-first-render)
+dir_chunk_collected=+560ms [200] ← second chunk
+dir_chunk_collected=+954ms [165] ← third chunk
+dir_refresh_done=+956ms [440]
+ui_rendered=+986ms [440]
+
+Cached revalidation: 327ms
+
+
+WHAT WE'VE TRIED (none closed the gap)
+---------------------------------------
+1. Unlimited buffer (Channel.UNLIMITED) → No improvement (backpressure not the cause)
+2. Mutable accumulator (HashMap instead of immutable copies) → WORSE (732ms slower)
+3. Decoupled collection (Dispatchers.Default) → WORSE (262ms slower)
+4. Sync nextFile() loop → 6% slower than async batching
+5. Removed .chunked() operator → WORSE (per-item yield() overhead)
+6. Direct async dispatch (bypass GLib.idleAdd) → ~40% improvement on small dirs
+7. Native daemon GLib pump → replaced Compose frame-loop pump
+8. getAttributeAsString() → 28% improvement (eliminated stderr)
+9. listingMode (7 attrs vs 21) → 49% improvement
+
+
+KEY OBSERVATIONS
+----------------
+1. The benchmark and production use the EXACT same GioBackend.list() code path
+2. The benchmark runs on Dispatchers.IO with a dedicated test pump thread
+3. The production app runs on Dispatchers.IO with Compose rendering on main thread
+4. The chunked operator + StateFlow updates add ~1-2ms total (not the bottleneck)
+5. The workers process items at ~1.9ms/file in production vs ~0.27ms/file in benchmark
+6. Timing varies between runs (986ms to 1721ms) for identical code — JVM warmup?
+
+
+ARCHITECTURE
+------------
+File: GioBackend.kt
+- channelFlow with async batching via GioCoroutineBridge.awaitGioAsync
+- 8 concurrent worker coroutines (Semaphore(8)) on Dispatchers.IO
+- Each worker calls toImbricFileInfo() per file (listingMode=true, 7 attributes)
+- Flow has .buffer(256).flowOn(Dispatchers.IO)
+
+File: DirState.kt
+- Collects the flow with .chunked(initialSize = 75, size = 200)
+- Each chunk: _items.updateAndGet { current + chunk.associateBy { it.uri } }
+- Each chunk: _itemsList.value = updatedMap.values.toList()
+- Each chunk: chunk.forEach { enrichItem(it) }
+
+File: GioCoroutineBridge.kt
+- awaitGioAsync calls block(cancellable, callback) directly (bypasses idleAdd)
+- GLib pump: native daemon thread with context.iteration(true) in while(true)
+
+File: ListingStrategy.kt
+- Standard strategy calls backend.list(uri) directly
+
+
+THE QUESTION
+------------
+Why is the production pipeline 8x slower than the benchmark when they use the
+exact same code path? What can we do to close this gap?
+
+The benchmark proves the GIO backend + object construction is fast (121ms).
+The production overhead must be in the coroutine scheduling, StateFlow updates,
+or Compose rendering contention — but we can't find it.
+
+We need a fresh perspective on what's causing the 8x gap and how to fix it.
+
+================================================================================
