@@ -30,7 +30,7 @@ class GioSearchBackendTest {
 
         override suspend fun canPerform(action: FileAction, uri: String): Boolean = true
         override fun getCapabilities(uri: String): BackendCapabilities = BackendCapabilities(Locality.LOCAL, LatencyProfile.LOW)
-        override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> = flowOf()
+        override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> = flowOf()
         override suspend fun getMetadata(uri: String): Result<FileInfo> {
             val result = mockResults.find { it.uri == uri } as? FileInfo
             return if (result != null) Result.success(result) else Result.failure(Exception("Not found"))
@@ -46,9 +46,9 @@ class GioSearchBackendTest {
         override suspend fun createFile(parentUri: String, name: String): Result<String> = Result.failure(Exception("Not implemented"))
         override suspend fun rename(uri: String, newName: String): Result<String> = Result.failure(Exception("Not implemented"))
 
-        override fun search(query: VfsQuery): Flow<FileEntry> {
+        override fun search(query: VfsQuery): Flow<List<FileEntry>> {
             searchCalled = true
-            return flowOf(*mockResults.toTypedArray())
+            return flowOf(mockResults)
         }
     }
 
@@ -71,7 +71,7 @@ class GioSearchBackendTest {
 
         val query = VfsQuery(text = "test", rootUri = "file:///tmp")
 
-        val results = searchBackend.search(query).toList()
+        val results = searchBackend.search(query).toList().flatten()
 
         assertEquals(1, results.size)
         assertEquals("test.txt", results[0].name)
@@ -97,7 +97,7 @@ class GioSearchBackendTest {
 
         val query = VfsQuery(text = "test", rootUri = "file:///tmp")
 
-        val results = searchBackend.search(query).toList()
+        val results = searchBackend.search(query).toList().flatten()
 
         assertEquals(1, results.size)
         assertEquals("test.txt", results[0].name)
@@ -124,7 +124,7 @@ class GioSearchBackendTest {
 
         val query = VfsQuery(text = "test", rootUri = "file:///tmp")
 
-        val results = searchBackend.search(query).toList()
+        val results = searchBackend.search(query).toList().flatten()
 
         // Since it emits one before failing, but trackerSuccess becomes false
         // it falls back to manual walk and emits from fallback.

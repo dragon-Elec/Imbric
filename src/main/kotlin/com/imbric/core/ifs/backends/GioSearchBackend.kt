@@ -34,7 +34,7 @@ open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IO
         return uri.startsWith("search://")
     }
 
-    override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> {
+    override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> {
         // search:///query?root=...&mime=...
         val text = uri.substringAfter("search:///", "").substringBefore("?")
         val params = uri.substringAfter("?", "").split("&").associate {
@@ -47,13 +47,18 @@ open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IO
         return search(com.imbric.core.models.VfsQuery(text = text, rootUri = root, mimeFilter = mime))
     }
 
-    override fun search(query: com.imbric.core.models.VfsQuery): Flow<FileEntry> = flow {
-        if (query.text.isBlank()) return@flow
+    override fun search(query: com.imbric.core.models.VfsQuery): Flow<List<FileEntry>> = flow {
+        if (query.text.isBlank()) {
+            emit(emptyList())
+            return@flow
+        }
+
+        val results = mutableListOf<FileEntry>()
 
         // 1. Try Tracker3
         var trackerSuccess = false
         var scanned = 0
-        
+
         try {
             // runTrackerSearch might throw immediately, or might throw during collection
             val trackerFlow = runTrackerSearch(query)
@@ -72,7 +77,7 @@ open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IO
                         // Filter by hidden status and MIME
                         if (!query.includeHidden && info.isVisiblyHidden()) return@collect
                         if (query.mimeFilter == null || info.mimeType.startsWith(query.mimeFilter)) {
-                            emit(info)
+                            results.add(info)
                         }
                     }
                 }
@@ -86,9 +91,13 @@ open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IO
         }
 
         if (!trackerSuccess) {
-            // 2. Fallback to manual walk
-            emitAll(fallback.search(query))
+            // 2. Fallback to manual walk — collect all batches into results
+            fallback.search(query).collect { batch ->
+                results.addAll(batch)
+            }
         }
+
+        emit(results)
     }.flowOn(Dispatchers.IO)
 
     // Visible for testing

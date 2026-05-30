@@ -5,6 +5,7 @@ import com.imbric.core.models.FileJob
 import com.imbric.core.ifs.backends.TestUtils.withGlibPump
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.BeforeEach
@@ -45,7 +46,7 @@ class GioBackendTest {
             assertTrue(backend.exists("$dirUri/alpha.txt"))
             assertFalse(backend.exists("$dirUri/missing.txt"))
 
-            val children = backend.list(dirUri).toList()
+            val children = backend.list(dirUri).first()
 
             assertEquals(3, children.size, "Should find 2 files and 1 subdir")
             val names = children.map { it.name }.toSet()

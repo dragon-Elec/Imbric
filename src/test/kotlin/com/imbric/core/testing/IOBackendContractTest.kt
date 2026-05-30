@@ -3,6 +3,7 @@ package com.imbric.core.testing
 import com.imbric.core.ifs.IOBackend
 import com.imbric.core.models.FileJob
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -44,10 +45,10 @@ abstract class IOBackendContractTest {
             assertTrue(backend.exists(folderUri))
             assertTrue(backend.exists(fileUri))
 
-            val children = backend.list(folderUri).toList()
-            assertEquals(1, children.size)
-            assertEquals("test_file.txt", children[0].name)
-            assertEquals(fileUri, children[0].uri)
+        val children = backend.list(folderUri).first()
+        assertEquals(1, children.size)
+        assertEquals("test_file.txt", children[0].name)
+        assertEquals(fileUri, children[0].uri)
         }
     }
 

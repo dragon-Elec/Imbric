@@ -31,30 +31,32 @@ class GioRecentBackend : IOBackend {
         return Paths.get(dataDir, "recently-used.xbel").toString()
     }
 
-    override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> = flow {
+    override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> = flow {
         val bookmarkFile = BookmarkFile()
         try {
             bookmarkFile.loadFromFile(getRecentFilePath())
         } catch (e: Exception) {
             // File might not exist yet, which is fine
-            return@flow
+            return@flow emit(emptyList())
         }
 
-        val uris = bookmarkFile.uris ?: return@flow
+        val uris = bookmarkFile.uris ?: return@flow emit(emptyList())
         val queryAttributes = "standard::*,time::*,unix::*,owner::*,access::*,trash::*"
-        
+        val results = mutableListOf<FileEntry>()
+
         for (itemUri in uris) {
             if (itemUri == null) continue
-            
+
             val gfile = File.newForUri(itemUri)
             try {
                 // queryInfo throws if file doesn't exist, so queryExists is redundant
                 val info = gfile.queryInfo(queryAttributes, FileQueryInfoFlags.NONE, null)
-                emit(GioTypeMappers.toImbricFileInfo(gfile, info, "recent"))
+                results.add(GioTypeMappers.toImbricFileInfo(gfile, info, "recent"))
             } catch (e: Exception) {
                 // Skip on error (e.g. file deleted since RecentManager last updated)
             }
         }
+        emit(results)
     }.flowOn(Dispatchers.IO)
 
     override suspend fun getMetadata(uri: String): Result<FileInfo> {

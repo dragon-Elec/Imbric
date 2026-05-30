@@ -51,6 +51,6 @@ object BackendRegistry {
     }
 
     // Convenience
-    fun list(uri: String): Flow<FileEntry>? = getIo(uri)?.list(uri)
+    fun list(uri: String): Flow<List<FileEntry>>? = getIo(uri)?.list(uri)
     suspend fun getMetadata(uri: String): Result<FileInfo>? = getIo(uri)?.getMetadata(uri)
 }

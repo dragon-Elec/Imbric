@@ -41,7 +41,7 @@ class VfsQueryFilterTest {
     @Test
     fun `test search with size filter`() = runTest {
         val query = VfsQuery(text = "", rootUri = "memory:///docs", minSize = 1000000)
-        val results = backend.search(query).toList()
+        val results = backend.search(query).toList().flatten()
         assertEquals(2, results.size) // photo.jpg and big-video.mp4
         assertTrue(results.all { it.size >= 1000000 })
     }
@@ -49,7 +49,7 @@ class VfsQueryFilterTest {
     @Test
     fun `test search with max size filter`() = runTest {
         val query = VfsQuery(text = "", rootUri = "memory:///docs", maxSize = 10000)
-        val results = backend.search(query).toList()
+        val results = backend.search(query).toList().flatten()
         assertEquals(1, results.size) // report.txt only
         assertEquals("report.txt", results[0].name)
     }
@@ -57,14 +57,14 @@ class VfsQueryFilterTest {
     @Test
     fun `test search with size range filter`() = runTest {
         val query = VfsQuery(text = "", rootUri = "memory:///docs", minSize = 1000, maxSize = 10000000)
-        val results = backend.search(query).toList()
+        val results = backend.search(query).toList().flatten()
         assertEquals(2, results.size) // report.txt and photo.jpg
     }
 
     @Test
     fun `test search with mime filter`() = runTest {
         val query = VfsQuery(text = "", rootUri = "memory:///docs", mimeFilter = "image/")
-        val results = backend.search(query).toList()
+        val results = backend.search(query).toList().flatten()
         assertEquals(1, results.size)
         assertEquals("photo.jpg", results[0].name)
     }

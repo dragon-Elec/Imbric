@@ -4,6 +4,7 @@ package com.imbric.core.desktop.backends
 import com.imbric.core.ifs.backends.GioRecentBackend
 import com.imbric.core.models.FileJob
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -19,7 +20,7 @@ class GioRecentBackendTest {
     @Test
     fun testListRecents() = runBlocking {
         val backend = GioRecentBackend()
-        val items = backend.list("recent:///").toList()
+        val items = backend.list("recent:///").first()
         println("GioRecentBackend returned ${items.size} items")
         // Note: size might be 0 if the user has no recent items, but it shouldn't crash.
         assertTrue(items != null)

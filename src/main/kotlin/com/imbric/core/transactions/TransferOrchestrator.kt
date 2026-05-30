@@ -134,9 +134,9 @@ class TransferOrchestrator(
                 }
                 is ConflictAction.Merge -> {
                     // Recursive Merge: plan all children of source into destination
-                    srcBackend.list(src).collect { child ->
-                        planOperation(child.path, dest)
-                    }
+                srcBackend.list(src).firstOrNull()?.forEach { child ->
+                    planOperation(child.path, dest)
+                }
                 }
                 is ConflictAction.Skip -> { /* Do nothing */ }
                 is ConflictAction.Cancel -> throw CancellationException("Operation cancelled by user")

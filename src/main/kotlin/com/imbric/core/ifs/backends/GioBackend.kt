@@ -171,73 +171,74 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     // ═══════════════════════════════════════════════════════════════════════════
     // ASYNC list() — batches of 200 files with background worker pipeline
     // ═══════════════════════════════════════════════════════════════════════════
-    override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> = flow {
-        val gfile = File.newForUri(uri)
-        val scheme = uri.substringBefore("://", "file")
-        val timer = PipelineTimer.current()
+override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> = flow {
+    val gfile = File.newForUri(uri)
+    val scheme = uri.substringBefore("://", "file")
+    val timer = PipelineTimer.current()
 
-        timer?.mark("gio_list_start", detail = uri)
-        System.err.println("[DEBUG-GIO-LIST] uri=$uri START")
+    timer?.mark("gio_list_start", detail = uri)
+    System.err.println("[DEBUG-GIO-LIST] uri=$uri START")
 
-        // Async enumeration — fetches all items in one call
-        val attributes = FileEntry.listingAttributesFor(sortKey)
-        val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
-            block = { cancellable, callback ->
-                gfile.enumerateChildrenAsync(attributes, FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, callback)
-            },
-            finish = { result ->
-                gfile.enumerateChildrenFinish(result)
-            }
-        )
-        System.err.println("[DEBUG-GIO-LIST] uri=$uri ENUMERATE_DONE enumerator=$enumerator")
-
-        timer?.mark("gio_enumerate_done")
-
-        val parentUri = uri.trimEnd('/')
-        val parentPath = gfile.path?.toString()?.trimEnd('/')
-            ?: GioTypeMappers.localPathFromFileUri(parentUri)
-        val parentPathType = GioTypeMappers.determinePathType(parentUri)
-        val parentIsRemote = GioTypeMappers.isRemoteUri(parentUri)
-        var totalEmitted = 0
-
-        try {
-            while (currentCoroutineContext().isActive) {
-                // Single large batch — fetch all items in one call
-                System.err.println("[DEBUG-GIO-BATCH] uri=$uri BEFORE nextFilesAsync isActive=${currentCoroutineContext().isActive}")
-                val batch = GioCoroutineBridge.awaitGioAsync<org.gnome.glib.List<org.gnome.gio.FileInfo>>(
-                    block = { cancellable, callback ->
-                        enumerator.nextFilesAsync(5000, GLib.PRIORITY_DEFAULT, cancellable, callback)
-                    },
-                    finish = { result ->
-                        enumerator.nextFilesFinish(result)
-                    }
-                )
-                if (batch == null || batch.isEmpty()) {
-                    System.err.println("[DEBUG-GIO-BATCH] uri=$uri BATCH_EMPTY breaking")
-                    break
-                }
-                System.err.println("[DEBUG-GIO-BATCH] uri=$uri BATCH_SIZE=${batch.size}")
-
-                for (info in batch) {
-                    val name = info?.name?.toString() ?: continue
-                    val fileInfo = GioTypeMappers.toListingFile(
-                        name = name,
-                        parentUri = parentUri,
-                        parentPath = parentPath ?: "",
-                        gioInfo = info,
-                        parentPathType = parentPathType,
-                        parentIsRemote = parentIsRemote
-                    )
-                    emit(fileInfo)
-                    totalEmitted++
-                }
-            }
-        } finally {
-            enumerator.close(null)
+    // Async enumeration — fetches all items in one call
+    val attributes = FileEntry.listingAttributesFor(sortKey)
+    val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
+        block = { cancellable, callback ->
+            gfile.enumerateChildrenAsync(attributes, FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, callback)
+        },
+        finish = { result ->
+            gfile.enumerateChildrenFinish(result)
         }
+    )
+    System.err.println("[DEBUG-GIO-LIST] uri=$uri ENUMERATE_DONE enumerator=$enumerator")
 
-        timer?.mark("gio_list_done", itemCount = totalEmitted)
-    } // .flowOn(Dispatchers.IO) — disabled: collector runs on ListingDispatchers.Listing, no internal channel needed
+    timer?.mark("gio_enumerate_done")
+
+    val parentUri = uri.trimEnd('/')
+    val parentPath = gfile.path?.toString()?.trimEnd('/')
+        ?: GioTypeMappers.localPathFromFileUri(parentUri)
+    val parentPathType = GioTypeMappers.determinePathType(parentUri)
+    val parentIsRemote = GioTypeMappers.isRemoteUri(parentUri)
+
+    val allItems = ArrayList<FileEntry>(512)
+
+    try {
+        while (currentCoroutineContext().isActive) {
+            // Single large batch — fetch all items in one call
+            System.err.println("[DEBUG-GIO-BATCH] uri=$uri BEFORE nextFilesAsync isActive=${currentCoroutineContext().isActive}")
+            val batch = GioCoroutineBridge.awaitGioAsync<org.gnome.glib.List<org.gnome.gio.FileInfo>>(
+                block = { cancellable, callback ->
+                    enumerator.nextFilesAsync(5000, GLib.PRIORITY_DEFAULT, cancellable, callback)
+                },
+                finish = { result ->
+                    enumerator.nextFilesFinish(result)
+                }
+            )
+            if (batch == null || batch.isEmpty()) {
+                System.err.println("[DEBUG-GIO-BATCH] uri=$uri BATCH_EMPTY breaking")
+                break
+            }
+            System.err.println("[DEBUG-GIO-BATCH] uri=$uri BATCH_SIZE=${batch.size}")
+
+            for (info in batch) {
+                val name = info?.name?.toString() ?: continue
+                val fileInfo = GioTypeMappers.toListingFile(
+                    name = name,
+                    parentUri = parentUri,
+                    parentPath = parentPath ?: "",
+                    gioInfo = info,
+                    parentPathType = parentPathType,
+                    parentIsRemote = parentIsRemote
+                )
+                allItems.add(fileInfo)
+            }
+        }
+    } finally {
+        enumerator.close(null)
+    }
+
+    timer?.mark("gio_list_done", itemCount = allItems.size)
+    emit(allItems.toList()) // emit once — entire directory as a single list
+} // .flowOn(Dispatchers.IO) — disabled: collector runs on ListingDispatchers.Listing, no internal channel needed
 
     // BACKUP: channelFlow + worker pool for future batch-200 progressive loading
     // If large directories (>2000 items) prove too slow with single-batch,
@@ -863,13 +864,14 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
     override fun exists(uri: String): Boolean = File.newForUri(uri).queryExists(null)
 
-    override fun search(query: com.imbric.core.models.VfsQuery): Flow<FileEntry> = flow {
+    override fun search(query: com.imbric.core.models.VfsQuery): Flow<List<FileEntry>> = flow {
         val rootFile = File.newForUri(query.rootUri)
         val queryLower = query.text.lowercase()
-        
+        val results = mutableListOf<FileEntry>()
+
         val stack = ArrayDeque<Pair<File, Int>>()
         stack.add(rootFile to 0)
-        
+
         while (stack.isNotEmpty()) {
             val (dir, depth) = stack.removeLast()
             if (depth > query.maxDepth) continue
@@ -879,7 +881,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
             } catch (e: Exception) {
                 continue
             }
-            
+
             try {
                 var info = enumerator.nextFile(null)
                 while (info != null) {
@@ -893,28 +895,28 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                         kotlinx.coroutines.yield()
                         continue
                     }
-                    
+
                     // Recurse into subdirectories
                     if (info.fileType == FileType.DIRECTORY && query.recursive) {
                         stack.add(child to depth + 1)
                     }
-                    
+
                     // Match filename against query (case-insensitive)
                     if (name.lowercase().contains(queryLower)) {
                         val fileInfo = GioTypeMappers.toImbricFileInfo(child, info)
-                        
+
                         // Apply filters
                         val matchesMime = query.mimeFilter == null || fileInfo.mimeType.startsWith(query.mimeFilter)
                         val matchesDateRange = (query.modifiedAfter == null || (fileInfo.modifiedTime?.toEpochMilliseconds() ?: 0) >= query.modifiedAfter) &&
-                                               (query.modifiedBefore == null || (fileInfo.modifiedTime?.toEpochMilliseconds() ?: Long.MAX_VALUE) <= query.modifiedBefore)
+                            (query.modifiedBefore == null || (fileInfo.modifiedTime?.toEpochMilliseconds() ?: Long.MAX_VALUE) <= query.modifiedBefore)
                         val matchesSizeRange = (query.minSize == null || fileInfo.size >= query.minSize) &&
-                                               (query.maxSize == null || fileInfo.size <= query.maxSize)
-                        
+                            (query.maxSize == null || fileInfo.size <= query.maxSize)
+
                         if (matchesMime && matchesDateRange && matchesSizeRange) {
-                            emit(fileInfo)
+                            results.add(fileInfo)
                         }
                     }
-                    
+
                     info = enumerator.nextFile(null)
                     kotlinx.coroutines.yield() // allow cancellation
                 }
@@ -922,6 +924,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 enumerator.close(null)
             }
         }
+        emit(results)
     }.flowOn(Dispatchers.IO)
 
     override suspend fun readHeader(uri: String, size: Long): Result<ByteArray> = withContext(Dispatchers.IO) {

@@ -42,7 +42,7 @@ interface IOBackend {
     suspend fun canPerform(action: FileAction, uri: String): Boolean
 
     // Reads
-    fun list(uri: String, sortKey: SortKey = SortKey.NAME): Flow<FileEntry>
+    fun list(uri: String, sortKey: SortKey = SortKey.NAME): Flow<List<FileEntry>>
     suspend fun getMetadata(uri: String): Result<FileInfo>
     
     // Bulk metadata default implementation
@@ -89,22 +89,23 @@ interface IOBackend {
                 continue
             }
             
-            try {
-                list(dirUri).collect { info ->
-                    if (info.isDirectory) {
-                        dirs++
-                        stack.add(info.uri to depth + 1)
-                    } else {
-                        files++
-                        totalSize += info.size
-                    }
-                    if ((files + dirs) % 100 == 0) {
-                        emit(DeepCount(dirs, files, totalSize, isComplete = false))
-                        kotlinx.coroutines.yield()
-                    }
+        try {
+            val items = list(dirUri).firstOrNull() ?: emptyList()
+            for (info in items) {
+                if (info.isDirectory) {
+                    dirs++
+                    stack.add(info.uri to depth + 1)
+                } else {
+                    files++
+                    totalSize += info.size
                 }
-                kotlinx.coroutines.yield()
-            } catch (e: Exception) {
+                if ((files + dirs) % 100 == 0) {
+                    emit(DeepCount(dirs, files, totalSize, isComplete = false))
+                    kotlinx.coroutines.yield()
+                }
+            }
+            kotlinx.coroutines.yield()
+        } catch (e: Exception) {
                 // Skip directories we can't list (permissions, etc.) instead of crashing
                 // We could optionally emit an error state here if DeepCount supported it
             }
@@ -199,48 +200,50 @@ interface IOBackend {
     suspend fun isTrashEmpty(uri: String): Boolean = true
 
     // Optional (default no-ops)
-    fun search(query: com.imbric.core.models.VfsQuery): Flow<FileEntry> = flow {
+    fun search(query: com.imbric.core.models.VfsQuery): Flow<List<FileEntry>> = flow {
         val stack = ArrayDeque<Pair<String, Int>>()
         stack.add(query.rootUri to 0)
-        
+        val allMatches = mutableListOf<FileEntry>()
+
         while (stack.isNotEmpty()) {
             val (dirUri, depth) = stack.removeLast()
             if (depth > query.maxDepth) continue
-            
+
             try {
-                list(dirUri).collect { info ->
+                val items = list(dirUri).firstOrNull() ?: emptyList()
+                for (info in items) {
                     // 1. Recurse
                     if (info.isDirectory && query.recursive) {
                         stack.add(info.uri to depth + 1)
                     }
-                    
+
                     // 2. Filter
-                    if (!query.includeHidden && info.isVisiblyHidden()) return@collect
-                    
+                    if (!query.includeHidden && info.isVisiblyHidden()) continue
                     val matchesText = query.text.isEmpty() || info.name.contains(query.text, ignoreCase = true)
-                    if (!matchesText) return@collect
-                    
+                    if (!matchesText) continue
                     val matchesMime = query.mimeFilter == null || info.mimeType.startsWith(query.mimeFilter)
-                    if (!matchesMime) return@collect
-                    
+                    if (!matchesMime) continue
+
                     val mtime = info.modifiedTime?.toEpochMilliseconds()
                     val matchesDate = (query.modifiedAfter == null || (mtime != null && mtime >= query.modifiedAfter)) &&
-                                       (query.modifiedBefore == null || (mtime != null && mtime <= query.modifiedBefore))
-                    if (!matchesDate) return@collect
-                    
+                        (query.modifiedBefore == null || (mtime != null && mtime <= query.modifiedBefore))
+                    if (!matchesDate) continue
+
                     val matchesSize = (query.minSize == null || info.size >= query.minSize) &&
-                                       (query.maxSize == null || info.size <= query.maxSize)
-                    if (!matchesSize) return@collect
-                    
-                    if (query.starredOnly && (info !is FileInfo || !info.isStarred)) return@collect
-                    
-                    emit(info)
+                        (query.maxSize == null || info.size <= query.maxSize)
+                    if (!matchesSize) continue
+
+                    if (query.starredOnly && (info !is FileInfo || !info.isStarred)) continue
+
+                    allMatches.add(info)
                 }
             } catch (e: Exception) {
                 // Skip unreadable dirs
             }
         }
+emit(allMatches)
     }
+
     fun watch(uri: String): Flow<FileEvent> = emptyFlow()
 
     fun canHandle(uri: String): Boolean =

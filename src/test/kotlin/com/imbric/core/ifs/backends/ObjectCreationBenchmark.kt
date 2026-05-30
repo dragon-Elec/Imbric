@@ -4,6 +4,7 @@ package com.imbric.core.ifs.backends
 import com.imbric.core.models.FileEntry
 import com.imbric.core.models.SortKey
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.gnome.gio.Gio
 import org.junit.jupiter.api.BeforeAll
@@ -45,7 +46,7 @@ class ObjectCreationBenchmark {
                 System.gc()
                 kotlinx.coroutines.delay(100)
                 val time = measureTimeMillis {
-                    count = backend.list(target, SortKey.NAME).toList().size
+                    count = backend.list(target, SortKey.NAME).first().size
                 }
                 times.add(time)
             }
@@ -59,7 +60,7 @@ class ObjectCreationBenchmark {
                 System.gc()
                 kotlinx.coroutines.delay(100)
                 val time = measureTimeMillis {
-                    backend.list(target, SortKey.MODIFIED).toList().size
+                    backend.list(target, SortKey.MODIFIED).first().size
                 }
                 modTimes.add(time)
             }

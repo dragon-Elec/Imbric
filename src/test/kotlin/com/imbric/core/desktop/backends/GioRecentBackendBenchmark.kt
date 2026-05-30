@@ -2,6 +2,7 @@ package com.imbric.core.desktop.backends
 
 import com.imbric.core.ifs.backends.GioRecentBackend
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.gnome.gio.Gio
 import org.junit.jupiter.api.BeforeAll
@@ -23,13 +24,13 @@ class GioRecentBackendBenchmark {
         val backend = GioRecentBackend()
 
         // Warmup
-        backend.list("recent:///").toList()
+        backend.list("recent:///").first()
 
         val times = mutableListOf<Long>()
         var count = 0
         for (i in 1..5) {
             val time = measureTimeMillis {
-                val items = backend.list("recent:///").toList()
+                val items = backend.list("recent:///").first()
                 count = items.size
             }
             times.add(time)

@@ -18,8 +18,8 @@ class DirStateTest {
         val root = "memory://test"
         val uri = "$root/file1"
         backend.fs[uri] = FileInfo(name = "file1", path = uri, uri = uri, isDirectory = false)
-        val list = backend.list(root).toList()
-        assertEquals(1, list.size)
+    val list = backend.list(root).first()
+    assertEquals(1, list.size)
     }
 
     @Test
@@ -121,7 +121,7 @@ class DirStateTest {
     @Test
     fun `test load error on failure`() = runTest {
         val backend = object : InMemoryBackend() {
-            override fun list(uri: String, sortKey: SortKey): kotlinx.coroutines.flow.Flow<FileEntry> = kotlinx.coroutines.flow.flow {
+            override fun list(uri: String, sortKey: SortKey): kotlinx.coroutines.flow.Flow<List<FileEntry>> = kotlinx.coroutines.flow.flow {
                 throw RuntimeException("Permission denied")
             }
         }
@@ -139,7 +139,7 @@ class DirStateTest {
     fun `test load error cleared on refresh`() = runTest {
         var shouldFail = true
         val backend = object : InMemoryBackend() {
-            override fun list(uri: String, sortKey: SortKey): kotlinx.coroutines.flow.Flow<FileEntry> = kotlinx.coroutines.flow.flow {
+            override fun list(uri: String, sortKey: SortKey): kotlinx.coroutines.flow.Flow<List<FileEntry>> = kotlinx.coroutines.flow.flow {
                 if (shouldFail) throw RuntimeException("Fail")
                 // Empty flow for success
             }

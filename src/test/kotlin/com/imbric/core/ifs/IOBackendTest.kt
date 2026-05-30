@@ -28,7 +28,7 @@ class IOBackendTest {
         backend.createFile("memory://testDir", "file1.txt")
         backend.createFile("memory://testDir", "file2.txt")
 
-        val children = backend.list("memory://testDir").toList()
+        val children = backend.list("memory://testDir").first()
         assertEquals(2, children.size)
         assertTrue(children.any { it.name == "file1.txt" })
         assertTrue(children.any { it.name == "file2.txt" })

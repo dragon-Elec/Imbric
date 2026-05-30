@@ -174,7 +174,7 @@ class GioBackendAsyncTest {
 
             // 1. Basic search
             val query1 = VfsQuery(text = "match", rootUri = rootUri)
-            val results1 = backend.search(query1).toList()
+            val results1 = backend.search(query1).toList().flatten()
             assertEquals(3, results1.size)
             assertTrue(results1.any { it.uri == "$rootUri/match_1.txt" }, "Should find match_1.txt with correct URI")
             assertTrue(results1.any { it.uri == "$rootUri/match_2.log" }, "Should find match_2.log with correct URI")
@@ -182,13 +182,13 @@ class GioBackendAsyncTest {
 
             // 2. MIME filter
             val query2 = VfsQuery(text = "match", rootUri = rootUri, mimeFilter = "text/plain")
-            val results2 = backend.search(query2).toList()
+            val results2 = backend.search(query2).toList().flatten()
             // Note: .log might be text/plain or text/x-log depending on system
             assertTrue(results2.size >= 2, "Should find at least 2 text files")
 
             // 3. Non-recursive
             val query3 = VfsQuery(text = "match", rootUri = rootUri, recursive = false)
-            val results3 = backend.search(query3).toList()
+            val results3 = backend.search(query3).toList().flatten()
             assertEquals(2, results3.size)
         }
     }

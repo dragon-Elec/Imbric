@@ -24,7 +24,7 @@ sealed interface ListingStrategy {
      * This is the default strategy for normal directory browsing.
      */
     data object Standard : ListingStrategy {
-        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<FileEntry> =
+        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<List<FileEntry>> =
             backend.list(uri, sortKey)
 
         override fun watchable(): Boolean = true
@@ -35,7 +35,7 @@ sealed interface ListingStrategy {
      * Used for search result directories where the content is defined by a query.
      */
     data class Search(val query: VfsQuery) : ListingStrategy {
-        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<FileEntry> =
+        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<List<FileEntry>> =
             backend.search(query)
 
         override fun watchable(): Boolean = false // Search results don't have a real directory to watch
@@ -49,13 +49,14 @@ sealed interface ListingStrategy {
      * for the "Starred" view.
      */
     data class Starred(val starredManager: StarredManager) : ListingStrategy {
-        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<FileEntry> = flow {
+        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<List<FileEntry>> = flow {
             val uris = starredManager.starredUris.value
             if (uris.isNotEmpty()) {
                 val results = backend.getMetadata(uris.toList())
-                results.forEach { result ->
-                    result.getOrNull()?.let { emit(it) }
-                }
+                val entries = results.mapNotNull { it.getOrNull() }
+                emit(entries)
+            } else {
+                emit(emptyList())
             }
         }
 
@@ -67,18 +68,17 @@ sealed interface ListingStrategy {
      * like bookmarks, network shares, or custom aggregations.
      */
     data class Virtual(val items: List<FileEntry>) : ListingStrategy {
-        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<FileEntry> = flow {
-            items.forEach { emit(it) }
-        }
+        override fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): Flow<List<FileEntry>> =
+            flow { emit(items) }
 
         override fun watchable(): Boolean = false // Virtual directories have no real filesystem to watch
     }
 
     /**
-     * Produces a [Flow] of [FileInfo] for the initial directory listing.
+     * Produces a [Flow] of [List<FileEntry>] for the initial directory listing.
      * Called by [DirState.refresh] to populate the directory contents.
      */
-    fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey = SortKey.NAME): Flow<FileEntry>
+    fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey = SortKey.NAME): Flow<List<FileEntry>>
 
     /**
      * Returns true if this strategy supports real-time file monitoring.

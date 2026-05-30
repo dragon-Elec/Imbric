@@ -19,7 +19,7 @@ class DummyBackend : IOBackend {
     override val scheme = "slow"
     override val displayName = "Slow Backend"
 
-    override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> = emptyFlow()
+    override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> = emptyFlow()
     override suspend fun getMetadata(uri: String): Result<FileInfo> = Result.failure(Exception())
     override suspend fun readHeader(uri: String, size: Long): Result<ByteArray> = Result.failure(Exception())
 
