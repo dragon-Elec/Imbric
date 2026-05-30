@@ -24,13 +24,13 @@ class GioRecentBackendBenchmark {
         val backend = GioRecentBackend()
 
         // Warmup
-        backend.list("recent:///").first()
+        backend.list("recent:///")
 
         val times = mutableListOf<Long>()
         var count = 0
         for (i in 1..5) {
             val time = measureTimeMillis {
-                val items = backend.list("recent:///").first()
+                val items = backend.list("recent:///")
                 count = items.size
             }
             times.add(time)

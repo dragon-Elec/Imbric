@@ -37,13 +37,13 @@ open class InMemoryBackend(
     private val thumbnailFailures = mutableSetOf<String>()
     private val thumbnailUnsupported = mutableSetOf<String>()
 
-    override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> {
-        if (failingUris.contains(uri.removeSuffix("/"))) return flowOf(emptyList())
+    override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
+        if (failingUris.contains(uri.removeSuffix("/"))) return emptyList()
         val normalizedUri = uri.removeSuffix("/")
         val children = fs.values.filter {
             it.uri.substringBeforeLast("/") == normalizedUri && it.uri != normalizedUri
         }
-        return flowOf(children)
+        return children
     }
 
     override suspend fun getMetadata(uri: String): Result<FileInfo> {

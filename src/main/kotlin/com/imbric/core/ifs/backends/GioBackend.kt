@@ -171,13 +171,11 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     // ═══════════════════════════════════════════════════════════════════════════
     // ASYNC list() — batches of 200 files with background worker pipeline
     // ═══════════════════════════════════════════════════════════════════════════
-override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> = flow {
+override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     val gfile = File.newForUri(uri)
-    val scheme = uri.substringBefore("://", "file")
     val timer = PipelineTimer.current()
 
     timer?.mark("gio_list_start", detail = uri)
-    System.err.println("[DEBUG-GIO-LIST] uri=$uri START")
 
     // Async enumeration — fetches all items in one call
     val attributes = FileEntry.listingAttributesFor(sortKey)
@@ -189,7 +187,6 @@ override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> = flow {
             gfile.enumerateChildrenFinish(result)
         }
     )
-    System.err.println("[DEBUG-GIO-LIST] uri=$uri ENUMERATE_DONE enumerator=$enumerator")
 
     timer?.mark("gio_enumerate_done")
 
@@ -203,8 +200,6 @@ override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> = flow {
 
     try {
         while (currentCoroutineContext().isActive) {
-            // Single large batch — fetch all items in one call
-            System.err.println("[DEBUG-GIO-BATCH] uri=$uri BEFORE nextFilesAsync isActive=${currentCoroutineContext().isActive}")
             val batch = GioCoroutineBridge.awaitGioAsync<org.gnome.glib.List<org.gnome.gio.FileInfo>>(
                 block = { cancellable, callback ->
                     enumerator.nextFilesAsync(5000, GLib.PRIORITY_DEFAULT, cancellable, callback)
@@ -213,11 +208,7 @@ override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> = flow {
                     enumerator.nextFilesFinish(result)
                 }
             )
-            if (batch == null || batch.isEmpty()) {
-                System.err.println("[DEBUG-GIO-BATCH] uri=$uri BATCH_EMPTY breaking")
-                break
-            }
-            System.err.println("[DEBUG-GIO-BATCH] uri=$uri BATCH_SIZE=${batch.size}")
+            if (batch == null || batch.isEmpty()) break
 
             for (info in batch) {
                 val name = info?.name?.toString() ?: continue
@@ -237,8 +228,8 @@ override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> = flow {
     }
 
     timer?.mark("gio_list_done", itemCount = allItems.size)
-    emit(allItems.toList()) // emit once — entire directory as a single list
-} // .flowOn(Dispatchers.IO) — disabled: collector runs on ListingDispatchers.Listing, no internal channel needed
+    return allItems.toList()
+}
 
     // BACKUP: channelFlow + worker pool for future batch-200 progressive loading
     // If large directories (>2000 items) prove too slow with single-batch,

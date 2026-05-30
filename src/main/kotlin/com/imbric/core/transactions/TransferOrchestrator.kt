@@ -134,7 +134,7 @@ class TransferOrchestrator(
                 }
                 is ConflictAction.Merge -> {
                     // Recursive Merge: plan all children of source into destination
-                srcBackend.list(src).firstOrNull()?.forEach { child ->
+                srcBackend.list(src).forEach { child ->
                     planOperation(child.path, dest)
                 }
                 }

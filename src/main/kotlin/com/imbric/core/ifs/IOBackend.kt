@@ -42,7 +42,7 @@ interface IOBackend {
     suspend fun canPerform(action: FileAction, uri: String): Boolean
 
     // Reads
-    fun list(uri: String, sortKey: SortKey = SortKey.NAME): Flow<List<FileEntry>>
+    suspend fun list(uri: String, sortKey: SortKey = SortKey.NAME): List<FileEntry>
     suspend fun getMetadata(uri: String): Result<FileInfo>
     
     // Bulk metadata default implementation
@@ -90,7 +90,7 @@ interface IOBackend {
             }
             
         try {
-            val items = list(dirUri).firstOrNull() ?: emptyList()
+            val items = list(dirUri)
             for (info in items) {
                 if (info.isDirectory) {
                     dirs++
@@ -210,7 +210,7 @@ interface IOBackend {
             if (depth > query.maxDepth) continue
 
             try {
-                val items = list(dirUri).firstOrNull() ?: emptyList()
+            val items = list(dirUri)
                 for (info in items) {
                     // 1. Recurse
                     if (info.isDirectory && query.recursive) {

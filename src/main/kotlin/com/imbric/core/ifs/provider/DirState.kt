@@ -106,14 +106,15 @@ class DirState(
 
     private fun startEnrichmentWorkers() {
         repeat(4) {
-            scope.launch(Dispatchers.Default) {
+            scope.launch(ioDispatcher) {
                 for (info in enrichmentChannel) {
                     val enriched = try {
-                        backend.enrichMetadata(info)
+                        val res = backend.enrichMetadata(info)
+                        res.copy(attributes = res.attributes + ("std::enriched" to true))
                     } catch (_: CancellationException) {
                         break
                     } catch (_: Exception) {
-                        info
+                        info.copy(attributes = info.attributes + ("std::enriched" to true))
                     }
                     enrichmentResults.send(enriched)
                 }
@@ -122,7 +123,7 @@ class DirState(
     }
 
     private fun startEnrichmentBatcher() {
-        scope.launch(Dispatchers.Default) {
+        scope.launch(ioDispatcher) {
             while (isActive) {
                 // Suspend until at least one enriched result arrives
                 val first = enrichmentResults.receive()
@@ -166,9 +167,7 @@ class DirState(
             var localItems = HashMap<String, FileEntry>(512)
 
             try {
-                // Collect all items as a single batch (Flow<List<FileEntry>>)
                 val allItems = strategy.list(backend, uri, sortKey)
-                    .firstOrNull() ?: emptyList()
 
                 localItems = HashMap<String, FileEntry>(allItems.size + 16)
                 for (item in allItems) {
@@ -418,7 +417,7 @@ class DirState(
             try {
                 timer?.mark("dir_revalidate_start", detail = uri)
                 val fetched = mutableMapOf<String, FileEntry>()
-                strategy.list(backend, uri, sortKey).firstOrNull()?.forEach { item ->
+                strategy.list(backend, uri, sortKey).forEach { item ->
                     fetched[item.uri] = item
                 }
                 val current = _items.value

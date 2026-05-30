@@ -62,7 +62,7 @@ class GioListingBenchmark {
                 // Warmup run (Ignored)
                 var count = 0
                 val warmupTime = measureTimeMillis {
-                    count = backend.list(target).first().size
+                    count = backend.list(target).size
                 }
                 println("[$target] Warmup Run: $warmupTime ms")
 
@@ -73,7 +73,7 @@ class GioListingBenchmark {
                     kotlinx.coroutines.delay(100)
 
                     val time = measureTimeMillis {
-                        val items = backend.list(target).first()
+                        val items = backend.list(target)
                         count = items.size
                     }
                     times.add(time)

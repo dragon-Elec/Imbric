@@ -34,7 +34,7 @@ open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IO
         return uri.startsWith("search://")
     }
 
-    override fun list(uri: String, sortKey: SortKey): Flow<List<FileEntry>> {
+    override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
         // search:///query?root=...&mime=...
         val text = uri.substringAfter("search:///", "").substringBefore("?")
         val params = uri.substringAfter("?", "").split("&").associate {
@@ -43,8 +43,9 @@ open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IO
         }
         val root = params["root"]?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: "file:///"
         val mime = params["mime"]
-        
+
         return search(com.imbric.core.models.VfsQuery(text = text, rootUri = root, mimeFilter = mime))
+            .firstOrNull() ?: emptyList()
     }
 
     override fun search(query: com.imbric.core.models.VfsQuery): Flow<List<FileEntry>> = flow {

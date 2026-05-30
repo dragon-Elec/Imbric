@@ -46,7 +46,7 @@ class GioBackendTest {
             assertTrue(backend.exists("$dirUri/alpha.txt"))
             assertFalse(backend.exists("$dirUri/missing.txt"))
 
-            val children = backend.list(dirUri).first()
+            val children = backend.list(dirUri)
 
             assertEquals(3, children.size, "Should find 2 files and 1 subdir")
             val names = children.map { it.name }.toSet()

@@ -46,7 +46,7 @@ class ObjectCreationBenchmark {
                 System.gc()
                 kotlinx.coroutines.delay(100)
                 val time = measureTimeMillis {
-                    count = backend.list(target, SortKey.NAME).first().size
+                    count = backend.list(target, SortKey.NAME).size
                 }
                 times.add(time)
             }
@@ -60,7 +60,7 @@ class ObjectCreationBenchmark {
                 System.gc()
                 kotlinx.coroutines.delay(100)
                 val time = measureTimeMillis {
-                    backend.list(target, SortKey.MODIFIED).first().size
+                    backend.list(target, SortKey.MODIFIED).size
                 }
                 modTimes.add(time)
             }
