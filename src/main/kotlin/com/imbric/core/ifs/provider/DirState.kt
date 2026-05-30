@@ -93,6 +93,11 @@ class DirState(
     /** True if [destroy] has been called. The registry uses this to detect stale entries. */
     val isDestroyedState: Boolean get() = isDestroyed.get()
 
+    /** The current sort key. UI sets this, DirState adapts attribute fetching. */
+    var sortKey: SortKey = SortKey.NAME
+
+    private val fileCache = LinkedHashMap<String, FileEntry>(512)
+
     init {
         refresh() // refresh() calls startWatching() internally
         startEnrichmentWorkers()
@@ -145,10 +150,6 @@ class DirState(
         _itemsList.value = mutable.values.toList()
     }
 
-    /** The current sort key. UI sets this, DirState adapts attribute fetching. */
-    var sortKey: SortKey = SortKey.NAME
-    private val fileCache = LinkedHashMap<String, FileEntry>(512)
-
     /**
      * Re-loads the directory contents and updates the cache.
      * Cancels any in-progress refresh to prevent interleaved data.
@@ -177,6 +178,7 @@ class DirState(
                 var totalCollected = 0
                 var lastEmittedCount = 0
                 
+                System.err.println("[DEBUG-REFRESH-CHECKPOINT] uri=$uri BEFORE strategy.list() isActive=$isActive strategy=${strategy::class.simpleName}")
                 // Collect items and emit sorted batches every 200 items
                 strategy.list(backend, uri, sortKey)
                     .collect { item ->
@@ -201,6 +203,8 @@ class DirState(
                         }
                     }
                 
+                System.err.println("[DEBUG-REFRESH-CHECKPOINT] uri=$uri AFTER collect totalCollected=$totalCollected isActive=$isActive")
+                
                 // Final emission — sort and emit all remaining items
                 val sorted = localItems.values.sortedWith(FileEntry.comparatorFor(sortKey))
                 _items.value = sorted.associateBy { it.uri }
@@ -217,6 +221,8 @@ class DirState(
                 val infosToEnrich = localItems.values.filterIsInstance<FileInfo>()
                 infosToEnrich.forEach { enrichItem(it) }
             } catch (e: Exception) {
+                System.err.println("[DEBUG-REFRESH-EXCEPTION] uri=$uri exception=${e::class.simpleName}: ${e.message}")
+                e.printStackTrace(System.err)
                 if (e !is kotlinx.coroutines.CancellationException) {
                     _loadError.value = e
                 }

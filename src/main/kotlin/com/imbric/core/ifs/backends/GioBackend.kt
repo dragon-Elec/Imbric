@@ -171,7 +171,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     // ═══════════════════════════════════════════════════════════════════════════
     // ASYNC list() — batches of 200 files with background worker pipeline
     // ═══════════════════════════════════════════════════════════════════════════
-    override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> = channelFlow {
+    override fun list(uri: String, sortKey: SortKey): Flow<FileEntry> = flow {
         val gfile = File.newForUri(uri)
         val scheme = uri.substringBefore("://", "file")
         val timer = PipelineTimer.current()
@@ -196,10 +196,8 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         val parentUri = uri.trimEnd('/')
         val parentPath = gfile.path?.toString()?.trimEnd('/')
             ?: GioTypeMappers.localPathFromFileUri(parentUri)
-
-        // Dedicated 8-thread pool for construction workers (Python's BatchProcessorWorker pattern)
-        // Eliminates thread contention with shared Dispatchers.IO
-        val workerSemaphore = Semaphore(8)
+        val parentPathType = GioTypeMappers.determinePathType(parentUri)
+        val parentIsRemote = GioTypeMappers.isRemoteUri(parentUri)
         var totalEmitted = 0
 
         try {
@@ -220,29 +218,18 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 }
                 System.err.println("[DEBUG-GIO-BATCH] uri=$uri BATCH_SIZE=${batch.size}")
 
-                // Hand off batch to dedicated listing worker — main loop continues immediately
-                // This creates pipeline overlap: GIO I/O and object construction run in parallel
-                // Uses ListingDispatchers.Listing (dedicated 8-thread pool) instead of shared Dispatchers.IO
-                launch(ListingDispatchers.Listing) {
-                    workerSemaphore.withPermit {
-                        // Pre-compute parent context once for all children in this batch
-                        val parentPathType = GioTypeMappers.determinePathType(parentUri)
-                        val parentIsRemote = GioTypeMappers.isRemoteUri(parentUri)
-                        
-                        for (info in batch) {
-                            val name = info?.name?.toString() ?: continue
-                            val fileInfo = GioTypeMappers.toListingFile(
-                                name = name,
-                                parentUri = parentUri,
-                                parentPath = parentPath ?: "",
-                                gioInfo = info,
-                                parentPathType = parentPathType,
-                                parentIsRemote = parentIsRemote
-                            )
-                            send(fileInfo)
-                            totalEmitted++
-                        }
-                    }
+                for (info in batch) {
+                    val name = info?.name?.toString() ?: continue
+                    val fileInfo = GioTypeMappers.toListingFile(
+                        name = name,
+                        parentUri = parentUri,
+                        parentPath = parentPath ?: "",
+                        gioInfo = info,
+                        parentPathType = parentPathType,
+                        parentIsRemote = parentIsRemote
+                    )
+                    emit(fileInfo)
+                    totalEmitted++
                 }
             }
         } finally {
@@ -250,7 +237,49 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         }
 
         timer?.mark("gio_list_done", itemCount = totalEmitted)
-    }.flowOn(Dispatchers.IO).buffer(64)
+    } // .flowOn(Dispatchers.IO) — disabled: collector runs on ListingDispatchers.Listing, no internal channel needed
+
+    // BACKUP: channelFlow + worker pool for future batch-200 progressive loading
+    // If large directories (>2000 items) prove too slow with single-batch,
+    // restore this path with nextFilesAsync(200) and multiple launch() workers.
+    //
+    // fun listWithWorkers(uri: String, sortKey: SortKey): Flow<FileEntry> = channelFlow {
+    //     val gfile = File.newForUri(uri)
+    //     val attributes = FileEntry.listingAttributesFor(sortKey)
+    //     val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
+    //         block = { cancellable, callback ->
+    //             gfile.enumerateChildrenAsync(attributes, FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, callback)
+    //         },
+    //         finish = { result -> gfile.enumerateChildrenFinish(result) }
+    //     )
+    //     val parentUri = uri.trimEnd('/')
+    //     val parentPath = gfile.path?.toString()?.trimEnd('/') ?: GioTypeMappers.localPathFromFileUri(parentUri)
+    //     val workerSemaphore = Semaphore(8)
+    //     var totalEmitted = 0
+    //     try {
+    //         while (currentCoroutineContext().isActive) {
+    //             val batch = GioCoroutineBridge.awaitGioAsync<org.gnome.glib.List<org.gnome.gio.FileInfo>>(
+    //                 block = { cancellable, callback ->
+    //                     enumerator.nextFilesAsync(200, GLib.PRIORITY_DEFAULT, cancellable, callback)
+    //                 },
+    //                 finish = { result -> enumerator.nextFilesFinish(result) }
+    //             )
+    //             if (batch == null || batch.isEmpty()) break
+    //             launch(ListingDispatchers.Listing) {
+    //                 workerSemaphore.withPermit {
+    //                     val parentPathType = GioTypeMappers.determinePathType(parentUri)
+    //                     val parentIsRemote = GioTypeMappers.isRemoteUri(parentUri)
+    //                     for (info in batch) {
+    //                         val name = info?.name?.toString() ?: continue
+    //                         val fileInfo = GioTypeMappers.toListingFile(name, parentUri, parentPath ?: "", info, parentPathType, parentIsRemote)
+    //                         send(fileInfo)
+    //                         totalEmitted++
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     } finally { enumerator.close(null) }
+    // }.flowOn(Dispatchers.IO).buffer(64)
 
     override suspend fun getMetadata(uri: String): Result<FileInfo> = withVfsErrorHandling(uri) {
         val gfile = File.newForUri(uri)
