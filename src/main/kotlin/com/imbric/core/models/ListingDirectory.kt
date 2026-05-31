@@ -1,6 +1,6 @@
 package com.imbric.core.models
 
-import kotlinx.datetime.Instant
+import kotlin.time.Instant
 
 /**
  * Struct-of-Arrays (SoA) storage for directory listings.

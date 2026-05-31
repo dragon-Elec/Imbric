@@ -190,8 +190,9 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
 
     timer?.mark("gio_enumerate_done")
 
-    val parentUri = uri.trimEnd('/')
-    val parentPath = gfile.path?.toString()?.trimEnd('/')
+    val isRoot = IfsUri(uri).isRootUri()
+    val parentUri = if (isRoot) uri else uri.trimEnd('/')
+    val parentPath = gfile.path?.toString()?.let { if (it == "/") "/" else it.trimEnd('/') }
         ?: GioTypeMappers.localPathFromFileUri(parentUri)
     val parentPathType = GioTypeMappers.determinePathType(parentUri)
     val parentIsRemote = GioTypeMappers.isRemoteUri(parentUri)
@@ -208,7 +209,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
                     enumerator.nextFilesFinish(result)
                 }
             )
-            if (batch == null || batch.isEmpty()) break
+            if (batch.isEmpty()) break
 
             for (info in batch) {
                 val name = info?.name?.toString() ?: continue
@@ -324,7 +325,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
                 throw translatedErr
             }
         }
-    }.flowOn(Dispatchers.IO)
+    }
 
     override suspend fun move(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.channelFlow {
         val finalDest = if (job.autoRename) resolveUniqueTarget(job.dest) else job.dest
@@ -376,7 +377,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
                 throw translatedErr
             }
         }
-    }.flowOn(Dispatchers.IO)
+    }
 
     private suspend fun copyRecursive(
         src: File, 
@@ -507,7 +508,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
                 val origPath = origPathAttr ?: ""
                 
                 val dateStr = info.getAttributeAsString("trash::deletion-date") ?: ""
-                val deletionDate = try { kotlinx.datetime.Instant.parse(dateStr).toEpochMilliseconds() } catch (e: Exception) { 0L }
+                val deletionDate = try { kotlin.time.Instant.parse(dateStr).toEpochMilliseconds() } catch (e: Exception) { 0L }
 
                 items.add(TrashItem(
                     name = name,
@@ -558,7 +559,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
                     deleted++
                 } catch (e: Exception) {
                     // Log individual failures but continue emptying the rest
-                    org.gnome.glib.GLib.log("Imbric", org.gnome.glib.LogLevelFlags.LEVEL_WARNING, "Failed to delete trash item ${child.uri?.toString() ?: "unknown"}: ${e.message}")
+                    org.gnome.glib.GLib.log("Imbric", org.gnome.glib.LogLevelFlags.LEVEL_WARNING, "Failed to delete trash item ${child.uri ?: "unknown"}: ${e.message}")
                 }
             }
             Result.success(deleted)
@@ -851,14 +852,14 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
             conn.disconnect()
             monitor.cancel()
         }
-    }.flowOn(Dispatchers.IO)
+    }
 
     override fun exists(uri: String): Boolean = File.newForUri(uri).queryExists(null)
 
     override fun search(query: com.imbric.core.models.VfsQuery): Flow<List<FileEntry>> = flow {
         val rootFile = File.newForUri(query.rootUri)
         val queryLower = query.text.lowercase()
-        val results = mutableListOf<FileEntry>()
+        val buffer = mutableListOf<FileEntry>()
 
         val stack = ArrayDeque<Pair<File, Int>>()
         stack.add(rootFile to 0)
@@ -904,7 +905,11 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
                             (query.maxSize == null || fileInfo.size <= query.maxSize)
 
                         if (matchesMime && matchesDateRange && matchesSizeRange) {
-                            results.add(fileInfo)
+                            buffer.add(fileInfo)
+                            if (buffer.size >= 50) {
+                                emit(buffer.toList())
+                                buffer.clear()
+                            }
                         }
                     }
 
@@ -915,8 +920,10 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
                 enumerator.close(null)
             }
         }
-        emit(results)
-    }.flowOn(Dispatchers.IO)
+        if (buffer.isNotEmpty()) {
+            emit(buffer.toList())
+        }
+    }
 
     override suspend fun readHeader(uri: String, size: Long): Result<ByteArray> = withContext(Dispatchers.IO) {
         runCatching {
@@ -960,10 +967,8 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
                 try {
                     val data = org.jetbrains.skia.Data.makeFromBytes(bytes)
                     val codec = org.jetbrains.skia.Codec.makeFromData(data)
-                    if (codec != null) {
-                        width = codec.width
-                        height = codec.height
-                    }
+                    width = codec.width
+                    height = codec.height
                 } catch (e: Exception) {
                     // Skia failed or format not supported (e.g. JXL in pre-built Skiko)
                 }

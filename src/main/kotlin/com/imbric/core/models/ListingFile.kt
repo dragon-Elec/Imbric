@@ -1,6 +1,6 @@
 package com.imbric.core.models
 
-import kotlinx.datetime.Instant
+import kotlin.time.Instant
 
 data class ListingFile(
     override val name: String,

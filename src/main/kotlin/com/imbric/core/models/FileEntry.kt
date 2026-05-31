@@ -1,7 +1,7 @@
 @file:OptIn(ExperimentalUuidApi::class)
 package com.imbric.core.models
 
-import kotlinx.datetime.Instant
+import kotlin.time.Instant
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 

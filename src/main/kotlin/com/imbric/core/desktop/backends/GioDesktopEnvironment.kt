@@ -61,7 +61,7 @@ class GioDesktopEnvironment : DesktopEnvironment {
             conn6.disconnect()
             conn7.disconnect()
         }
-    }.flowOn(Dispatchers.IO)
+    }
 
     override suspend fun mount(driveId: String): Result<String> = withContext(Dispatchers.IO) {
         try {
@@ -131,8 +131,8 @@ class GioDesktopEnvironment : DesktopEnvironment {
     override fun getDefaultApp(mimeType: String): com.imbric.core.desktop.DesktopAppInfo? {
         val gioApp = org.gnome.gio.AppInfo.getDefaultForType(mimeType, false) ?: return null
         return com.imbric.core.desktop.DesktopAppInfo(
-            id = gioApp.getId()?.toString() ?: "",
-            name = gioApp.getName()?.toString() ?: "",
+            id = gioApp.getId() ?: "",
+            name = gioApp.getName() ?: "",
             executable = gioApp.getExecutable()?.toString() ?: "",
             icon = gioApp.getIcon()?.let { icon ->
                 if (icon is org.gnome.gio.ThemedIcon) icon.names?.firstOrNull() else null
@@ -144,10 +144,10 @@ class GioDesktopEnvironment : DesktopEnvironment {
         val gioApps = org.gnome.gio.AppInfo.getAllForType(mimeType)
         val result = mutableListOf<com.imbric.core.desktop.DesktopAppInfo>()
         for (i in 0 until gioApps.size) {
-            val gioApp = gioApps.get(i) as? org.gnome.gio.AppInfo ?: continue
+            val gioApp = gioApps.get(i) ?: continue
             result.add(com.imbric.core.desktop.DesktopAppInfo(
-                id = gioApp.getId()?.toString() ?: "",
-                name = gioApp.getName()?.toString() ?: "",
+                id = gioApp.getId() ?: "",
+                name = gioApp.getName() ?: "",
                 executable = gioApp.getExecutable()?.toString() ?: "",
                 icon = gioApp.getIcon()?.let { icon ->
                     if (icon is org.gnome.gio.ThemedIcon) icon.names?.firstOrNull() else null
@@ -187,7 +187,7 @@ class GioDesktopEnvironment : DesktopEnvironment {
         awaitClose {
             conn?.disconnect()
         }
-    }.flowOn(Dispatchers.IO)
+    }
 
     private suspend fun mapDrive(gioDrive: org.gnome.gio.Drive): DesktopDrive {
         val volume = gioDrive.volumes.firstOrNull()

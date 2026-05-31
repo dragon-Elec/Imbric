@@ -3,7 +3,7 @@ package com.imbric.core.ifs.backends
 
 import com.imbric.core.models.*
 import com.imbric.core.models.PathType
-import kotlinx.datetime.Instant
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import kotlin.uuid.ExperimentalUuidApi
 
@@ -34,8 +34,8 @@ object GioTypeMappers {
             isDirectory = isDir,
             // Directories: skip 3 FFM calls (size, contentType, modificationDateTime)
             size = if (isDir) 0L else gioInfo.size,
-            mimeType = if (isDir) "inode/directory" else gioInfo.contentType?.toString() ?: "application/octet-stream",
-            modifiedTime = if (isDir) null else gioInfo.modificationDateTime?.let { kotlinx.datetime.Instant.fromEpochSeconds(it.toUnix()) },
+            mimeType = if (isDir) "inode/directory" else gioInfo.contentType ?: "application/octet-stream",
+            modifiedTime = if (isDir) null else gioInfo.modificationDateTime?.let { kotlin.time.Instant.fromEpochSeconds(it.toUnix()) },
             isHidden = name.startsWith("."),
             isInTrash = parentUri.startsWith("trash:///"),
             isInRecent = parentUri.startsWith("recent:///"),
@@ -118,12 +118,12 @@ object GioTypeMappers {
             path = childPath,
             uri = childUri,
             pathType = pathType,
-            displayName = gioInfo.displayName?.toString() ?: name,
+            displayName = gioInfo.displayName ?: name,
             isDirectory = isDir,
             isSymlink = gioInfo.isSymlink,
             symlinkTarget = if (gioInfo.isSymlink) gioInfo.symlinkTarget?.toString() else null,
             size = gioInfo.size,
-            mimeType = gioInfo.contentType?.toString() ?: "application/octet-stream",
+            mimeType = gioInfo.contentType ?: "application/octet-stream",
             modifiedTime = gioInfo.modificationDateTime?.let { Instant.fromEpochSeconds(it.toUnix()) },
             accessedTime = getTimestamp(gioInfo, "time::access"),
             createdTime = getTimestamp(gioInfo, "time::created"),
@@ -180,8 +180,8 @@ object GioTypeMappers {
         parentIsRemote: Boolean? = null
     ): FileInfo {
         return toImbricFileInfo(
-            uri = gfile.uri?.toString() ?: "",
-            path = gfile.path?.toString() ?: gfile.uri?.toString() ?: "",
+            uri = gfile.uri ?: "",
+            path = gfile.path?.toString() ?: gfile.uri ?: "",
             gioInfo = gioInfo,
             backendId = backendId,
             extractAllAttributes = extractAllAttributes,

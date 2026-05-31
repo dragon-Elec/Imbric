@@ -140,10 +140,10 @@ class DirState(
     }
 
     private fun flushEnrichmentBatch(batch: List<FileEntry>) {
-        val mutable = _items.value.toMutableMap()
-        batch.forEach { mutable[it.uri] = it }
-        _items.value = mutable
-        _itemsList.value = mutable.values.toList()
+        val updatedMap = _items.updateAndGet { current ->
+            current + batch.associateBy { it.uri }
+        }
+        _itemsList.value = updatedMap.values.toList()
     }
 
     /**
@@ -304,10 +304,10 @@ class DirState(
                 attributes = currentInfo.attributes + mapOf("std::emblems" to emblems)
             )
             // Inline emblem update — cheap, keeps UI correct
-            val mutable = _items.value.toMutableMap()
-            mutable[currentInfo.uri] = currentInfo
-            _items.value = mutable
-            _itemsList.value = mutable.values.toList()
+            val updatedMap = _items.updateAndGet { current ->
+                current + (currentInfo.uri to currentInfo)
+            }
+            _itemsList.value = updatedMap.values.toList()
         }
 
         // Queue for async heavy lifting (pixbuf, .desktop, etc.)

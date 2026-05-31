@@ -2,7 +2,7 @@
 package com.imbric.core.logic
 
 import com.imbric.core.models.*
-import kotlinx.datetime.Instant
+import kotlin.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertTrue
 import kotlin.test.assertEquals

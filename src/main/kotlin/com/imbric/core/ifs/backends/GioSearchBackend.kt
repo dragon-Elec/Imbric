@@ -99,7 +99,7 @@ open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IO
         }
 
         emit(results)
-    }.flowOn(Dispatchers.IO)
+    }
 
     // Visible for testing
     internal open fun runTrackerSearch(query: com.imbric.core.models.VfsQuery): Flow<String> = flow {
