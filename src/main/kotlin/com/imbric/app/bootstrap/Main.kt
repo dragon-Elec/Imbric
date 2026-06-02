@@ -6,6 +6,9 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import com.imbric.app.ui.theme.ImbricTheme
 import com.imbric.core.desktop.ImbricDesktop
+import com.imbric.core.desktop.DeviceManager
+import com.imbric.core.desktop.BookmarkList
+import com.imbric.core.desktop.backends.GioDesktopEnvironment
 import com.imbric.core.ifs.BackendRegistry
 import com.imbric.core.ifs.provider.DirState
 import com.imbric.core.ifs.provider.DirStateRegistry
@@ -67,7 +70,7 @@ fun main(args: Array<String>) {
 
                 val defaultBackend = BackendRegistry.getDefaultIo()
                 requireNotNull(defaultBackend) { "No default IOBackend registered" }
-                val dirState = DirState(args[0], defaultBackend, this)
+                val dirState = DirState(cleanTarget, defaultBackend, this)
                 
                 try {
                     kotlinx.coroutines.withTimeout(10000) {
@@ -116,9 +119,15 @@ fun main(args: Array<String>) {
             
             // In a real app, this would be provided by a DI container (like Koin)
             val registry = remember { DirStateRegistry(defaultBackend, scope) }
+            val deviceManager = remember { DeviceManager(GioDesktopEnvironment()) }
+            val bookmarkList = remember { BookmarkList.getInstance() }
 
             ImbricTheme {
-                ImbricApp(registry)
+                ImbricApp(
+                    registry = registry,
+                    deviceManager = deviceManager,
+                    bookmarkList = bookmarkList
+                )
             }
         }
     }

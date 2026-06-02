@@ -43,7 +43,7 @@ class DaemonManager:
             return
 
         print("Cleaning up orphaned processes to free memory...")
-        killed = ProcessManager.kill_all()
+        killed = ProcessManager.kill_all(include_daemons=False)
         if killed:
             print(f"  Killed {len(killed)} orphaned process(es).")
             time.sleep(1)

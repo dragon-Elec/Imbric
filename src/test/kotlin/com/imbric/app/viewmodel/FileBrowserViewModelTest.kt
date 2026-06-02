@@ -87,4 +87,55 @@ class FileBrowserViewModelTest {
         
         assertEquals(parentUri, viewModel.currentUri.value)
     }
+
+    @Test
+    fun `test virtualUri tracks currentUri on normal navigation and retains deep parent path when going back`() = testScope.runTest {
+        val registry = DirStateRegistry(backend, backgroundScope)
+        val parent = "memory:///home/user"
+        val child1 = "memory:///home/user/Downloads"
+        val child2 = "memory:///home/user/Downloads/Pictures"
+        backend.createFolder("memory:///home/user", "Downloads")
+        backend.createFolder("memory:///home/user/Downloads", "Pictures")
+        
+        val viewModel = FileBrowserViewModel(registry, parent, backgroundScope)
+        assertEquals(parent, viewModel.state.value.virtualUri)
+        
+        viewModel.navigateTo(child1)
+        assertEquals(child1, viewModel.state.value.virtualUri)
+        
+        viewModel.navigateTo(child2)
+        assertEquals(child2, viewModel.state.value.virtualUri)
+        
+        // Go back: current goes to child1, but virtualUri retains child2 (deeper path)
+        viewModel.goBack()
+        assertEquals(child1, viewModel.state.value.uri)
+        assertEquals(child2, viewModel.state.value.virtualUri)
+        
+        // Go back again: current goes to parent, but virtualUri still retains child2
+        viewModel.goBack()
+        assertEquals(parent, viewModel.state.value.uri)
+        assertEquals(child2, viewModel.state.value.virtualUri)
+    }
+
+    @Test
+    fun `test virtualUri resets completely when navigating to different hierarchy`() = testScope.runTest {
+        val registry = DirStateRegistry(backend, backgroundScope)
+        val pathA = "memory:///home/user/Downloads/Pictures"
+        val pathB = "memory:///home/user/Downloads"
+        val pathC = "memory:///etc/nginx"
+        backend.createFolder("memory:///home/user/Downloads", "Pictures")
+        backend.createFolder("memory:///etc", "nginx")
+        
+        val viewModel = FileBrowserViewModel(registry, pathA, backgroundScope)
+        assertEquals(pathA, viewModel.state.value.virtualUri)
+        
+        viewModel.navigateTo(pathB)
+        assertEquals(pathB, viewModel.state.value.uri)
+        assertEquals(pathA, viewModel.state.value.virtualUri)
+        
+        // Jump completely to a non-child branch: virtualUri must reset to nginx
+        viewModel.navigateTo(pathC)
+        assertEquals(pathC, viewModel.state.value.uri)
+        assertEquals(pathC, viewModel.state.value.virtualUri)
+    }
 }
