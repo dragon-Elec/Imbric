@@ -105,7 +105,7 @@ class GioListingBenchmark {
 
         TestUtils.withGlibPump {
             for (target in targets) {
-                val gfile = org.gnome.gio.File.newForUri(target)
+                val gfile = org.gnome.gio.File.forUri(target)
                 val parentUri = target.trimEnd('/')
                 val parentPath = gfile.path?.toString()?.trimEnd('/')
                     ?: GioTypeMappers.localPathFromFileUri(parentUri)
@@ -233,7 +233,7 @@ class GioListingBenchmark {
         val LISTING_SENTINEL_UUID = kotlin.uuid.Uuid.fromLongs(0, 0)
 
         for (target in targets) {
-            val gfile = org.gnome.gio.File.newForUri(target)
+            val gfile = org.gnome.gio.File.forUri(target)
             val parentUri = target.trimEnd('/')
             val parentPath = gfile.path?.toString()?.trimEnd('/')
                 ?: GioTypeMappers.localPathFromFileUri(parentUri)

@@ -78,7 +78,7 @@ class ObjectCreationBenchmark {
                 System.gc()
                 kotlinx.coroutines.delay(100)
                 val time = measureTimeMillis {
-                    val gfile = org.gnome.gio.File.newForUri(target)
+                    val gfile = org.gnome.gio.File.forUri(target)
                     val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
                         block = { cancellable, callback ->
                             gfile.enumerateChildrenAsync(queryAttributes, org.gnome.gio.FileQueryInfoFlags.NONE, org.gnome.glib.GLib.PRIORITY_DEFAULT, cancellable, callback)
@@ -109,7 +109,7 @@ class ObjectCreationBenchmark {
 
             // --- Phase 4: Object construction only (pre-fetched GFileInfo) ---
             // Fetch once, then time just the construction
-            val gfile = org.gnome.gio.File.newForUri(target)
+            val gfile = org.gnome.gio.File.forUri(target)
             val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
                 block = { cancellable, callback ->
                     gfile.enumerateChildrenAsync(queryAttributes, org.gnome.gio.FileQueryInfoFlags.NONE, org.gnome.glib.GLib.PRIORITY_DEFAULT, cancellable, callback)

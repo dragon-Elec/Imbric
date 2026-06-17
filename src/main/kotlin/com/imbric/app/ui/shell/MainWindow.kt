@@ -11,6 +11,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import com.imbric.app.orchestrators.GlobalShortcutHandler
 import com.imbric.app.aggregators.SidebarSection
 import com.imbric.app.ui.AddressBar
@@ -31,6 +38,7 @@ fun MainWindow(
     val activePane = tabs.find { it.id == activePaneId } ?: return
 
     val stateHolder = rememberSaveableStateHolder()
+    val focusManager = LocalFocusManager.current
 
     CompositionLocalProvider(LocalActivePane provides activePane) {
         val viewModel = activePane.viewModel
@@ -38,9 +46,27 @@ fun MainWindow(
         val layoutMode by viewModel.layoutMode.collectAsState()
         val sortKey by viewModel.sortKey.collectAsState()
         var forceShowAnimation by remember { mutableStateOf(false) }
+        var addressBarBounds by remember { mutableStateOf<Rect?>(null) }
 
         GlobalShortcutHandler(shellViewModel = shellViewModel) {
-            Row(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                if (event.type == PointerEventType.Press) {
+                                    val pressPosition = event.changes.first().position
+                                    val bounds = addressBarBounds
+                                    if (bounds != null && !bounds.contains(pressPosition)) {
+                                        focusManager.clearFocus()
+                                    }
+                                }
+                            }
+                        }
+                    }
+            ) {
                 SidebarView(
                     sections = sidebarSections,
                     activeUri = state.value.uri,
@@ -63,7 +89,11 @@ fun MainWindow(
                                     AddressBar(
                                         uri = state.value.uri,
                                         virtualUri = state.value.virtualUri,
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .onGloballyPositioned { coordinates ->
+                                                addressBarBounds = coordinates.boundsInWindow()
+                                            },
                                         onSegmentClick = { uri -> viewModel.navigateTo(uri) }
                                     )
                                 },

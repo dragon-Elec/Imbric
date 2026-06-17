@@ -34,7 +34,7 @@ class BookmarkList internal constructor(
     /** Custom URI validator. Defaults to GIO-based validation. */
     private val uriValidator: (String) -> Boolean = { uri ->
         try {
-            val gfile = org.gnome.gio.File.newForUri(uri)
+            val gfile = org.gnome.gio.File.forUri(uri)
             gfile.uri != null
         } catch (e: Exception) {
             false
@@ -154,7 +154,7 @@ class BookmarkList internal constructor(
     /** Monitor the GTK bookmarks file for external changes. */
     private fun setupGtkMonitor() {
         try {
-            val gtkFile = org.gnome.gio.File.newForPath(gtkPath.toString())
+            val gtkFile = org.gnome.gio.File.forPath(gtkPath.toString())
             gtkMonitor = gtkFile.monitorFile(FileMonitorFlags.NONE, null)
 
             gtkMonitor?.onChanged { _, _, eventType ->

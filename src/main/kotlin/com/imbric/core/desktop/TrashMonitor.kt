@@ -29,7 +29,7 @@ class TrashMonitor private constructor(
 
     private fun setupMonitor() {
         try {
-            val trashRoot = File.newForUri("trash:///")
+            val trashRoot = File.forUri("trash:///")
             monitor = trashRoot.monitorDirectory(FileMonitorFlags.NONE, null)
             
             monitor?.onChanged { _, _, _ ->
@@ -54,7 +54,7 @@ class TrashMonitor private constructor(
         refreshJob?.cancel()
         refreshJob = scope.launch {
             try {
-                val trashRoot = File.newForUri("trash:///")
+                val trashRoot = File.forUri("trash:///")
                 val info = trashRoot.queryInfo("trash::item-count", FileQueryInfoFlags.NONE, null)
                 val count = info.getAttributeUint32("trash::item-count")
                 _isEmpty.value = count == 0
@@ -67,7 +67,7 @@ class TrashMonitor private constructor(
 
     private fun checkManualEmpty(): Boolean {
         val enumerator = try {
-            val trashRoot = File.newForUri("trash:///")
+            val trashRoot = File.forUri("trash:///")
             trashRoot.enumerateChildren("standard::name", FileQueryInfoFlags.NONE, null)
         } catch (e: Exception) {
             return true

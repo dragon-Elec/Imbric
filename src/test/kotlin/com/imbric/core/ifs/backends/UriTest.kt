@@ -9,7 +9,7 @@ class UriTest {
     @Test
     fun testUriSpaces() {
         Gio.`javagi$ensureInitialized`()
-        val f1 = File.newForUri("file:///tmp/my#folder")
+        val f1 = File.forUri("file:///tmp/my#folder")
         println("f1 path: ${f1.path}")
     }
 }

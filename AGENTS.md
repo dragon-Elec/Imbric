@@ -17,6 +17,24 @@
 
 ## Build & Run
 
+The canonical way to build, run, and test the project is using the custom `ib` developer utility (`python3 scripts/ib.py`). It wraps Gradle commands, filters out noise, manages compiler daemons, and cleans up orphaned processes.
+
+### Primary `ib` Commands:
+*   **`python3 scripts/ib.py compile`**: Fast Kotlin compilation check.
+*   **`python3 scripts/ib.py compile --tests`**: Compiles both main and test sources.
+*   **`python3 scripts/ib.py test`**: Runs the full test suite (prints `.` for passes, full stack traces for failures).
+*   **`python3 scripts/ib.py test --tests "ClassName"`**: Runs a specific test class or method.
+*   **`python3 scripts/ib.py run`**: Launches the app in the foreground (automatically kills orphaned UI windows first).
+*   **`python3 scripts/ib.py dev`**: Launches the app in continuous build mode (auto-recompiles when you save files).
+*   **`python3 scripts/ib.py generate`**: Regenerates the GIO bindings (stops daemons first, runs generator, and copies files to `generated-src`).
+*   **`python3 scripts/ib.py clean`**: Deletes the `build/` directory.
+*   **`python3 scripts/ib.py doctor`**: Verifies your environment (JDK 25, paths, GIR files, and bindings).
+*   **`python3 scripts/ib.py kill`**: Kills all stale Gradle, Kotlin, and Imbric java processes to free up RAM.
+*   **`python3 scripts/ib.py memory --verbose`**: Shows detailed memory usage of all running Gradle/Kotlin/Imbric processes.
+
+For the full reference guide, see `scripts/ib/REFERENCE.md`.
+
+### Legacy/Raw Commands:
 ```bash
 cd /home/ray/Desktop/files/wrk/Imbric/imbric-kt
 ./scripts/generate_bindings.sh  # generate GIO bindings from local GIR files

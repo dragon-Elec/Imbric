@@ -9,10 +9,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import com.imbric.app.ui.DirectoryView
 import com.imbric.app.ui.components.animations.WipeReveal
@@ -35,8 +31,6 @@ fun FileBrowserPane(
     onVisibleItemsChanged: ((List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val focusManager = LocalFocusManager.current
-
     // Sort items reactively when either items or sortKey changes
     val sortedItems = remember(state.items, sortKey) {
         val comparator = FileEntry.comparatorFor(sortKey)
@@ -54,18 +48,7 @@ fun FileBrowserPane(
     WipeReveal(
         isLoading = forceShowAnimation || (state.isLoading && sortedItems.isEmpty()),
         delayMillis = if (forceShowAnimation) 0L else 500L,
-        modifier = modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.type == PointerEventType.Press) {
-                            focusManager.clearFocus()
-                        }
-                    }
-                }
-            }
+        modifier = modifier.fillMaxSize()
     ) {
         AnimatedContent(
             targetState = state.uri,

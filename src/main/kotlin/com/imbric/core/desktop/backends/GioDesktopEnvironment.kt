@@ -200,7 +200,7 @@ class GioDesktopEnvironment : DesktopEnvironment {
         if (mountUri != null) {
             withContext(Dispatchers.IO) {
                 try {
-                    val gfile = org.gnome.gio.File.newForUri(mountUri)
+                    val gfile = org.gnome.gio.File.forUri(mountUri)
                     val info = gfile.queryFilesystemInfo("filesystem::size,filesystem::free", null)
                     total = info.getAttributeUint64("filesystem::size")
                     free = info.getAttributeUint64("filesystem::free")

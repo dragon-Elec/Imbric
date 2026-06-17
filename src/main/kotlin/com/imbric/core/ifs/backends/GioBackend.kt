@@ -73,7 +73,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     override suspend fun canPerform(action: FileAction, uri: String): Boolean = withContext(Dispatchers.IO) {
         if (action == FileAction.WATCH) return@withContext !uri.startsWith("recent://")
         
-        val gfile = File.newForUri(uri)
+        val gfile = File.forUri(uri)
         val info = gfile.queryInfo("access::*,standard::*", FileQueryInfoFlags.NONE, null) ?: return@withContext false
         
         when (action) {
@@ -118,7 +118,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     // SYNC list() — commented out for async batching. Kept for reference.
     // ═══════════════════════════════════════════════════════════════════════════
     // override fun list(uri: String): Flow<FileEntry> = flow {
-    //     val gfile = File.newForUri(uri)
+    //     val gfile = File.forUri(uri)
     //     val scheme = uri.substringBefore("://", "file")
     //     val timer = PipelineTimer.current()
     //
@@ -172,7 +172,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     // ASYNC list() — batches of 200 files with background worker pipeline
     // ═══════════════════════════════════════════════════════════════════════════
 override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
-    val gfile = File.newForUri(uri)
+    val gfile = File.forUri(uri)
     val timer = PipelineTimer.current()
 
     timer?.mark("gio_list_start", detail = uri)
@@ -237,7 +237,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     // restore this path with nextFilesAsync(200) and multiple launch() workers.
     //
     // fun listWithWorkers(uri: String, sortKey: SortKey): Flow<FileEntry> = channelFlow {
-    //     val gfile = File.newForUri(uri)
+    //     val gfile = File.forUri(uri)
     //     val attributes = FileEntry.listingAttributesFor(sortKey)
     //     val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
     //         block = { cancellable, callback ->
@@ -275,15 +275,15 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     // }.flowOn(Dispatchers.IO).buffer(64)
 
     override suspend fun getMetadata(uri: String): Result<FileInfo> = withVfsErrorHandling(uri) {
-        val gfile = File.newForUri(uri)
+        val gfile = File.forUri(uri)
         val info = gfile.queryInfo(queryAttributes, FileQueryInfoFlags.NONE, null)
         GioTypeMappers.toImbricFileInfo(gfile, info, extractAllAttributes = true)
     }
 
     override suspend fun copy(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.channelFlow {
         val finalDest = if (job.autoRename) resolveUniqueTarget(job.dest) else job.dest
-        val src = File.newForUri(job.source)
-        val dest = File.newForUri(finalDest)
+        val src = File.forUri(job.source)
+        val dest = File.forUri(finalDest)
         
         val flags = if (job.overwrite) setOf(FileCopyFlags.OVERWRITE, FileCopyFlags.ALL_METADATA) else setOf(FileCopyFlags.ALL_METADATA)
         
@@ -329,8 +329,8 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
 
     override suspend fun move(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.channelFlow {
         val finalDest = if (job.autoRename) resolveUniqueTarget(job.dest) else job.dest
-        val src = File.newForUri(job.source)
-        val dest = File.newForUri(finalDest)
+        val src = File.forUri(job.source)
+        val dest = File.forUri(finalDest)
         
         val flags = if (job.overwrite) setOf(FileCopyFlags.OVERWRITE, FileCopyFlags.ALL_METADATA) else setOf(FileCopyFlags.ALL_METADATA)
         
@@ -461,8 +461,8 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String> = withVfsErrorHandling(trashPath) {
-        val src = File.newForUri(trashPath)
-        val dest = File.newForUri(originalPath)
+        val src = File.forUri(trashPath)
+        val dest = File.forUri(originalPath)
         
         // 1. Ensure the destination parent directory exists
         val parent = dest.parent
@@ -477,7 +477,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
             originalPath
         }
         
-        val finalDest = File.newForUri(finalDestUri)
+        val finalDest = File.forUri(finalDestUri)
         
         GioCoroutineBridge.awaitGioAsync(
             block = { cancellable, callback ->
@@ -492,7 +492,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
 
     override suspend fun listTrash(): Result<List<TrashItem>> = withVfsErrorHandling("trash:///") {
         val items = mutableListOf<TrashItem>()
-        val trashRoot = File.newForUri("trash:///")
+        val trashRoot = File.forUri("trash:///")
         val enumerator = trashRoot.enumerateChildren(
             "standard::name,standard::size,trash::orig-path,trash::deletion-date",
             FileQueryInfoFlags.NONE,
@@ -528,7 +528,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     override suspend fun emptyTrash(): Result<Int> = withContext(Dispatchers.IO) {
         try {
             var deleted = 0
-            val trashRoot = File.newForUri("trash:///")
+            val trashRoot = File.forUri("trash:///")
             val enumerator = trashRoot.enumerateChildren("standard::name", FileQueryInfoFlags.NONE, null)
             val children = mutableListOf<File>()
             
@@ -569,13 +569,13 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun isTrashEmpty(uri: String): Boolean = withVfsErrorHandling(uri) {
-        val gfile = File.newForUri(uri)
+        val gfile = File.forUri(uri)
         val info = gfile.queryInfo("trash::item-count", FileQueryInfoFlags.NONE, null)
         info.getAttributeUint32("trash::item-count") == 0
     }.getOrDefault(true)
 
     override suspend fun createFolder(parentUri: String, name: String): Result<String> = withVfsErrorHandling("$parentUri/$name") {
-        val parent = File.newForUri(parentUri)
+        val parent = File.forUri(parentUri)
             val child = parent.getChild(name)
             
             GioCoroutineBridge.awaitGioAsync(
@@ -590,7 +590,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun createFile(parentUri: String, name: String): Result<String> = withVfsErrorHandling("$parentUri/$name") {
-        val parent = File.newForUri(parentUri)
+        val parent = File.forUri(parentUri)
             val child = parent.getChild(name)
             
             GioCoroutineBridge.awaitGioAsync(
@@ -605,7 +605,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun rename(uri: String, newName: String): Result<String> = withVfsErrorHandling(uri) {
-        val gfile = File.newForUri(uri)
+        val gfile = File.forUri(uri)
             
             val newFile = GioCoroutineBridge.awaitGioAsync(
                 block = { cancellable, callback ->
@@ -619,7 +619,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun createLink(targetUri: String, linkUri: String): Result<String> = withVfsErrorHandling(linkUri) {
-        val linkFile = File.newForUri(linkUri)
+        val linkFile = File.forUri(linkUri)
         val target = if (targetUri.startsWith("file://")) targetUri.removePrefix("file://") else targetUri
         
         GioCoroutineBridge.awaitGioAsync(
@@ -692,7 +692,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun mountEnclosingVolume(uri: String): Result<Unit> = withVfsErrorHandling(uri) {
-        val gfile = File.newForUri(uri)
+        val gfile = File.forUri(uri)
             GioCoroutineBridge.awaitGioAsync(
                 block = { cancellable, callback ->
                     // We use null for MountOperation as we don't have a UI prompter in core
@@ -705,7 +705,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun unmount(uri: String): Result<Unit> = withVfsErrorHandling(uri) {
-        val gfile = File.newForUri(uri)
+        val gfile = File.forUri(uri)
             val mount = gfile.findEnclosingMount(null) 
                 ?: throw Exception("No enclosing mount found for $uri")
             
@@ -720,7 +720,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun trash(job: FileJob, recoverTrashUri: Boolean): Result<String> = withVfsErrorHandling(job.source) {
-        val gfile = File.newForUri(job.source)
+        val gfile = File.forUri(job.source)
         
         GioCoroutineBridge.awaitGioAsync(
             block = { cancellable, callback ->
@@ -745,7 +745,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun delete(job: FileJob): Result<Unit> = withVfsErrorHandling(job.source) {
-        val gfile = File.newForUri(job.source)
+        val gfile = File.forUri(job.source)
             
             GioCoroutineBridge.awaitGioAsync(
                 block = { cancellable, callback ->
@@ -767,8 +767,8 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
                         val destUri = payload.destinations[i]
                         val originalUri = payload.sources[i]
                         
-                        val destFile = File.newForUri(destUri)
-                        val finalDest = File.newForUri(originalUri)
+                        val destFile = File.forUri(destUri)
+                        val finalDest = File.forUri(originalUri)
                         
                         GioCoroutineBridge.awaitGioAsync(
                             block = { cancellable, callback ->
@@ -782,7 +782,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
                 } else {
                     // Copy/Link undo: delete destinations
                     for (destUri in payload.destinations) {
-                        val destFile = File.newForUri(destUri)
+                        val destFile = File.forUri(destUri)
                         GioCoroutineBridge.awaitGioAsync(
                             block = { cancellable, callback ->
                                 destFile.deleteAsync(GLib.PRIORITY_DEFAULT, cancellable, callback)
@@ -804,7 +804,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
             }
             is UndoAction.CreateUndo -> {
                 // Create undo: delete the created item
-                val destFile = File.newForUri(payload.createdUri)
+                val destFile = File.forUri(payload.createdUri)
                 GioCoroutineBridge.awaitGioAsync(
                     block = { cancellable, callback ->
                         destFile.deleteAsync(GLib.PRIORITY_DEFAULT, cancellable, callback)
@@ -816,7 +816,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
             }
             is UndoAction.RenameUndo -> {
                 // Rename undo: rename back to original name
-                val currentFile = File.newForUri(payload.currentUri)
+                val currentFile = File.forUri(payload.currentUri)
                 GioCoroutineBridge.awaitGioAsync(
                     block = { cancellable, callback ->
                         currentFile.setDisplayNameAsync(payload.originalName, GLib.PRIORITY_DEFAULT, cancellable, callback)
@@ -830,7 +830,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override fun watch(uri: String): Flow<FileEvent> = callbackFlow {
-        val gfile = File.newForUri(uri)
+        val gfile = File.forUri(uri)
         val monitor = gfile.monitor(FileMonitorFlags.NONE, null)
         
         val conn = monitor.onChanged { file, other, eventType ->
@@ -854,10 +854,10 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
         }
     }
 
-    override fun exists(uri: String): Boolean = File.newForUri(uri).queryExists(null)
+    override fun exists(uri: String): Boolean = File.forUri(uri).queryExists(null)
 
     override fun search(query: com.imbric.core.models.VfsQuery): Flow<List<FileEntry>> = flow {
-        val rootFile = File.newForUri(query.rootUri)
+        val rootFile = File.forUri(query.rootUri)
         val queryLower = query.text.lowercase()
         val buffer = mutableListOf<FileEntry>()
 
@@ -927,7 +927,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
 
     override suspend fun readHeader(uri: String, size: Long): Result<ByteArray> = withContext(Dispatchers.IO) {
         runCatching {
-            val gfile = File.newForUri(uri)
+            val gfile = File.forUri(uri)
             val stream = gfile.read(null)
             try {
                 val buffer = ByteArray(size.toInt())
@@ -1056,7 +1056,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
      */
     override suspend fun getThumbnailPath(uri: String): String? = withContext(Dispatchers.IO) {
         try {
-            val gfile = File.newForUri(uri)
+            val gfile = File.forUri(uri)
             val info = gfile.queryInfo(
                 "thumbnail::path,standard::thumbnail-path",
                 FileQueryInfoFlags.NONE,
@@ -1075,7 +1075,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
      */
     override suspend fun generateThumbnail(uri: String): Result<String?> = withContext(Dispatchers.IO) {
         try {
-            val gfile = File.newForUri(uri)
+            val gfile = File.forUri(uri)
             val info = GioCoroutineBridge.awaitGioAsync(
                 block = { cancellable, callback ->
                     gfile.queryInfoAsync(
@@ -1101,7 +1101,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun getUsage(uri: String): Result<DiskUsage?> = withVfsErrorHandling(uri) {
-        val gfile = File.newForUri(uri)
+        val gfile = File.forUri(uri)
         val info = gfile.queryFilesystemInfo("filesystem::free,filesystem::size", null)
         
         if (info.hasAttribute("filesystem::size") && info.hasAttribute("filesystem::free")) {
@@ -1116,7 +1116,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     private fun translateError(e: Exception, uri: String = ""): VfsError {
         return when {
             e is VfsError -> e
-            e is org.gnome.gio.IOException -> when (e.enum) {
+            e is org.gnome.gio.GIOException -> when (e.enum) {
                 org.gnome.gio.IOErrorEnum.EXISTS -> VfsError.AlreadyExists(uri)
                 org.gnome.gio.IOErrorEnum.NOT_FOUND -> VfsError.NotFound(uri)
                 org.gnome.gio.IOErrorEnum.WOULD_RECURSE -> VfsError.WouldRecurse(uri)

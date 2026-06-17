@@ -19,7 +19,6 @@ import kotlin.test.assertTrue
 class FileBrowserViewModelTest {
 
     private val testDispatcher = UnconfinedTestDispatcher()
-    private val testScope = TestScope(testDispatcher)
     private var backend = InMemoryBackend()
 
     @BeforeEach
@@ -35,7 +34,7 @@ class FileBrowserViewModelTest {
     }
 
     @Test
-    fun `test initial state is correct`() = testScope.runTest {
+    fun `test initial state is correct`() = runTest {
         val registry = DirStateRegistry(backend, backgroundScope)
         val rootUri = "memory:///"
         backend.createFolder("memory://", "")
@@ -48,7 +47,7 @@ class FileBrowserViewModelTest {
     }
 
     @Test
-    fun `test navigateTo changes URI and stops old DirState but retains it in cache`() = testScope.runTest {
+    fun `test navigateTo changes URI and stops old DirState but retains it in cache`() = runTest {
         val registry = DirStateRegistry(backend, backgroundScope)
         val oldUri = "memory:///old"
         val newUri = "memory:///new"
@@ -64,8 +63,6 @@ class FileBrowserViewModelTest {
         viewModel.navigateTo(newUri)
         
         assertEquals(newUri, viewModel.currentUri.value)
-        val state = viewModel.state.value
-        assertEquals(newUri, state.uri)
         
         // Old state should NOT be destroyed, but kept in the cache for fast back/forward navigation
         assertFalse(oldState.isDestroyedState)
@@ -73,7 +70,7 @@ class FileBrowserViewModelTest {
     }
 
     @Test
-    fun `test goUp navigates to parent directory`() = testScope.runTest {
+    fun `test goUp navigates to parent directory`() = runTest {
         val registry = DirStateRegistry(backend, backgroundScope)
         val childUri = "memory:///home/user/Documents"
         val parentUri = "memory:///home/user"
@@ -89,7 +86,7 @@ class FileBrowserViewModelTest {
     }
 
     @Test
-    fun `test virtualUri tracks currentUri on normal navigation and retains deep parent path when going back`() = testScope.runTest {
+    fun `test virtualUri tracks currentUri on normal navigation and retains deep parent path when going back`() = runTest {
         val registry = DirStateRegistry(backend, backgroundScope)
         val parent = "memory:///home/user"
         val child1 = "memory:///home/user/Downloads"
@@ -98,27 +95,27 @@ class FileBrowserViewModelTest {
         backend.createFolder("memory:///home/user/Downloads", "Pictures")
         
         val viewModel = FileBrowserViewModel(registry, parent, backgroundScope)
-        assertEquals(parent, viewModel.state.value.virtualUri)
+        assertEquals(parent, viewModel.virtualUri.value)
         
         viewModel.navigateTo(child1)
-        assertEquals(child1, viewModel.state.value.virtualUri)
+        assertEquals(child1, viewModel.virtualUri.value)
         
         viewModel.navigateTo(child2)
-        assertEquals(child2, viewModel.state.value.virtualUri)
+        assertEquals(child2, viewModel.virtualUri.value)
         
         // Go back: current goes to child1, but virtualUri retains child2 (deeper path)
         viewModel.goBack()
-        assertEquals(child1, viewModel.state.value.uri)
-        assertEquals(child2, viewModel.state.value.virtualUri)
+        assertEquals(child1, viewModel.currentUri.value)
+        assertEquals(child2, viewModel.virtualUri.value)
         
         // Go back again: current goes to parent, but virtualUri still retains child2
         viewModel.goBack()
-        assertEquals(parent, viewModel.state.value.uri)
-        assertEquals(child2, viewModel.state.value.virtualUri)
+        assertEquals(parent, viewModel.currentUri.value)
+        assertEquals(child2, viewModel.virtualUri.value)
     }
 
     @Test
-    fun `test virtualUri resets completely when navigating to different hierarchy`() = testScope.runTest {
+    fun `test virtualUri resets completely when navigating to different hierarchy`() = runTest {
         val registry = DirStateRegistry(backend, backgroundScope)
         val pathA = "memory:///home/user/Downloads/Pictures"
         val pathB = "memory:///home/user/Downloads"
@@ -127,15 +124,15 @@ class FileBrowserViewModelTest {
         backend.createFolder("memory:///etc", "nginx")
         
         val viewModel = FileBrowserViewModel(registry, pathA, backgroundScope)
-        assertEquals(pathA, viewModel.state.value.virtualUri)
+        assertEquals(pathA, viewModel.virtualUri.value)
         
         viewModel.navigateTo(pathB)
-        assertEquals(pathB, viewModel.state.value.uri)
-        assertEquals(pathA, viewModel.state.value.virtualUri)
+        assertEquals(pathB, viewModel.currentUri.value)
+        assertEquals(pathA, viewModel.virtualUri.value)
         
         // Jump completely to a non-child branch: virtualUri must reset to nginx
         viewModel.navigateTo(pathC)
-        assertEquals(pathC, viewModel.state.value.uri)
-        assertEquals(pathC, viewModel.state.value.virtualUri)
+        assertEquals(pathC, viewModel.currentUri.value)
+        assertEquals(pathC, viewModel.virtualUri.value)
     }
 }

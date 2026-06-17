@@ -24,7 +24,7 @@ object DesktopDirectory {
     /**
      * Returns the desktop directory as a GIO File.
      */
-    fun getFile(): File = File.newForUri(getUri())
+    fun getFile(): File = File.forUri(getUri())
 
     /**
      * Returns true if the desktop directory exists.

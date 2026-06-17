@@ -36,8 +36,8 @@ class GioBackendAsyncTest {
             val srcUri = "file://${tempDir.toAbsolutePath()}/src.txt"
             val destUri = "file://${tempDir.toAbsolutePath()}/dest.txt"
 
-            val gSrc = File.newForUri(srcUri)
-            val gDest = File.newForUri(destUri)
+            val gSrc = File.forUri(srcUri)
+            val gDest = File.forUri(destUri)
 
             GioCoroutineBridge.awaitGioAsync(
                 block = { cancellable, callback ->
@@ -61,8 +61,8 @@ class GioBackendAsyncTest {
             val srcUri = "file://${tempDir.toAbsolutePath()}/src_move.txt"
             val destUri = "file://${tempDir.toAbsolutePath()}/dest_move.txt"
 
-            val gSrc = File.newForUri(srcUri)
-            val gDest = File.newForUri(destUri)
+            val gSrc = File.forUri(srcUri)
+            val gDest = File.forUri(destUri)
 
             GioCoroutineBridge.awaitGioAsync(
                 block = { cancellable, callback ->
@@ -88,8 +88,8 @@ class GioBackendAsyncTest {
             val srcUri = "file://${tempDir.toAbsolutePath()}/src_large.txt"
             val destUri = "file://${tempDir.toAbsolutePath()}/dest_large.txt"
 
-            val gSrc = File.newForUri(srcUri)
-            val gDest = File.newForUri(destUri)
+            val gSrc = File.forUri(srcUri)
+            val gDest = File.forUri(destUri)
 
             var progressCalled = false
             var lastCurrent = 0L

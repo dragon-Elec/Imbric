@@ -4,6 +4,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
 import com.materialkolor.DynamicMaterialTheme
+import com.materialkolor.PaletteStyle
+import com.materialkolor.dynamiccolor.ColorSpec
 
 /**
  * Imbric's Material 3 theme composable.
@@ -19,7 +21,10 @@ import com.materialkolor.DynamicMaterialTheme
  * @param content The composable content to theme.
  */
 @Composable
-fun ImbricTheme(content: @Composable () -> Unit) {
+fun ImbricTheme(
+    style: PaletteStyle = PaletteStyle.Vibrant,
+    content: @Composable () -> Unit
+) {
     // Observe system dark mode preference
     val isDark by ThemeDetector.observeDarkMode().collectAsState(initial = false)
 
@@ -34,7 +39,9 @@ fun ImbricTheme(content: @Composable () -> Unit) {
     // from the single seed color, giving us true Monet dynamic colors on Desktop.
     DynamicMaterialTheme(
         seedColor = seedColor,
-        useDarkTheme = isDark,
+        isDark = isDark,
+        style = style,
+        specVersion = ColorSpec.SpecVersion.SPEC_2025,
         animate = true, // Smoothly animate theme changes
         typography = Typography(),
         shapes = Shapes(),

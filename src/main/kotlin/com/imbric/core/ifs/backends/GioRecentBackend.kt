@@ -46,7 +46,7 @@ class GioRecentBackend : IOBackend {
         for (itemUri in uris) {
             if (itemUri == null) continue
 
-            val gfile = File.newForUri(itemUri)
+            val gfile = File.forUri(itemUri)
             try {
                 val info = gfile.queryInfo(queryAttributes, FileQueryInfoFlags.NONE, null)
                 results.add(GioTypeMappers.toImbricFileInfo(gfile, info, "recent"))

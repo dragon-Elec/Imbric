@@ -29,7 +29,9 @@ fun SidebarView(
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = modifier.fillMaxHeight().width(240.dp)
+        modifier = modifier
+            .fillMaxHeight()
+            .width(240.dp)
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),

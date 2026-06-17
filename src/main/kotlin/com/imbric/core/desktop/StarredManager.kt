@@ -38,7 +38,7 @@ class StarredManager private constructor(
             // Monitor the Tracker3 database for changes to starred tags
             // On GNOME, starred files have metadata::nautilus-tags-starred set
             // We monitor ~/ for metadata changes via a lightweight approach
-            val homeDir = File.newForPath(System.getProperty("user.home") ?: "/")
+            val homeDir = File.forPath(System.getProperty("user.home") ?: "/")
             monitor = homeDir.monitorDirectory(FileMonitorFlags.NONE, null)
             
             monitor?.onChanged { _, _, _ ->
@@ -65,7 +65,7 @@ class StarredManager private constructor(
                 val starred = mutableSetOf<String>()
                 
                 // Query recently used files for starred status
-                val recentRoot = File.newForUri("recent:///")
+                val recentRoot = File.forUri("recent:///")
                 val enumerator = recentRoot.enumerateChildren(
                     "standard::uri,metadata::nautilus-tags-starred",
                     FileQueryInfoFlags.NONE,
