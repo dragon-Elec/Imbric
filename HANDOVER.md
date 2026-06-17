@@ -12,7 +12,7 @@
 ## Repository
 - Path: `/home/ray/Desktop/files/wrk/Imbric/imbric-kt`
 - Standalone Git repo (no shared history with Python original)
-- **Test count:** 189 passing
+- **Test count:** 205 passing
 
 ---
 
@@ -106,6 +106,11 @@ imbric-kt/
 ## Current Status (What Works)
 
 ### ✅ Completed (Stable, Verified)
+- **Upstream java-gi 1.0.0-RC1 Merge:** Merged the latest upstream commits into `ref/java-gi_patched`, including the critical `GList`/`GSList` double-free fix, `new_` prefix stripping, and `GIOException` rename. Regenerated the bindings and updated the entire Imbric codebase to use the new `File.forUri`, `File.forPath`, and `GIOException` APIs.
+- **Synchronous Test Stability:** Fixed asynchronous test failures in `FileBrowserViewModelTest` by asserting on synchronous `currentUri.value` and `virtualUri.value` properties.
+- **Material You 2025 Spec Integration:** Upgraded `material-kolor` to `4.1.1` and configured `ImbricTheme` to use `specVersion = ColorSpec.SpecVersion.SPEC_2025` and `style = PaletteStyle.Vibrant` by default, enabling high-contrast, true-to-seed dynamic colors.
+- **Decoupled App Layer:** Decoupled `ImbricApp.kt` by extracting the main layout to `MainWindow.kt`, the folder view canvas to `FileBrowserPane.kt`, and service instantiation to `Main.kt`.
+- **Premium Breadcrumbs & Focus:** Implemented horizontal mouse wheel scrolling, Nemo-style `virtualUri` retention (Ghost Paths), tactile button styling, and global focus-clearing on outside clicks.
 - **Skia Codec with Pixbuf Fallback:** Re-enabled image dimension enrichment in `GioBackend.kt` using Skia's `Codec` (via Skiko) as the primary, high-performance, pure-Kotlin decoder, and native `PixbufLoader` as a robust fallback for formats not compiled into Skiko (like JXL, HEIC, or AVIF on some platforms).
 - **Grid View Rendering Optimizations:** Replaced heavy Material 3 `Surface` components in `FileGridCell` and `FileRow` with lightweight `Box` + `Modifier.clickable` + `Modifier.background` to eliminate composition and layout overhead. Removed conflicting `.width(120.dp)` constraint from `FileGridCell` to eliminate layout double-measurement passes.
 - **Reduced Recomposition Thrashing:** Increased `DirState` chunk size from 50 to 200 to reduce StateFlow emissions and Compose recompositions by 66% during directory loading.
@@ -204,4 +209,4 @@ Step 5: Post-Processing
 
 ---
 
-*Updated after Session 22. Unique child URI bug successfully fixed, pure-terminal VFS consumer CLI mode built, Compose transition deadlock resolved on loading empty/parent folders, GIO test suite native memory crashes eliminated. All 189 unit and integration tests pass green.*
+*Updated after Session 23. Upstream java-gi 1.0.0-RC1 merged, GIO bindings regenerated, codebase updated to new APIs, Material You 2025 spec integrated, app layer decoupled, premium breadcrumbs and focus-clearing implemented. All 205 unit and integration tests pass green.*
