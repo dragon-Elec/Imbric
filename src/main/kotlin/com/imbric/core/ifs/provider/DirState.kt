@@ -78,22 +78,18 @@ class DirState(
     private val _itemsList = MutableStateFlow<List<FileEntry>>(emptyList())
 
     private fun rebuildComposite() {
-        val composite = _compositeView ?: return
+        val base = _baseDirectory
         val deltas = _deltas.value
-        composite.rebuild(deltas.additions, deltas.deletions, deltas.enrichments)
-        // Must emit a NEW list object — StateFlow skips emission for same reference.
-        // Lightweight snapshot: delegates to composite via lazy per-index access.
-        _itemsList.value = CompositeSnapshot(composite)
-    }
-
-    /**
-     * Lightweight list wrapper that delegates to an EnrichedListingView.
-     * Exists solely to give StateFlow a new object reference on each rebuild,
-     * so Compose detects the change and recomposes.
-     */
-    private class CompositeSnapshot(private val delegate: EnrichedListingView) : AbstractList<FileEntry>() {
-        override val size: Int get() = delegate.size
-        override fun get(index: Int): FileEntry = delegate.get(index)
+        // Create a NEW immutable view on every rebuild — identity equality forces StateFlow emission
+        val composite = EnrichedListingView(
+            base = base,
+            comparator = FileEntry.comparatorFor(sortKey),
+            additions = deltas.additions,
+            deletions = deltas.deletions,
+            enrichments = deltas.enrichments
+        )
+        _compositeView = composite
+        _itemsList.value = composite
     }
     
     /**
@@ -214,8 +210,13 @@ class DirState(
 
                 // Clear deltas and build composite
                 val comparator = FileEntry.comparatorFor(sortKey)
-                val composite = EnrichedListingView(dir, comparator)
-                composite.rebuild(emptyMap(), emptySet(), emptyMap())
+                val composite = EnrichedListingView(
+                    base = dir,
+                    comparator = comparator,
+                    additions = emptyMap(),
+                    deletions = emptySet(),
+                    enrichments = emptyMap()
+                )
                 _baseDirectory = dir
                 _compositeView = composite
                 _deltas.value = DeltaState()
@@ -314,11 +315,26 @@ class DirState(
             emptyList()
         }
 
-        // Update delta layer atomically
+        // Update delta layer atomically — clean up cross-references
         val current = _deltas.value
+        val nextAdditions = current.additions.toMutableMap()
+        val nextDeletions = current.deletions.toMutableSet()
+
+        // Deleted files: remove from additions (was created, now deleted)
+        urisToRemove.forEach { uri ->
+            nextAdditions.remove(uri)
+            nextDeletions.add(uri)
+        }
+
+        // New/modified files: remove from deletions (was deleted, now re-created)
+        fetchedInfos.forEach { info ->
+            nextAdditions[info.uri] = info
+            nextDeletions.remove(info.uri)
+        }
+
         _deltas.value = current.copy(
-            additions = current.additions + fetchedInfos.associateBy { it.uri },
-            deletions = current.deletions + urisToRemove
+            additions = nextAdditions,
+            deletions = nextDeletions
         )
         rebuildComposite()
 
@@ -480,8 +496,13 @@ class DirState(
 
                 if (changed) {
                     val comparator = FileEntry.comparatorFor(sortKey)
-                    val composite = EnrichedListingView(dir, comparator)
-                    composite.rebuild(emptyMap(), emptySet(), emptyMap())
+                    val composite = EnrichedListingView(
+                        base = dir,
+                        comparator = comparator,
+                        additions = emptyMap(),
+                        deletions = emptySet(),
+                        enrichments = emptyMap()
+                    )
                     _baseDirectory = dir
                     _compositeView = composite
                     _deltas.value = DeltaState()
