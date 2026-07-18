@@ -66,9 +66,23 @@ class DirState(
      * away from a directory.
      */
 
-    private val _items = MutableStateFlow<Map<String, FileEntry>>(emptyMap())
+    private data class DeltaState(
+        val additions: Map<String, FileInfo> = emptyMap(),
+        val deletions: Set<String> = emptySet(),
+        val enrichments: Map<String, FileInfo> = emptyMap()
+    )
+
+    private var _baseDirectory: ListingDirectory = ListingDirectory(0)
+    private var _compositeView: EnrichedListingView? = null
+    private val _deltas = MutableStateFlow(DeltaState())
     private val _itemsList = MutableStateFlow<List<FileEntry>>(emptyList())
-    private val _uiUpdateChannel = Channel<Unit>(Channel.CONFLATED)
+
+    private fun rebuildComposite() {
+        val composite = _compositeView ?: return
+        val deltas = _deltas.value
+        composite.rebuild(deltas.additions, deltas.deletions, deltas.enrichments)
+        _itemsList.value = composite
+    }
     
     /**
      * The current list of files in the directory.
@@ -142,7 +156,10 @@ class DirState(
     }
 
     private fun flushEnrichmentBatch(batch: List<FileEntry>) {
-        updateItems { it + batch.associateBy { it.uri } }
+        val current = _deltas.value
+        val newEnrichments = current.enrichments + batch.filterIsInstance<FileInfo>().associateBy { it.uri }
+        _deltas.value = current.copy(enrichments = newEnrichments)
+        rebuildComposite()
     }
 
     /**
@@ -163,12 +180,12 @@ class DirState(
             startWatching()
             timer?.mark("dir_refresh_start")
             enrichedUris.clear()
-            var localItems = HashMap<String, FileEntry>(512)
 
             try {
                 val allItems = strategy.list(backend, uri, sortKey)
 
-                localItems = HashMap<String, FileEntry>(allItems.size + 16)
+                val dir = ListingDirectory(allItems.size + 16)
+                val enrichable = mutableListOf<FileInfo>()
                 for (item in allItems) {
                     val cached = fileCache[item.uri]
                     val itemToStore = if (cached != null && cached.modifiedTime == item.modifiedTime && cached.size == item.size) {
@@ -176,29 +193,43 @@ class DirState(
                     } else {
                         item
                     }
-                    localItems[itemToStore.uri] = itemToStore
+                    dir.add(itemToStore)
+                    // Track FileInfo items for enrichment (before SoA flattens them)
+                    if (itemToStore is FileInfo) enrichable.add(itemToStore)
                 }
+                dir.sortWith(FileEntry.comparatorFor(sortKey))
+                dir.buildUriIndex()
 
-                // Sort and emit once
-                val sorted = localItems.values.sortedWith(FileEntry.comparatorFor(sortKey))
-                _items.value = sorted.associateBy { it.uri }
-                _itemsList.value = sorted
-                timer?.mark("first_chunk_rendered", itemCount = sorted.size)
-                timer?.mark("dir_list_done", itemCount = sorted.size)
+                // Clear deltas and build composite
+                val comparator = FileEntry.comparatorFor(sortKey)
+                val composite = EnrichedListingView(dir, comparator)
+                composite.rebuild(emptyMap(), emptySet(), emptyMap())
+                _baseDirectory = dir
+                _compositeView = composite
+                _deltas.value = DeltaState()
+                _itemsList.value = composite
+
+                timer?.mark("first_chunk_rendered", itemCount = dir.size)
+                timer?.mark("dir_list_done", itemCount = dir.size)
 
                 // Update cache
                 fileCache.clear()
-                fileCache.putAll(localItems)
+                for (i in 0 until dir.size) {
+                    fileCache[dir.getUri(i)] = dir.get(i)
+                }
 
-                // Enrichment AFTER listing completes
-                localItems.values.filterIsInstance<FileInfo>().forEach { enrichItem(it) }
+                // Enrichment AFTER listing — pass rebuild=false, rebuild once after loop
+                for (info in enrichable) {
+                    enrichItem(info, rebuild = false)
+                }
+                rebuildComposite()
             } catch (e: Exception) {
                 if (e !is kotlinx.coroutines.CancellationException) {
                     _loadError.value = e
                 }
             } finally {
                 _isLoading.value = false
-                timer?.mark("dir_refresh_done", itemCount = localItems.size)
+                timer?.mark("dir_refresh_done", itemCount = _baseDirectory.size)
             }
         }
         refreshJob = newJob
@@ -243,7 +274,6 @@ class DirState(
     }
 
     private suspend fun handleEventBatch(events: List<FileEvent>) {
-        // 1. Separate events into categories
         val urisToFetch = mutableSetOf<String>()
         val urisToRemove = mutableSetOf<String>()
         
@@ -252,7 +282,7 @@ class DirState(
                 is FileEvent.Created -> urisToFetch.add(event.uri)
                 is FileEvent.Modified -> {
                     urisToFetch.add(event.uri)
-                    enrichedUris.remove(event.uri) // Force re-enrichment
+                    enrichedUris.remove(event.uri)
                 }
                 is FileEvent.Deleted -> {
                     urisToRemove.add(event.uri)
@@ -266,33 +296,29 @@ class DirState(
             }
         }
 
-        // 2. Do a BULK fetch for all new/modified files (Way faster than 500 individual fetches)
         val fetchedInfos = if (urisToFetch.isNotEmpty()) {
             backend.getMetadata(urisToFetch.toList()).mapNotNull { it.getOrNull() }
         } else {
             emptyList()
         }
 
-        // 3. Update the StateFlow exactly ONCE for the whole batch
-        updateItems { map ->
-            var next = map
-            urisToRemove.forEach { next = next - it }
-            fetchedInfos.forEach { next = next + (it.uri to it) }
-            next
-        }
+        // Update delta layer atomically
+        val current = _deltas.value
+        _deltas.value = current.copy(
+            additions = current.additions + fetchedInfos.associateBy { it.uri },
+            deletions = current.deletions + urisToRemove
+        )
+        rebuildComposite()
 
-        // 4. Trigger enrichment in the background for the new files
         fetchedInfos.forEach { enrichItem(it) }
     }
 
-    private fun enrichItem(info: FileInfo) {
+    private fun enrichItem(info: FileInfo, rebuild: Boolean = true) {
         if (!enrichedUris.add(info.uri)) return
 
-        // Fast synchronous enrichment (Emblems)
         val emblems = mutableListOf<String>()
         if (info.isSymlink) emblems.add("emblem-symbolic-link")
         if (!info.isWritable) emblems.add("emblem-readonly")
-        
         val customEmblems = info.attributes["metadata::emblems"] as? List<*>
         customEmblems?.filterIsInstance<String>()?.let { emblems.addAll(it) }
 
@@ -301,11 +327,11 @@ class DirState(
             currentInfo = currentInfo.copy(
                 attributes = currentInfo.attributes + mapOf("std::emblems" to emblems)
             )
-            // Inline emblem update — cheap, keeps UI correct
-            updateItems { it + (currentInfo.uri to currentInfo) }
+            val current = _deltas.value
+            _deltas.value = current.copy(enrichments = current.enrichments + (currentInfo.uri to currentInfo))
+            if (rebuild) rebuildComposite()
         }
 
-        // Queue for async heavy lifting (pixbuf, .desktop, etc.)
         enrichmentChannel.trySend(currentInfo)
     }
 
@@ -314,28 +340,38 @@ class DirState(
      * Called by the UI when the visible items change (scroll, resize).
      */
     fun enrichVisibleItems(visibleUris: List<String>) {
-        val items = _items.value
+        val deltas = _deltas.value
         visibleUris.forEach { uri ->
-            val entry = items[uri] ?: return@forEach
-            if (!enrichedUris.contains(uri) && entry is FileInfo) {
-                enrichItem(entry)
+            if (enrichedUris.contains(uri)) return@forEach
+            // Check additions/enrichments first (these are FileInfo objects)
+            val deltaEntry = deltas.additions[uri] ?: deltas.enrichments[uri]
+            if (deltaEntry != null) {
+                if (!deltaEntry.isDirectory) enrichItem(deltaEntry)
+                return@forEach
+            }
+            // For base directory entries, look up the original FileInfo from fileCache
+            val idx = _baseDirectory.findIndex(uri)
+            if (idx == -1) return@forEach
+            val cached = fileCache[uri]
+            if (cached is FileInfo && !cached.isDirectory) {
+                enrichItem(cached)
             }
         }
-    }
-
-    private fun updateItems(transform: (Map<String, FileEntry>) -> Map<String, FileEntry>) {
-        val updatedMap = _items.updateAndGet(transform)
-        _itemsList.value = updatedMap.values.toList()
     }
 
     // --- Convenience methods (Nautilus parity) ---
 
     /** Returns true if the directory contains any items. */
     val isNotEmpty: Boolean
-        get() = _items.value.isNotEmpty()
+        get() = _itemsList.value.isNotEmpty()
 
     /** Returns true if the directory contains a file with the given URI. */
-    fun containsFile(uri: String): Boolean = _items.value.containsKey(uri)
+    fun containsFile(uri: String): Boolean {
+        val deltas = _deltas.value
+        if (uri in deltas.deletions) return false
+        if (uri in deltas.additions) return true
+        return _baseDirectory.containsUri(uri)
+    }
 
     /** Returns the FileEntry for the file with the given name, or null if not found. */
     fun getFileByName(name: String): FileEntry? = _itemsList.value.find { it.name == name }
@@ -396,11 +432,8 @@ class DirState(
     fun onActive() {
         if (isDestroyed.get()) return
         startWatching()
-
-        // If we are already loading (e.g. from init), don't cancel it
         if (_isLoading.value) return
 
-        // Fast background revalidation (Stale-While-Revalidate)
         val oldJob = refreshJob
         val timer = pipelineTimer
         val timerContext = timer?.asContextElement() ?: EmptyCoroutineContext
@@ -409,18 +442,45 @@ class DirState(
             oldJob?.cancelAndJoin()
             try {
                 timer?.mark("dir_revalidate_start", detail = uri)
-                val fetched = mutableMapOf<String, FileEntry>()
-                strategy.list(backend, uri, sortKey).forEach { item ->
-                    fetched[item.uri] = item
+                val fetched = strategy.list(backend, uri, sortKey)
+
+                // Build new ListingDirectory
+                val dir = ListingDirectory(fetched.size + 16)
+                val enrichable = mutableListOf<FileInfo>()
+                fetched.forEach {
+                    dir.add(it)
+                    if (it is FileInfo) enrichable.add(it)
                 }
-                val current = _items.value
-                if (current != fetched) {
-                    val sorted = fetched.values.sortedWith(FileEntry.comparatorFor(sortKey))
-                    _items.value = sorted.associateBy { it.uri }
-                    _itemsList.value = sorted
-                    fetched.values.filterIsInstance<FileInfo>().forEach { enrichItem(it) }
+                dir.sortWith(FileEntry.comparatorFor(sortKey))
+                dir.buildUriIndex()
+
+                // Compare with current base (quick size + content check)
+                val current = _baseDirectory
+                var changed = dir.size != current.size
+                if (!changed) {
+                    for (i in 0 until dir.size) {
+                        if (dir.getUri(i) != current.getUri(i) || dir.get(i).size != current.get(i).size) {
+                            changed = true
+                            break
+                        }
+                    }
                 }
-                timer?.mark("dir_revalidate_done", detail = uri, itemCount = fetched.size)
+
+                if (changed) {
+                    val comparator = FileEntry.comparatorFor(sortKey)
+                    val composite = EnrichedListingView(dir, comparator)
+                    composite.rebuild(emptyMap(), emptySet(), emptyMap())
+                    _baseDirectory = dir
+                    _compositeView = composite
+                    _deltas.value = DeltaState()
+                    _itemsList.value = composite
+
+                    for (info in enrichable) {
+                        enrichItem(info, rebuild = false)
+                    }
+                    rebuildComposite()
+                }
+                timer?.mark("dir_revalidate_done", detail = uri, itemCount = dir.size)
             } catch (e: Exception) {
                 if (e !is CancellationException) {
                     _loadError.value = e
@@ -449,8 +509,10 @@ class DirState(
      */
     fun destroy() {
         if (isDestroyed.compareAndSet(false, true)) {
-            job.cancel() // Cancels all child coroutines, releasing references to `this`
-            _items.value = emptyMap()
+            job.cancel()
+            _baseDirectory = ListingDirectory(0)
+            _compositeView = null
+            _deltas.value = DeltaState()
             _itemsList.value = emptyList()
             _isLoading.value = false
             _loadError.value = null

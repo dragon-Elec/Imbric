@@ -209,4 +209,4 @@ Step 5: Post-Processing
 
 ---
 
-*Updated after Session 23. Upstream java-gi 1.0.0-RC1 merged, GIO bindings regenerated, codebase updated to new APIs, Material You 2025 spec integrated, app layer decoupled, premium breadcrumbs and focus-clearing implemented. All 205 unit and integration tests pass green.*
+*Updated after Session 24. Completed Phase 3 & 4 of the SoA Log-Structured DirState Integration. Wired `DirState` to use `ListingDirectory` and `EnrichedListingView` instead of `HashMap<String, FileEntry>`, reducing GC pressure and object allocation overhead for directory listings.*

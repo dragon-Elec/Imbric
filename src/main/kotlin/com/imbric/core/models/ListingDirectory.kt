@@ -28,6 +28,9 @@ class ListingDirectory(initialCapacity: Int = 512) {
     private var isInRecents = BooleanArray(initialCapacity)
     private var isRemotes = BooleanArray(initialCapacity)
 
+    /** URI → array index map. Built after sorting, invalidated only by clear(). */
+    private var uriIndex: HashMap<String, Int> = HashMap(initialCapacity)
+
     private fun ensureCapacity(minCapacity: Int) {
         if (minCapacity <= names.size) return
         val newCapacity = maxOf(minCapacity, names.size * 2)
@@ -89,6 +92,26 @@ class ListingDirectory(initialCapacity: Int = 512) {
     /** Get a FileEntry at index (creates object on-demand). */
     fun get(index: Int): FileEntry = ArrayBackedEntry(index)
 
+    /** Get the URI at index (no object allocation). */
+    fun getUri(index: Int): String = uris[index]!!
+
+    /** Get the name at index (no object allocation). */
+    fun getName(index: Int): String = names[index]!!
+
+    /** Build the URI → index map. Must be called after sorting or adding entries. */
+    fun buildUriIndex() {
+        uriIndex = HashMap(size + 16)
+        for (i in 0 until size) {
+            uriIndex[uris[i]!!] = i
+        }
+    }
+
+    /** Find the array index for a URI. O(1) lookup. Returns -1 if not found. */
+    fun findIndex(uri: String): Int = uriIndex.getOrDefault(uri, -1)
+
+    /** Check if a URI exists in this directory. O(1) lookup. */
+    fun containsUri(uri: String): Boolean = uriIndex.containsKey(uri)
+
     /** Sort by swapping array indices using the given comparator on FileEntry. */
     fun sortWith(comparator: Comparator<FileEntry>) {
         // Create boxed index array for sorting ( unavoidable boxing for comparator )
@@ -97,6 +120,8 @@ class ListingDirectory(initialCapacity: Int = 512) {
         // Apply permutation to all parallel arrays
         val perm = IntArray(size) { indices[it] }
         applyPermutation(perm)
+        // Rebuild URI index after sort
+        buildUriIndex()
     }
 
     private fun applyPermutation(perm: IntArray) {
