@@ -20,3 +20,6 @@ bin/
 *.iml
 __pycache__/
 languages/
+
+# OpenCode Deepwork Progress Tracking
+.slim/deepwork/

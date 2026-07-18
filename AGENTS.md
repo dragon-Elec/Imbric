@@ -5,9 +5,9 @@
 - **Name:** Imbric
 - **Root package:** `com.imbric`
 - **Core VFS abstraction:** `ifs`
-- **Language:** Kotlin 2.3.20+ (K2 compiler active)
+- **Language:** Kotlin 2.4.10+ (K2 compiler active)
 - **JVM target:** JDK 25
-- **Build system:** Gradle 9.5.0 (wrapper committed)
+- **Build system:** Gradle 9.6.1 (wrapper committed)
 
 ## Repository
 
@@ -26,6 +26,7 @@ The canonical way to build, run, and test the project is using the custom `ib` d
 *   **`python3 scripts/ib.py test --tests "ClassName"`**: Runs a specific test class or method.
 *   **`python3 scripts/ib.py run`**: Launches the app in the foreground (automatically kills orphaned UI windows first).
 *   **`python3 scripts/ib.py dev`**: Launches the app in continuous build mode (auto-recompiles when you save files).
+*   **`python3 scripts/ib.py hot`**: Launches with hot-reload (requires JBR DCEVM).
 *   **`python3 scripts/ib.py generate`**: Regenerates the GIO bindings (stops daemons first, runs generator, and copies files to `generated-src`).
 *   **`python3 scripts/ib.py clean`**: Deletes the `build/` directory.
 *   **`python3 scripts/ib.py doctor`**: Verifies your environment (JDK 25, paths, GIR files, and bindings).
@@ -33,6 +34,22 @@ The canonical way to build, run, and test the project is using the custom `ib` d
 *   **`python3 scripts/ib.py memory --verbose`**: Shows detailed memory usage of all running Gradle/Kotlin/Imbric processes.
 
 For the full reference guide, see `scripts/ib/REFERENCE.md`.
+
+### Compilation Discipline (STRICT)
+
+**NEVER use raw `./gradlew` commands.** Always use `ib`. The `ib` tool manages the Gradle daemon lifecycle, filters output, and cleans up orphaned processes. Raw `./gradlew` bypasses all of this.
+
+**NEVER run `ib kill` before `ib compile` or `ib test`.** The Gradle daemon stays warm between invocations — that's why `ib compile` takes ~16s instead of 2+ minutes. Running `ib kill` first forces a cold JVM startup, which is slow and wastes RAM during dependency resolution.
+
+**Batch all edits before compiling.** Do NOT compile after every single file change. Make all related edits first, then run `ib compile` once to verify. The daemon's incremental compilation handles multi-file changes efficiently.
+
+**Use `ib dev` or `ib hot` for continuous development.** These keep a warm daemon running that auto-recompiles on file save. Much more efficient than repeated cold `ib compile` calls.
+
+**Never use `--no-daemon`.** This forces a fresh JVM every time, which means cold startup + dependency resolution + configuration cache rebuild. The daemon exists to avoid this.
+
+**Configuration cache is real.** The first compile after a version upgrade (Kotlin, Gradle, Compose) will be slow (~2+ min) because it downloads dependencies and rebuilds the config cache. Subsequent compiles hit the cache → ~16s. Don't panic on the first run.
+
+**If compilation seems stuck, check `ib processes` first.** Don't kill processes blindly — a warm daemon using 600MB is normal and expected. Only kill if you're actually out of memory or the daemon is genuinely stuck.
 
 ### Legacy/Raw Commands:
 ```bash
@@ -90,32 +107,22 @@ com.imbric
   - **Desktop singleton:** System-wide state without a URI. Examples: `TrashMonitor`, `StarredManager`, `SettingsProvider`.
   - **Rule of thumb:** If it's a per-URI file operation → IOBackend. If it has state the UI observes → Service wrapping IOBackend. If it's global system state → Desktop singleton.
 
-## Kotlin 2.3.x Features (Relevant)
+## Kotlin 2.4+ Features (Relevant)
 
-### 2.3.0 (Dec 2025) — base used
+### 2.4.0 (Jun 2026) — current base
 
+- **`kotlin.uuid.Uuid`** (stable): No `@OptIn` required. Random, name-based UUID v3/v5, parsing.
 - **Explicit backing fields** (stable): `val isCancelled: Boolean = false\n    private field\n    get() = field` — the `field` keyword in the body declares the backing field explicitly. Also supported: traditional `_prop` + custom getter pattern.
-- **`kotlin.uuid.Uuid`** (experimental): `@file:OptIn(ExperimentalUuidApi::class)` required. Stable random, name-based UUID v3/v5, parsing.
-- **Java 25 bytecode support** — toolchain must be set.
+- **Context parameters** (stable): `context(logger: Logger) fun log(msg: String)` — except context arguments and callable refs (still experimental).
+- **Collection literals** (experimental): `val x = [1, 2, 3]` — opt-in `-Xcollection-literals`.
+- **`@IntroducedAt`** (experimental): version-based overloads for optional parameters.
+- **Java 26 bytecode support** — toolchain must be set.
 - **Unused return value checker** — warns when non-`Unit` return values are discarded.
 - **`kotlin.time.Clock`** — stable time API alongside `kotlinx.datetime`.
 
-### 2.3.20 (Mar 2026) — current
-
-- **Name-based destructuring** (experimental): `-Xname-based-destructuring=only-syntax`. Enables `(val mail = email, val name = username) = user`. Modes: `only-syntax` (opt-in), `name-mismatch` (warn on position/data class mismatch), `complete` (full mode with bracket syntax for positional). Not enabled in project yet.
-- **Explicit backing fields bugfixes** — intersection overrides, subclass access, `final` enforcement all fixed.
-- **Gradle 9.3+ compatibility** (Build Tools API by default for JVM compilation).
-- **`Map.Entry` immutable copy** API in stdlib.
-
-### 2.3.21 (Apr 2026) — latest patch, no new features
-
-- Wasm IC mode fix, SPM ObjC linking fix, `@JvmRecord` in commonMain fixed.
-- False positive `SUBCLASS_CANT_CALL_COMPANION_PROTECTED_NON_STATIC` fixed.
-
-## Kotlin 2.3+ Conventions
+## Kotlin 2.4+ Conventions
 
 - **Explicit backing fields**: prefer `_prop` + custom getter (`val isCancelled: Boolean get() = _isCancelled`) for clarity. The `field` keyword syntax (`private field`) is also stable but less explicit.
-- `@file:OptIn(ExperimentalUuidApi::class)` required for `kotlin.uuid.Uuid`
 - Enum shorthand `.PENDING` does NOT work — always use full `TransactionStatus.PENDING`
 - `throw`/`error()` preferred over `Result.failure` for unrecoverable errors
 - `when` guards: use nested `if` in branch body, not inline `when (x) if y ->`
@@ -124,7 +131,6 @@ com.imbric
 ## LSP Diagnostic Patterns
 
 - `Initializer type mismatch` / `Unresolved reference` — usually stale test files left in tree. Delete them.
-- `This declaration needs opt-in` — missing `@file:OptIn(ExperimentalUuidApi::class)`
 - `Modifier 'override' not applicable to top level function` — dangling code outside class body
 - `Redeclaration` — duplicate class definitions (often from botched file writes)
 
@@ -173,7 +179,7 @@ The `generate_bindings.sh` script builds and uses this local, patched generator 
 
 - **OS:** Linux (Ubuntu 24.04+)
 - **JDK:** `/usr/lib/jvm/java-25-openjdk-amd64`
-- **Gradle:** 9.5.0 (downloaded to `/tmp/gradle-9.5.0/gradle-9.5.0/`)
+- **Gradle:** 9.6.1 (downloaded to `/tmp/gradle-9.6.1/gradle-9.6.1/`)
 - **Python original:** `/home/ray/Desktop/files/wrk/Imbric/Imbric`
 
 ## Agent Reference Files (Machine-Optimized)

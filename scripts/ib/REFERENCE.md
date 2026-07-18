@@ -56,7 +56,7 @@ Cleans orphaned app processes before start. Ctrl+C triggers graceful terminate +
 | `ib clean` | Remove `build/` (stops daemon first) |
 | `ib clean --deep` | Also remove `.gradle/caches` |
 | `ib clean --bindings` | Only remove `build/native-gen` |
-| `ib doctor` | Check JDK 25, JAVA_HOME, Gradle 9.5.1, GIR files, bindings |
+| `ib doctor` | Check JDK 25, JAVA_HOME, Gradle 9.6.1, GIR files, bindings |
 | `ib exec <cmd...>` | Run any command with ib's output filter |
 | `ib audit [file]` | Validate Kotlin public API against context docs |
 | `ib history` | (stub — not implemented) |

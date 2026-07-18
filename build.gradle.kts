@@ -1,9 +1,9 @@
 plugins {
-    kotlin("jvm") version "2.3.21"
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.3.21"
-    id("org.jetbrains.compose") version "1.11.0"
-    id("org.jetbrains.kotlin.plugin.compose") version "2.3.21"
-    id("org.jetbrains.compose.hot-reload") version "1.1.0"
+    kotlin("jvm") version "2.4.10"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.10"
+    id("org.jetbrains.compose") version "1.11.1"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
+    id("org.jetbrains.compose.hot-reload") version "1.1.1"
 }
 
 group = "com.imbric"

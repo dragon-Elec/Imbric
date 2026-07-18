@@ -4,9 +4,9 @@
 - **Name:** ImbricFS ("Imbric")
 - **Root Package:** `com.imbric`
 - **Core VFS abstraction:** `ifs`
-- **Language:** Kotlin 2.3.21+ (K2 compiler) on **Kotlin/JVM** (not Kotlin/Native)
+- **Language:** Kotlin 2.4.10+ (K2 compiler) on **Kotlin/JVM** (not Kotlin/Native)
 - **JVM target:** JDK 25
-- **Build system:** Gradle 9.5.1
+- **Build system:** Gradle 9.6.1
 - **UI Strategy:** Compose Multiplatform (Kotlin) — **not GTK**
 
 ## Repository
