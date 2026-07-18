@@ -3,6 +3,7 @@ import time
 import sys
 import re
 from ..daemon import PROJECT_ROOT
+from ..filter import OutputFilter
 
 _PASSED = re.compile(r" > .* PASSED")
 _TASK_START = re.compile(r"^> Task ")
@@ -13,17 +14,11 @@ _IMPORTANT = [
     re.compile(r"Exception"),
     re.compile(r"BUILD SUCCESSFUL"),
     re.compile(r"BUILD FAILED"),
-    re.compile(r"^> Task :test"),
+    re.compile(r"^> Task :test(?!Classes)"),
 ]
 
-_GRADLE_NOISE = [
-    re.compile(r"^Reusing configuration cache"),
-    re.compile(r"^Configuration cache entry reused"),
-    re.compile(r"^\d+ actionable tasks"),
-    re.compile(r"^Downloading "),
-    re.compile(r"^Welcome to Gradle"),
-    re.compile(r"^Starting a Gradle Daemon"),
-]
+# Use shared noise patterns from OutputFilter
+_GRADLE_NOISE = OutputFilter.NOISE_PATTERNS
 
 def register(subparsers):
     p = subparsers.add_parser("test", help="Run tests with clean, concise filtering")
@@ -39,6 +34,7 @@ def run(args):
 
     print(f"Running: {' '.join(gradle_cmd)}\n")
     start = time.time()
+    proc = None
 
     try:
         proc = subprocess.Popen(
@@ -86,7 +82,7 @@ def run(args):
                 continue
 
             # Test task boundary → show as progress marker
-            if _TASK_START.match(line) and ":test" in line:
+            if _TASK_START.match(line) and re.search(r":test\b", line):
                 print(f"\n{line}", flush=True)
                 continue
 
@@ -108,5 +104,6 @@ def run(args):
             print(f"\nTests failed (exit code {proc.returncode}) in {elapsed_str}")
 
     except KeyboardInterrupt:
-        proc.terminate()
+        if proc:
+            proc.terminate()
         print("\nInterrupted.")
