@@ -13,6 +13,11 @@ import kotlin.uuid.ExperimentalUuidApi
  * so that backends stay clean.
  */
 object GioTypeMappers {
+    private val mimeCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private fun internMime(mime: String?): String {
+        if (mime == null) return "application/octet-stream"
+        return mimeCache.getOrPut(mime) { mime }
+    }
 
     fun toListingFile(
         name: String,
@@ -34,7 +39,7 @@ object GioTypeMappers {
             isDirectory = isDir,
             // Directories: skip 3 FFM calls (size, contentType, modificationDateTime)
             size = if (isDir) 0L else gioInfo.size,
-            mimeType = if (isDir) "inode/directory" else gioInfo.contentType ?: "application/octet-stream",
+            mimeType = if (isDir) "inode/directory" else internMime(gioInfo.contentType),
             modifiedTime = if (isDir) null else gioInfo.modificationDateTime?.let { kotlin.time.Instant.fromEpochSeconds(it.toUnix()) },
             isHidden = name.startsWith("."),
             isInTrash = parentUri.startsWith("trash:///"),
@@ -123,7 +128,7 @@ object GioTypeMappers {
             isSymlink = gioInfo.isSymlink,
             symlinkTarget = if (gioInfo.isSymlink) gioInfo.symlinkTarget?.toString() else null,
             size = gioInfo.size,
-            mimeType = gioInfo.contentType ?: "application/octet-stream",
+            mimeType = internMime(gioInfo.contentType),
             modifiedTime = gioInfo.modificationDateTime?.let { Instant.fromEpochSeconds(it.toUnix()) },
             accessedTime = getTimestamp(gioInfo, "time::access"),
             createdTime = getTimestamp(gioInfo, "time::created"),

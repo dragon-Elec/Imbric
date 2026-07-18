@@ -5,7 +5,7 @@ import com.imbric.core.ifs.FileEvent
 import com.imbric.core.ifs.IOBackend
 import com.imbric.core.ifs.ListingDispatchers
 import com.imbric.core.ifs.Locality
-import com.imbric.core.models.DeepCount
+
 import com.imbric.core.models.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -108,13 +108,15 @@ class DirState(
         repeat(4) {
             scope.launch(ioDispatcher) {
                 for (info in enrichmentChannel) {
-                    val enriched = try {
-                        val res = backend.enrichMetadata(info)
-                        res.copy(attributes = res.attributes + ("std::enriched" to true))
-                    } catch (_: CancellationException) {
-                        break
-                    } catch (_: Exception) {
-                        info.copy(attributes = info.attributes + ("std::enriched" to true))
+                    val enriched = enrichmentSemaphore.withPermit {
+                        try {
+                            val res = backend.enrichMetadata(info)
+                            res.copy(attributes = res.attributes + ("std::enriched" to true))
+                        } catch (_: CancellationException) {
+                            throw CancellationException()
+                        } catch (_: Exception) {
+                            info.copy(attributes = info.attributes + ("std::enriched" to true))
+                        }
                     }
                     enrichmentResults.send(enriched)
                 }
@@ -140,10 +142,7 @@ class DirState(
     }
 
     private fun flushEnrichmentBatch(batch: List<FileEntry>) {
-        val updatedMap = _items.updateAndGet { current ->
-            current + batch.associateBy { it.uri }
-        }
-        _itemsList.value = updatedMap.values.toList()
+        updateItems { it + batch.associateBy { it.uri } }
     }
 
     /**
@@ -275,13 +274,12 @@ class DirState(
         }
 
         // 3. Update the StateFlow exactly ONCE for the whole batch
-        val updatedMap = _items.updateAndGet { current ->
-            var nextMap = current
-            urisToRemove.forEach { uri -> nextMap = nextMap - uri }
-            fetchedInfos.forEach { info -> nextMap = nextMap + (info.uri to info) }
-            nextMap
+        updateItems { map ->
+            var next = map
+            urisToRemove.forEach { next = next - it }
+            fetchedInfos.forEach { next = next + (it.uri to it) }
+            next
         }
-        _itemsList.value = updatedMap.values.toList()
 
         // 4. Trigger enrichment in the background for the new files
         fetchedInfos.forEach { enrichItem(it) }
@@ -304,10 +302,7 @@ class DirState(
                 attributes = currentInfo.attributes + mapOf("std::emblems" to emblems)
             )
             // Inline emblem update — cheap, keeps UI correct
-            val updatedMap = _items.updateAndGet { current ->
-                current + (currentInfo.uri to currentInfo)
-            }
-            _itemsList.value = updatedMap.values.toList()
+            updateItems { it + (currentInfo.uri to currentInfo) }
         }
 
         // Queue for async heavy lifting (pixbuf, .desktop, etc.)
@@ -328,10 +323,8 @@ class DirState(
         }
     }
 
-    private fun updateItem(uri: String, info: FileInfo) {
-        val updatedMap = _items.updateAndGet { current ->
-            current + (uri to info)
-        }
+    private fun updateItems(transform: (Map<String, FileEntry>) -> Map<String, FileEntry>) {
+        val updatedMap = _items.updateAndGet(transform)
         _itemsList.value = updatedMap.values.toList()
     }
 
@@ -466,24 +459,4 @@ class DirState(
     }
 }
 
-/**
- * Utility to batch flow emissions into lists.
- * @param initialSize The size of the first chunk (for fast initial render)
- * @param size The size of subsequent chunks (to prevent UI thrashing)
- */
-private fun <T> Flow<T>.chunked(initialSize: Int, size: Int): Flow<List<T>> = flow {
-    val chunk = mutableListOf<T>()
-    var isFirstChunk = true
-    collect { value ->
-        chunk.add(value)
-        val currentTargetSize = if (isFirstChunk) initialSize else size
-        if (chunk.size >= currentTargetSize) {
-            emit(chunk.toList())
-            chunk.clear()
-            isFirstChunk = false
-        }
-    }
-    if (chunk.isNotEmpty()) {
-        emit(chunk)
-    }
-}
+
