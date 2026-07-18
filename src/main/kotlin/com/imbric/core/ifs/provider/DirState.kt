@@ -81,7 +81,19 @@ class DirState(
         val composite = _compositeView ?: return
         val deltas = _deltas.value
         composite.rebuild(deltas.additions, deltas.deletions, deltas.enrichments)
-        _itemsList.value = composite
+        // Must emit a NEW list object — StateFlow skips emission for same reference.
+        // Lightweight snapshot: delegates to composite via lazy per-index access.
+        _itemsList.value = CompositeSnapshot(composite)
+    }
+
+    /**
+     * Lightweight list wrapper that delegates to an EnrichedListingView.
+     * Exists solely to give StateFlow a new object reference on each rebuild,
+     * so Compose detects the change and recomposes.
+     */
+    private class CompositeSnapshot(private val delegate: EnrichedListingView) : AbstractList<FileEntry>() {
+        override val size: Int get() = delegate.size
+        override fun get(index: Int): FileEntry = delegate.get(index)
     }
     
     /**
