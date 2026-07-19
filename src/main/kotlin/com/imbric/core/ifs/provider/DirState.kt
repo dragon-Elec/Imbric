@@ -42,28 +42,10 @@ class DirState(
     private val scope = CoroutineScope(parentScope.coroutineContext + job)
 
     /*
-     * KNOWN LIMITATION: Memory leak via WeakReference + coroutines
-     *
-     * The coroutines launched in refresh() and startWatching() capture `this`
-     * (the DirState instance) through their lambdas. This creates a strong
-     * reference path: CoroutineScope → Job → coroutine lambda → DirState.
-     *
-     * As long as these coroutines are running, the DirState instance will
-     * NEVER be garbage-collected, even when held only via WeakReference in
-     * DirStateRegistry. The WeakReference cache effectively becomes a
-     * permanent memory leak for every directory visited during the session.
-     *
-     * TODO: Fix properly when app/ layer is built. Options:
-     *  1. Reference counting: UI layer calls retain()/release(), destroy() on 0.
-     *  2. LRU eviction: Registry evicts least-recently-used DirStates after N.
-     *  3. WeakCoroutine: Launch coroutines that hold WeakReference<DirState>
-     *     and self-cancel when the reference is cleared.
-     *  4. Explicit lifecycle: ViewModel owns DirState lifecycle, registry is
-     *     just a lookup cache (no WeakReference needed).
-     *
-     * For now, destroy() + DirStateRegistry.isDestroyedState provides a
-     * manual escape hatch. The app layer MUST call destroy() when navigating
-     * away from a directory.
+     * Lifecycle: coroutines capture `this` via lambdas, preventing GC while running.
+     * Fixed: DirStateRegistry uses LRU eviction (max 20) and calls destroy() on eviction,
+     * which cancels all coroutines via job.cancel() and releases the strong reference.
+     * See DirStateRegistry.removeEldestEntry() for the eviction logic.
      */
 
     private data class DeltaState(
