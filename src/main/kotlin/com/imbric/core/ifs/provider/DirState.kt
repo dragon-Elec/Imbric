@@ -304,7 +304,11 @@ class DirState(
                 is FileEvent.Renamed -> {
                     urisToRemove.add(event.from)
                     enrichedUris.remove(event.from)
-                    urisToFetch.add(event.to)
+                    // Only fetch destination if it belongs to this directory
+                    val toParent = event.to.substringBeforeLast("/")
+                    if (toParent == uri.removeSuffix("/")) {
+                        urisToFetch.add(event.to)
+                    }
                 }
             }
         }

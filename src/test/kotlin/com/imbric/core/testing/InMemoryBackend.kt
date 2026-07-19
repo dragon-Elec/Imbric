@@ -261,7 +261,33 @@ open class InMemoryBackend(
         }
     }
 
-    override fun watch(uri: String): Flow<FileEvent> = callbackFlow { awaitClose { } }
+    private val _fileEvents = MutableSharedFlow<FileEvent>(extraBufferCapacity = 64)
+
+    /**
+     * Simulates a filesystem event — pushes it to all active watchers.
+     * Use this in contract tests to simulate "another program changed a file."
+     */
+    fun emitFileEvent(event: FileEvent) {
+        _fileEvents.tryEmit(event)
+    }
+
+    private fun isImmediateChild(uri: String, parentDir: String): Boolean {
+        if (!uri.startsWith("$parentDir/")) return false
+        // Immediate child = no additional '/' after the parent prefix
+        return uri.removePrefix("$parentDir/").indexOf('/') == -1
+    }
+
+    override fun watch(uri: String): Flow<FileEvent> {
+        val normalizedDir = uri.removeSuffix("/")
+        return _fileEvents.filter { event ->
+            when (event) {
+                is FileEvent.Created -> isImmediateChild(event.uri, normalizedDir)
+                is FileEvent.Modified -> isImmediateChild(event.uri, normalizedDir)
+                is FileEvent.Deleted -> isImmediateChild(event.uri, normalizedDir)
+                is FileEvent.Renamed -> isImmediateChild(event.from, normalizedDir) || isImmediateChild(event.to, normalizedDir)
+            }
+        }
+    }
     override fun canHandle(uri: String): Boolean = uri.startsWith("$scheme://") || !uri.contains("://")
     
     // --- Test helpers ---

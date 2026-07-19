@@ -2,116 +2,128 @@ package com.imbric.core.ifs.provider
 
 import com.imbric.core.ifs.IOBackend
 import kotlinx.coroutines.CoroutineScope
-import java.lang.ref.WeakReference
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Flyweight cache for [DirState] instances.
+ * LRU cache for [DirState] instances.
  * Ensures that the same URI always returns the same [DirState] object,
  * preventing duplicate monitoring, duplicate GIO calls, and duplicate enrichment.
  *
- * Uses [WeakReference] so that [DirState] instances are automatically
- * garbage-collected when no view holds a reference to them.
+ * Uses access-ordered [LinkedHashMap] with a configurable max size.
+ * When the cache is full, the least-recently-used [DirState] is evicted
+ * and fully released via [DirState.destroy].
+ *
+ * This replaces the previous [WeakReference] approach, which failed because
+ * coroutines launched inside [DirState] capture `this` through their lambdas,
+ * creating a strong reference path that prevents garbage collection.
+ *
+ * Backend dispatch: when [backendResolver] is provided, each URI is routed
+ * to the correct [IOBackend] by scheme. When null, the hardcoded
+ * [fallbackBackend] is used for all URIs (simple mode for tests).
  *
  * This is the Kotlin equivalent of Nautilus's shared directory objects
  * (same URI = same NautilusDirectory).
  *
  * Usage:
  * ```kotlin
- * val registry = DirStateRegistry(backend, scope)
- * val dirState = registry.getOrCreate("file:///home/user/Documents")
- * // ... use dirState ...
- * dirState.stop()  // Stop monitoring, but keep in cache for fast re-open
- * dirState.destroy()  // Fully remove from cache and stop monitoring
+ * // Production: dispatch by scheme via BackendRegistry
+ * val registry = DirStateRegistry(fallbackBackend, scope) { uri -> BackendRegistry.getIo(uri) }
+ *
+ * // Tests: single backend, no dispatch
+ * val registry = DirStateRegistry(fakeBackend, scope)
  * ```
  */
 class DirStateRegistry(
-    private val backend: IOBackend,
+    private val fallbackBackend: IOBackend,
     private val scope: CoroutineScope,
+    /** When provided, URIs are dispatched to the correct backend by scheme. */
+    private val backendResolver: ((String) -> IOBackend?)? = null,
     /** Optional pipeline timer. Passed to DirState instances for performance tracing. */
-    var pipelineTimer: com.imbric.core.ifs.backends.PipelineTimer? = null
+    var pipelineTimer: com.imbric.core.ifs.backends.PipelineTimer? = null,
+    /** Maximum number of DirState instances to keep in the LRU cache. */
+    private val maxSize: Int = DEFAULT_MAX_SIZE
 ) {
-    private val cache = ConcurrentHashMap<String, WeakReference<DirState>>()
-    private val accessCount = AtomicInteger(0)
+    /** Access-ordered LRU cache. Most-recently-accessed entries are at the tail. */
+    private val cache = object : LinkedHashMap<String, DirState>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DirState>?): Boolean {
+            if (size > maxSize && eldest != null) {
+                // Evict the least-recently-used DirState — stop its native monitor
+                eldest.value.destroy()
+                return true
+            }
+            return false
+        }
+    }
+
+    /** Synchronization lock for cache access. */
+    private val lock = Any()
 
     /**
-     * Returns an existing [DirState] for the given URI, or creates a new one.
-     * If the cached instance has been garbage-collected or destroyed, a new one is created.
-     * Thread-safe: uses [ConcurrentHashMap.computeIfAbsent] to prevent duplicate creation.
-     * Has a retry limit to prevent infinite recursion if DirState initialization fails.
+     * Resolves the correct [IOBackend] for the given URI.
+     * Uses [backendResolver] if available, otherwise falls back to [fallbackBackend].
      */
-    fun getOrCreate(uri: String): DirState {
-        var retries = 0
-        while (retries < 3) {
-            val ref = cache.computeIfAbsent(uri) { WeakReference(DirState(uri, backend, scope, pipelineTimer = pipelineTimer)) }
-            val state = ref.get()
-            when {
-                state == null -> {
-                    cache.remove(uri, ref)
-                    retries++
-                    continue
-                }
-                state.isDestroyedState -> {
-                    cache.remove(uri, ref)
-                    retries++
-                    continue
-                }
-                else -> {
-                    state.pipelineTimer = pipelineTimer
-                    // Opportunistic sweep every 100 accesses to avoid O(N) on every call
-                    if (accessCount.incrementAndGet() % 100 == 0) sweepStale()
-                    return state
-                }
-            }
-        }
-        // If we exhausted retries, ensure we still return a cached instance
-        // to maintain the singleton-per-URI invariant
-        val fallback = cache.computeIfAbsent(uri) { WeakReference(DirState(uri, backend, scope, pipelineTimer = pipelineTimer)) }
-            .get() ?: DirState(uri, backend, scope, pipelineTimer = pipelineTimer)
-        fallback.pipelineTimer = pipelineTimer
-        return fallback
+    private fun resolveBackend(uri: String): IOBackend {
+        return backendResolver?.invoke(uri) ?: fallbackBackend
     }
 
     /**
-     * Returns the number of live (non-collected) DirState instances in the cache.
+     * Returns an existing [DirState] for the given URI, or creates a new one.
+     * If the cached instance has been destroyed, a new one is created.
+     * Thread-safe: uses synchronized access to prevent duplicate creation.
+     */
+    fun getOrCreate(uri: String): DirState {
+        synchronized(lock) {
+            val existing = cache[uri]
+            if (existing != null && !existing.isDestroyedState) {
+                existing.pipelineTimer = pipelineTimer
+                return existing
+            }
+            // Either not cached or destroyed — create fresh
+            cache.remove(uri)
+            val backend = resolveBackend(uri)
+            val fresh = DirState(uri, backend, scope, pipelineTimer = pipelineTimer)
+            cache[uri] = fresh
+            return fresh
+        }
+    }
+
+    /**
+     * Returns the number of live DirState instances in the cache.
      * Useful for diagnostics and testing.
      */
     val size: Int
-        get() = cache.values.count { it.get() != null }
+        get() = synchronized(lock) { cache.size }
 
     /**
-     * Returns true if a DirState for the given URI exists and is still alive.
+     * Returns true if a DirState for the given URI exists and is not destroyed.
      */
     fun contains(uri: String): Boolean {
-        return cache[uri]?.get() != null
+        synchronized(lock) {
+            val state = cache[uri] ?: return false
+            return !state.isDestroyedState
+        }
     }
 
     /**
      * Removes a specific URI from the cache and stops its monitoring.
      */
     fun remove(uri: String) {
-        cache.remove(uri)?.get()?.stop()
+        synchronized(lock) { cache.remove(uri) }?.destroy()
     }
 
     /**
      * Clears all cached entries and stops their monitoring.
      */
     fun clear() {
-        cache.values.forEach { ref -> ref.get()?.stop() }
-        cache.clear()
+        val snapshot = synchronized(lock) {
+            val entries = cache.values.toList()
+            cache.clear()
+            entries
+        }
+        snapshot.forEach { it.destroy() }
     }
 
-    /**
-     * Removes stale WeakReferences that have been garbage-collected.
-     * Called opportunistically during getOrCreate().
-     */
-    private fun sweepStale() {
-        val iterator = cache.entries.iterator()
-        while (iterator.hasNext()) {
-            if (iterator.next().value.get() == null) {
-                iterator.remove()
-            }
-        }
+    companion object {
+        /** Default maximum number of cached DirState instances. */
+        const val DEFAULT_MAX_SIZE = 20
     }
 }

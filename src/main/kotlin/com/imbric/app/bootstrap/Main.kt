@@ -118,7 +118,7 @@ fun main(args: Array<String>) {
             requireNotNull(defaultBackend) { "No default IOBackend registered" }
             
             // In a real app, this would be provided by a DI container (like Koin)
-            val registry = remember { DirStateRegistry(defaultBackend, scope) }
+            val registry = remember { DirStateRegistry(defaultBackend, scope, backendResolver = { uri -> BackendRegistry.getIo(uri) }) }
             val deviceManager = remember { DeviceManager(GioDesktopEnvironment()) }
             val bookmarkList = remember { BookmarkList.getInstance() }
 
