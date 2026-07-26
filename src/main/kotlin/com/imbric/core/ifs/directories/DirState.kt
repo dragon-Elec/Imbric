@@ -11,7 +11,9 @@ import com.imbric.core.models.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.delay
 import kotlin.coroutines.EmptyCoroutineContext
@@ -35,6 +37,8 @@ class DirState(
     /** Optional pipeline timing tracer for performance debugging. */
     var pipelineTimer: PipelineTimer? = null
 ) {
+    /** Serializes writes to _baseDirectory, _deltas, _itemsList across refresh/onActive/handleEventBatch. */
+    private val stateMutex = Mutex()
     private val enrichmentSemaphore = Semaphore(4)
     private val enrichmentChannel = Channel<FileInfo>(Channel.UNLIMITED)
     private val enrichmentResults = Channel<FileInfo>(Channel.UNLIMITED)
@@ -200,25 +204,27 @@ class DirState(
                     deletions = emptySet(),
                     enrichments = emptyMap()
                 )
-                _baseDirectory = dir
-                _compositeView = composite
-                _deltas.value = DeltaState()
-                _itemsList.value = composite
+                stateMutex.withLock {
+                    _baseDirectory = dir
+                    _compositeView = composite
+                    _deltas.value = DeltaState()
+                    _itemsList.value = composite
 
-                timer?.mark("first_chunk_rendered", itemCount = dir.size)
-                timer?.mark("dir_list_done", itemCount = dir.size)
+                    timer?.mark("first_chunk_rendered", itemCount = dir.size)
+                    timer?.mark("dir_list_done", itemCount = dir.size)
 
-                // Update cache
-                fileCache.clear()
-                for (i in 0 until dir.size) {
-                    fileCache[dir.getUri(i)] = dir.get(i)
+                    // Update cache
+                    fileCache.clear()
+                    for (i in 0 until dir.size) {
+                        fileCache[dir.getUri(i)] = dir.get(i)
+                    }
+
+                    // Enrichment AFTER listing — pass rebuild=false, rebuild once after loop
+                    for (info in enrichable) {
+                        enrichItem(info, rebuild = false)
+                    }
+                    rebuildComposite()
                 }
-
-                // Enrichment AFTER listing — pass rebuild=false, rebuild once after loop
-                for (info in enrichable) {
-                    enrichItem(info, rebuild = false)
-                }
-                rebuildComposite()
             } catch (e: Exception) {
                 if (e !is kotlinx.coroutines.CancellationException) {
                     _loadError.value = e
@@ -302,28 +308,30 @@ class DirState(
             emptyList()
         }
 
-        // Update delta layer atomically — clean up cross-references
-        val current = _deltas.value
-        val nextAdditions = current.additions.toMutableMap()
-        val nextDeletions = current.deletions.toMutableSet()
+        // Update delta layer atomically — synchronize with refresh/onActive
+        stateMutex.withLock {
+            val current = _deltas.value
+            val nextAdditions = current.additions.toMutableMap()
+            val nextDeletions = current.deletions.toMutableSet()
 
-        // Deleted files: remove from additions (was created, now deleted)
-        urisToRemove.forEach { uri ->
-            nextAdditions.remove(uri)
-            nextDeletions.add(uri)
+            // Deleted files: remove from additions (was created, now deleted)
+            urisToRemove.forEach { uri ->
+                nextAdditions.remove(uri)
+                nextDeletions.add(uri)
+            }
+
+            // New/modified files: remove from deletions (was deleted, now re-created)
+            fetchedInfos.forEach { info ->
+                nextAdditions[info.uri] = info
+                nextDeletions.remove(info.uri)
+            }
+
+            _deltas.value = current.copy(
+                additions = nextAdditions,
+                deletions = nextDeletions
+            )
+            rebuildComposite()
         }
-
-        // New/modified files: remove from deletions (was deleted, now re-created)
-        fetchedInfos.forEach { info ->
-            nextAdditions[info.uri] = info
-            nextDeletions.remove(info.uri)
-        }
-
-        _deltas.value = current.copy(
-            additions = nextAdditions,
-            deletions = nextDeletions
-        )
-        rebuildComposite()
 
         fetchedInfos.forEach { enrichItem(it) }
     }
@@ -482,23 +490,25 @@ class DirState(
                 }
 
                 if (changed) {
-                    val comparator = FileEntry.comparatorFor(sortKey)
-                    val composite = EnrichedListingView(
-                        base = dir,
-                        comparator = comparator,
-                        additions = emptyMap(),
-                        deletions = emptySet(),
-                        enrichments = emptyMap()
-                    )
-                    _baseDirectory = dir
-                    _compositeView = composite
-                    _deltas.value = DeltaState()
-                    _itemsList.value = composite
+                    stateMutex.withLock {
+                        val comparator = FileEntry.comparatorFor(sortKey)
+                        val composite = EnrichedListingView(
+                            base = dir,
+                            comparator = comparator,
+                            additions = emptyMap(),
+                            deletions = emptySet(),
+                            enrichments = emptyMap()
+                        )
+                        _baseDirectory = dir
+                        _compositeView = composite
+                        _deltas.value = DeltaState()
+                        _itemsList.value = composite
 
-                    for (info in enrichable) {
-                        enrichItem(info, rebuild = false)
+                        for (info in enrichable) {
+                            enrichItem(info, rebuild = false)
+                        }
+                        rebuildComposite()
                     }
-                    rebuildComposite()
                 }
                 timer?.mark("dir_revalidate_done", detail = uri, itemCount = dir.size)
             } catch (e: Exception) {

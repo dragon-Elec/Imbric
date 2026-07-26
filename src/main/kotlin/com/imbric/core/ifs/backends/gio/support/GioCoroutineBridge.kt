@@ -110,10 +110,13 @@ object GioCoroutineBridge {
         timeoutMs: Long? = null
     ): T {
         val actual: suspend () -> T = {
-            // Strong reference to the callback OUTSIDE the suspension block.
+            // GC-pinned reference to prevent JIT dead-code elimination.
+            // The callback is passed to native code via FFM; Java has no other reference to it.
+            // Without this pinning, the callback proxy can be GC'd while GIO still holds a
+            // native pointer to the upcall stub, causing SIGSEGV.
             var keepAliveCallback: AsyncReadyCallback? = null
 
-            suspendCancellableCoroutine { cont ->
+            val result = suspendCancellableCoroutine { cont ->
                 val cancellable = Cancellable()
 
                 // 1. NATIVE CALLBACK (C → Kotlin)
@@ -131,8 +134,6 @@ object GioCoroutineBridge {
                 keepAliveCallback = callback
 
                 // 3. SAFELY DISPATCH TO GLIB MAIN CONTEXT
-                // (Optimized: Direct Dispatch. Bypassing GLib.idleAdd eliminates frame-polling
-                // latency delays on small directories. GIO async methods are native-thread-safe.)
                 try {
                     block(cancellable, callback)
                 } catch (e: Exception) {
@@ -144,6 +145,12 @@ object GioCoroutineBridge {
                     cancellable.cancel()
                 }
             }
+
+            // 5. Force compiler/JIT to keep keepAliveCallback alive past the suspension point.
+            @Suppress("UNUSED_EXPRESSION")
+            keepAliveCallback.hashCode()
+
+            result
         }
 
         return if (timeoutMs != null) {
