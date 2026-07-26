@@ -1,6 +1,7 @@
 @file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
-package com.imbric.core.ifs.backends
+package com.imbric.core.ifs.backends.gio
 
+import com.imbric.core.ifs.backends.gio.GioBackend
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.io.TempDir

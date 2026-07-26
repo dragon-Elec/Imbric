@@ -1,5 +1,5 @@
 @file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
-package com.imbric.core.ifs.provider
+package com.imbric.core.ifs.directories
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

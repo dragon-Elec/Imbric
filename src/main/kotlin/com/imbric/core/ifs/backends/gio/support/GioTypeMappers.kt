@@ -1,5 +1,5 @@
 @file:OptIn(ExperimentalUuidApi::class)
-package com.imbric.core.ifs.backends
+package com.imbric.core.ifs.backends.gio.support
 
 import com.imbric.core.models.*
 import com.imbric.core.models.PathType

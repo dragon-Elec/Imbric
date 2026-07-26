@@ -116,8 +116,7 @@ interface BackendContract {
      */
     suspend fun getTrashBackend(registry: BackendRegistry): BackendContract? {
         val rootUri = "$scheme:///"
-        // TODO: Change registry.getIo to registry.get when BackendRegistry is updated
-        val backend = registry.getIo(rootUri)
+        val backend = registry.get(rootUri)
         return if (backend != null && backend.getCapabilities(rootUri).supportsTrash) backend else null
     }
 }

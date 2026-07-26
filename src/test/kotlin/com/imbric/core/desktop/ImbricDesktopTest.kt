@@ -21,19 +21,19 @@ class ImbricDesktopTest {
 
         ImbricDesktop.initialize()
 
-        assertNotNull(BackendRegistry.getIo("file://"))
-        assertNotNull(BackendRegistry.getIo("trash://"))
-        assertNotNull(BackendRegistry.getIo("recent://"))
-        assertNotNull(BackendRegistry.getIo("search://"))
+        assertNotNull(BackendRegistry.get("file://"))
+        assertNotNull(BackendRegistry.get("trash://"))
+        assertNotNull(BackendRegistry.get("recent://"))
+        assertNotNull(BackendRegistry.get("search://"))
 
         val vfs = Vfs.getDefault()
         val supported = vfs.supportedUriSchemes?.toList() ?: emptyList()
 
         if (supported.contains("smb")) {
-            assertNotNull(BackendRegistry.getIo("smb://"))
+            assertNotNull(BackendRegistry.get("smb://"))
         }
         if (supported.contains("sftp")) {
-            assertNotNull(BackendRegistry.getIo("sftp://"))
+            assertNotNull(BackendRegistry.get("sftp://"))
         }
 
         // Also verify with getRegisteredSchemes if we want

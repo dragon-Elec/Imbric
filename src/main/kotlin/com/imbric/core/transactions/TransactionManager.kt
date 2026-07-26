@@ -196,7 +196,7 @@ class TransactionManager(
     fun getTransferCapabilities(sources: List<String>, dest: String): Map<String, Int> {
         val capabilities = mutableMapOf<String, Int>()
         sources.forEach { src ->
-            backendRegistry.getIo(src)?.let { backend ->
+            backendRegistry.get(src)?.let { backend ->
                 capabilities[backend.scheme] = (capabilities[backend.scheme] ?: 0) + 1
             }
         }

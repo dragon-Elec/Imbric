@@ -29,7 +29,7 @@ class UndoManagerTest {
     @BeforeTest
     fun setup() {
         backend = InMemoryBackend()
-        BackendRegistry.registerIo("memory", backend)
+        BackendRegistry.register("memory", backend)
     }
 
     private fun kotlinx.coroutines.test.TestScope.initManagers() {

@@ -1,11 +1,11 @@
 package com.imbric.core.testing
 
-import com.imbric.core.ifs.IOBackend
+import com.imbric.core.ifs.contracts.BackendContract
 
 class InMemoryBackendContractTest : IOBackendContractTest() {
     private lateinit var inMemoryBackend: InMemoryBackend
 
-    override fun createBackend(): IOBackend = inMemoryBackend
+    override fun createBackend(): BackendContract = inMemoryBackend
 
     override fun getTestRootUri(): String = "memory://"
 

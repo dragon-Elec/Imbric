@@ -1,7 +1,12 @@
 @file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
-package com.imbric.core.ifs.backends
+package com.imbric.core.ifs.backends.gio
 
 import kotlinx.coroutines.flow.toList
+import com.imbric.core.ifs.backends.gio.TestUtils.withGlibPump
+import com.imbric.core.ifs.backends.gio.GioBackend
+import com.imbric.core.ifs.backends.*
+import com.imbric.core.ifs.backends.gio.support.GioCoroutineBridge
+import com.imbric.core.ifs.backends.gio.support.GioTypeMappers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.gnome.gio.Gio

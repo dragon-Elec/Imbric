@@ -1,6 +1,6 @@
 package com.imbric.core.desktop
  
-import com.imbric.core.ifs.backends.TestUtils
+import com.imbric.core.ifs.backends.gio.TestUtils
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
 import org.gnome.gio.Gio

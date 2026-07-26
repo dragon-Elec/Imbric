@@ -1,8 +1,8 @@
 @file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
-package com.imbric.core.ifs.backends
+package com.imbric.core.ifs.backends.gio
 
+import com.imbric.core.ifs.backends.gio.GioBackend
 import com.imbric.core.models.FileJob
-import com.imbric.core.ifs.backends.TestUtils.withGlibPump
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.first
@@ -72,7 +72,7 @@ class GioBackendTest {
 
     @Test
     fun testPhysicalMetadata(@TempDir tempDir: Path) = runTest {
-        withGlibPump {
+        TestUtils.withGlibPump {
             BashHelper.runScript("echo -n 'metadata test content' > metadata_target.txt", tempDir.toFile())
             val fileUri = "file://${tempDir.toAbsolutePath()}/metadata_target.txt"
 
@@ -90,7 +90,7 @@ class GioBackendTest {
 
     @Test
     fun testPhysicalSymlinkMetadata(@TempDir tempDir: Path) = runTest {
-        withGlibPump {
+        TestUtils.withGlibPump {
             BashHelper.runScript("""
                 echo -n "target" > target.txt
                 ln -s target.txt link.txt
@@ -110,7 +110,7 @@ class GioBackendTest {
 
     @Test
     fun testRecursiveCopy(@TempDir tempDir: Path) = runTest {
-        withGlibPump {
+        TestUtils.withGlibPump {
             BashHelper.runScript("""
                 mkdir -p src/subdir
                 echo -n "hello" > src/file.txt
@@ -139,7 +139,7 @@ class GioBackendTest {
 
     @Test
     fun testRecursiveMove(@TempDir tempDir: Path) = runTest {
-        withGlibPump {
+        TestUtils.withGlibPump {
             BashHelper.runScript("""
                 mkdir -p src/subdir
                 echo -n "hello" > src/file.txt
@@ -167,7 +167,7 @@ class GioBackendTest {
 
     @Test
     fun testCopyConflictThrowsVfsException(@TempDir tempDir: Path) = runTest {
-        withGlibPump {
+        TestUtils.withGlibPump {
             BashHelper.runScript("""
                 echo -n "source" > src.txt
                 echo -n "destination" > dest.txt

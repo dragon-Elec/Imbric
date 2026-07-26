@@ -1,4 +1,4 @@
-package com.imbric.core.ifs.provider
+package com.imbric.core.ifs.directories
 
 import com.imbric.core.models.*
 import com.imbric.core.testing.InMemoryBackend

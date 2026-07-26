@@ -1,6 +1,6 @@
 package com.imbric.core.desktop.backends
 
-import com.imbric.core.ifs.backends.GioRecentBackend
+import com.imbric.core.ifs.backends.gio.GioRecentBackend
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking

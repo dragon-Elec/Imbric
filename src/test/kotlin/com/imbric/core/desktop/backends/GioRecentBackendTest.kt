@@ -1,8 +1,7 @@
 @file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 package com.imbric.core.desktop.backends
 
-import com.imbric.core.ifs.backends.GioRecentBackend
-import com.imbric.core.models.FileJob
+import com.imbric.core.ifs.backends.gio.GioRecentBackend
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -26,20 +25,16 @@ class GioRecentBackendTest {
         assertTrue(items != null)
     }
 
+    // Removed old stub-method checks (trash, delete, createFolder, etc.)
+    // GioRecentBackend now only implements BackendContract + RecentContract.
+    // WriteContract and TrashContract methods no longer exist on this class.
     @Test
-    fun testUnsupportedOperations() = runBlocking {
+    fun testUnsupportedMetadataOperations() = runBlocking {
         val backend = GioRecentBackend()
-        val job = FileJob(opType = "test", source = "recent:///test")
 
         val results = listOf(
             backend.getMetadata("recent:///test"),
             backend.readHeader("recent:///test", 1024),
-            backend.trash(job, false),
-            backend.restoreFromTrash("recent:///trash", "recent:///test"),
-            backend.delete(job),
-            backend.createFolder("recent:///", "newFolder"),
-            backend.createFile("recent:///", "newFile.txt"),
-            backend.rename("recent:///old.txt", "new.txt")
         )
 
         for (result in results) {

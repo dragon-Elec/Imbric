@@ -1,7 +1,7 @@
 package com.imbric.core.desktop.backends
 
 import com.imbric.core.desktop.*
-import com.imbric.core.ifs.backends.GioCoroutineBridge
+import com.imbric.core.ifs.backends.gio.support.GioCoroutineBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow

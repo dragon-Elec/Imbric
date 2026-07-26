@@ -1,7 +1,7 @@
 package com.imbric.app.viewmodel
 
-import com.imbric.core.ifs.provider.DirState
-import com.imbric.core.ifs.provider.DirStateRegistry
+import com.imbric.core.ifs.directories.DirState
+import com.imbric.core.ifs.directories.DirStateRegistry
 import com.imbric.core.testing.InMemoryBackend
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi

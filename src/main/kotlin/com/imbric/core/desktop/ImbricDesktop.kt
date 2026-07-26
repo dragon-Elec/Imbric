@@ -1,9 +1,10 @@
 package com.imbric.core.desktop
 
 import com.imbric.core.ifs.BackendRegistry
-import com.imbric.core.ifs.backends.GioBackend
-import com.imbric.core.ifs.backends.GioRecentBackend
-import com.imbric.core.ifs.backends.GioSearchBackend
+import com.imbric.core.ifs.backends.gio.GioBackend
+import com.imbric.core.ifs.backends.gio.GioRecentBackend
+import com.imbric.core.ifs.backends.gio.GioSearchBackend
+import com.imbric.core.ifs.backends.gio.support.GioCoroutineBridge
 
 /**
  * Entry point for initializing Imbric with Linux/GNOME desktop integration.
@@ -14,19 +15,19 @@ object ImbricDesktop {
         val gio = GioBackend()
         
         // Start the native OS daemon thread pump for GIO async callbacks
-        com.imbric.core.ifs.backends.GioCoroutineBridge.startMainContextPump()
+        GioCoroutineBridge.startMainContextPump()
         
         // Register standard VFS handlers
-        BackendRegistry.registerIo("file", gio)
-        BackendRegistry.registerIo("trash", gio)
-        BackendRegistry.registerIo("smb", gio)
-        BackendRegistry.registerIo("sftp", gio)
+        BackendRegistry.register("file", gio)
+        BackendRegistry.register("trash", gio)
+        BackendRegistry.register("smb", gio)
+        BackendRegistry.register("sftp", gio)
         
         // Register specialized Desktop handlers
-        BackendRegistry.registerIo("recent", GioRecentBackend())
-        BackendRegistry.registerIo("search", GioSearchBackend(gio))
+        BackendRegistry.register("recent", GioRecentBackend())
+        BackendRegistry.register("search", GioSearchBackend(gio))
         
         // Set fallback
-        BackendRegistry.setDefaultIo(gio)
+        BackendRegistry.setDefault(gio)
     }
 }

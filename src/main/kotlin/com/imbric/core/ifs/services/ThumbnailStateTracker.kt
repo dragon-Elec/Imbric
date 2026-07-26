@@ -1,23 +1,24 @@
 package com.imbric.core.ifs.services
 
 import com.imbric.core.models.*
-import com.imbric.core.ifs.IOBackend
+import com.imbric.core.ifs.contracts.BackendContract
+import com.imbric.core.ifs.contracts.ThumbnailContract
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * State coordinator for thumbnail generation.
- * Wraps [IOBackend.getThumbnailPath] and [IOBackend.generateThumbnail]
+ * Wraps [ThumbnailContract.getThumbnailPath] and [ThumbnailContract.generateThumbnail]
  * and tracks loading/failed state for UI observation.
  *
  * This is a SERVICE — it has state the UI observes. It is NOT a backend capability.
- * The actual thumbnail operations live on [IOBackend].
+ * The actual thumbnail operations live on [BackendContract].
  *
  * Ported from nautilus-thumbnails.c state tracking logic.
  */
 class ThumbnailStateTracker(
-    private val backend: IOBackend,
+    private val backend: BackendContract,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 ) {
     private val MAX_THUMBNAIL_SIZE = 10 * 1024 * 1024 // 10MB limit for local files
@@ -69,14 +70,14 @@ class ThumbnailStateTracker(
         val uri = info.uri
         
         // Fast path: backend already has a thumbnail
-        val existingPath = backend.getThumbnailPath(uri)
+        val existingPath = (backend as? ThumbnailContract)?.getThumbnailPath(uri)
         if (existingPath != null) return existingPath
 
         // Need to generate — track state
         markInProgress(uri)
         
         return try {
-            val result = backend.generateThumbnail(uri)
+            val result = (backend as? ThumbnailContract)?.generateThumbnail(uri) ?: Result.success(null)
             if (result.isSuccess) {
                 val path = result.getOrNull()
                 if (path != null) {

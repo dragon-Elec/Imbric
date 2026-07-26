@@ -1,6 +1,8 @@
-package com.imbric.core.ifs.provider
+package com.imbric.core.ifs.directories
 
 import com.imbric.core.desktop.StarredManager
+import com.imbric.core.ifs.contracts.BackendContract
+import com.imbric.core.ifs.contracts.SearchContract
 import com.imbric.core.models.*
 import com.imbric.core.models.SortKey
 import kotlinx.coroutines.flow.firstOrNull
@@ -18,23 +20,23 @@ import kotlinx.coroutines.flow.firstOrNull
 sealed interface ListingStrategy {
 
     /**
-     * Lists files using the backend's [com.imbric.core.ifs.IOBackend.list] method.
+     * Lists files using the backend's [com.imbric.core.ifs.contracts.BackendContract.list] method.
      * This is the default strategy for normal directory browsing.
      */
     data object Standard : ListingStrategy {
-        override suspend fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): List<FileEntry> =
+        override suspend fun list(backend: BackendContract, uri: String, sortKey: SortKey): List<FileEntry> =
             backend.list(uri, sortKey)
 
         override fun watchable(): Boolean = true
     }
 
     /**
-     * Lists files using the backend's [com.imbric.core.ifs.IOBackend.search] method.
+     * Lists files using the backend's [com.imbric.core.ifs.contracts.SearchContract.search] method.
      * Used for search result directories where the content is defined by a query.
      */
     data class Search(val query: VfsQuery) : ListingStrategy {
-        override suspend fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): List<FileEntry> =
-            backend.search(query).firstOrNull() ?: emptyList()
+        override suspend fun list(backend: BackendContract, uri: String, sortKey: SortKey): List<FileEntry> =
+            (backend as? SearchContract)?.search(query)?.firstOrNull() ?: emptyList()
 
         override fun watchable(): Boolean = false
     }
@@ -44,7 +46,7 @@ sealed interface ListingStrategy {
      * and fetching metadata for each URI.
      */
     data class Starred(val starredManager: StarredManager) : ListingStrategy {
-        override suspend fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): List<FileEntry> {
+        override suspend fun list(backend: BackendContract, uri: String, sortKey: SortKey): List<FileEntry> {
             val uris = starredManager.starredUris.value
             return if (uris.isNotEmpty()) {
                 backend.getMetadata(uris.toList()).mapNotNull { it.getOrNull() }
@@ -61,7 +63,7 @@ sealed interface ListingStrategy {
      * like bookmarks, network shares, or custom aggregations.
      */
     data class Virtual(val items: List<FileEntry>) : ListingStrategy {
-        override suspend fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey): List<FileEntry> =
+        override suspend fun list(backend: BackendContract, uri: String, sortKey: SortKey): List<FileEntry> =
             items
 
         override fun watchable(): Boolean = false
@@ -71,7 +73,7 @@ sealed interface ListingStrategy {
      * Returns the directory listing as a [List] of [FileEntry].
      * Called by [DirState.refresh] to populate the directory contents.
      */
-    suspend fun list(backend: com.imbric.core.ifs.IOBackend, uri: String, sortKey: SortKey = SortKey.NAME): List<FileEntry>
+    suspend fun list(backend: BackendContract, uri: String, sortKey: SortKey = SortKey.NAME): List<FileEntry>
 
     /**
      * Returns true if this strategy supports real-time file monitoring.

@@ -25,7 +25,7 @@ import com.imbric.app.ui.LayoutMode
 import com.imbric.app.ui.pane.FileBrowserPane
 import com.imbric.app.viewmodel.ShellViewModel
 import kotlin.uuid.ExperimentalUuidApi
-import com.imbric.core.ifs.backends.PipelineTimer
+import com.imbric.core.ifs.backends.gio.support.PipelineTimer
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalUuidApi::class)
 @Composable

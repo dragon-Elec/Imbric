@@ -15,7 +15,7 @@ import com.imbric.app.ui.components.animations.WipeReveal
 import com.imbric.app.ui.components.animations.edgePulse
 import com.imbric.app.ui.LayoutMode
 import com.imbric.app.viewmodel.FileBrowserState
-import com.imbric.core.ifs.backends.PipelineTimer
+import com.imbric.core.ifs.backends.gio.support.PipelineTimer
 import com.imbric.core.models.FileEntry
 import com.imbric.core.models.SortKey
 

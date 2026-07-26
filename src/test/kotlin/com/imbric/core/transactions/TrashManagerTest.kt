@@ -23,7 +23,7 @@ class TrashManagerTest {
     fun setup() {
         BackendRegistry.clear()
         backend = InMemoryBackend()
-        BackendRegistry.registerIo("memory", backend)
+        BackendRegistry.register("memory", backend)
         fakeTrashState = FakeTrashStateProvider()
         trashManager = TrashManager(BackendRegistry, trashState = fakeTrashState)
     }

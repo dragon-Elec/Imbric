@@ -3,6 +3,7 @@
 package com.imbric.core.transactions
 
 import com.imbric.core.ifs.*
+import com.imbric.core.ifs.contracts.BackendContract
 import com.imbric.core.logic.*
 import com.imbric.core.transactions.models.TransactionEvent
 import kotlinx.coroutines.*
@@ -86,8 +87,8 @@ class TransferOrchestrator(
             val fileName = src.uriName
             val dest = destParent.uriJoin(fileName)
 
-            val srcBackend = backendRegistry.getIo(src) ?: return
-            val destBackend = backendRegistry.getIo(dest) ?: return
+            val srcBackend = backendRegistry.get(src) ?: return
+            val destBackend = backendRegistry.get(dest) ?: return
 
             val srcMeta = srcBackend.getMetadata(src).getOrNull() ?: return
             val destMeta = destBackend.getMetadata(dest).getOrNull()
@@ -120,7 +121,7 @@ class TransferOrchestrator(
             action: ConflictAction,
             context: ConflictContext,
             destParent: String,
-            srcBackend: IOBackend
+            srcBackend: BackendContract
         ) {
             val src = context.src
             val dest = context.dest

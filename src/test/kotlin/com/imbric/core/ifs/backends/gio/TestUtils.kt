@@ -1,4 +1,4 @@
-package com.imbric.core.ifs.backends
+package com.imbric.core.ifs.backends.gio
 
 import kotlinx.coroutines.*
 import org.gnome.glib.MainContext

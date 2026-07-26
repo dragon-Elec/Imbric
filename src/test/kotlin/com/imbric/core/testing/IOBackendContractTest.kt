@@ -1,6 +1,7 @@
 package com.imbric.core.testing
 
-import com.imbric.core.ifs.IOBackend
+import com.imbric.core.ifs.contracts.BackendContract
+import com.imbric.core.ifs.contracts.WriteContract
 import com.imbric.core.models.FileJob
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.first
@@ -16,12 +17,12 @@ import kotlin.uuid.Uuid
 
 @OptIn(ExperimentalUuidApi::class)
 abstract class IOBackendContractTest {
-    protected abstract fun createBackend(): IOBackend
+    protected abstract fun createBackend(): BackendContract
     protected abstract fun getTestRootUri(): String
     protected abstract fun setupTestEnvironment()
     protected abstract fun teardownTestEnvironment()
 
-    private lateinit var backend: IOBackend
+    private lateinit var backend: BackendContract
     private lateinit var rootUri: String
 
     @BeforeEach
@@ -38,9 +39,10 @@ abstract class IOBackendContractTest {
 
     @Test
     fun testCreateAndList() = runTest {
-        com.imbric.core.ifs.backends.TestUtils.withGlibPump {
-            val folderUri = backend.createFolder(rootUri, "test_folder").getOrThrow()
-            val fileUri = backend.createFile(folderUri, "test_file.txt").getOrThrow()
+        com.imbric.core.ifs.backends.gio.TestUtils.withGlibPump {
+            val write = backend as WriteContract
+            val folderUri = write.createFolder(rootUri, "test_folder").getOrThrow()
+            val fileUri = write.createFile(folderUri, "test_file.txt").getOrThrow()
 
             assertTrue(backend.exists(folderUri))
             assertTrue(backend.exists(fileUri))
@@ -54,11 +56,12 @@ abstract class IOBackendContractTest {
 
     @Test
     fun testRename() = runTest {
-        com.imbric.core.ifs.backends.TestUtils.withGlibPump {
-            val folderUri = backend.createFolder(rootUri, "rename_folder").getOrThrow()
-            val fileUri = backend.createFile(folderUri, "old_name.txt").getOrThrow()
+        com.imbric.core.ifs.backends.gio.TestUtils.withGlibPump {
+            val write = backend as WriteContract
+            val folderUri = write.createFolder(rootUri, "rename_folder").getOrThrow()
+            val fileUri = write.createFile(folderUri, "old_name.txt").getOrThrow()
 
-            val newUri = backend.rename(fileUri, "new_name.txt").getOrThrow()
+            val newUri = write.rename(fileUri, "new_name.txt").getOrThrow()
             
             assertFalse(backend.exists(fileUri))
             assertTrue(backend.exists(newUri))
@@ -70,12 +73,13 @@ abstract class IOBackendContractTest {
 
     @Test
     fun testDelete() = runTest {
-        com.imbric.core.ifs.backends.TestUtils.withGlibPump {
-            val folderUri = backend.createFolder(rootUri, "delete_folder").getOrThrow()
-            val fileUri = backend.createFile(folderUri, "to_delete.txt").getOrThrow()
+        com.imbric.core.ifs.backends.gio.TestUtils.withGlibPump {
+            val write = backend as WriteContract
+            val folderUri = write.createFolder(rootUri, "delete_folder").getOrThrow()
+            val fileUri = write.createFile(folderUri, "to_delete.txt").getOrThrow()
 
             val job = FileJob(id = Uuid.random(), opType = "delete", source = fileUri)
-            backend.delete(job).getOrThrow()
+            write.delete(job).getOrThrow()
 
             assertFalse(backend.exists(fileUri))
         }

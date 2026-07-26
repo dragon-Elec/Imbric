@@ -1,4 +1,4 @@
-package com.imbric.core.ifs.backends
+package com.imbric.core.ifs.backends.gio.support
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

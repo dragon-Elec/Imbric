@@ -6,7 +6,7 @@ import com.imbric.app.ui.shell.MainWindow
 import com.imbric.app.viewmodel.ShellViewModel
 import com.imbric.core.desktop.BookmarkList
 import com.imbric.core.desktop.DeviceManager
-import com.imbric.core.ifs.provider.DirStateRegistry
+import com.imbric.core.ifs.directories.DirStateRegistry
 import kotlin.uuid.ExperimentalUuidApi
 
 /**

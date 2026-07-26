@@ -1,7 +1,11 @@
 @file:OptIn(ExperimentalUuidApi::class)
-package com.imbric.core.ifs.backends
+package com.imbric.core.ifs.backends.gio
 
 import com.imbric.core.ifs.*
+import com.imbric.core.ifs.contracts.*
+import com.imbric.core.ifs.backends.gio.support.GioCoroutineBridge
+import com.imbric.core.ifs.backends.gio.support.GioTypeMappers
+import com.imbric.core.ifs.backends.gio.support.PipelineTimer
 import com.imbric.core.models.*
 import com.imbric.core.logic.XferArbiter
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +37,10 @@ import org.gnome.glib.KeyFile
 import org.gnome.glib.KeyFileFlags
 import kotlin.system.measureTimeMillis
 
-class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyProfiler()) : IOBackend {
+class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyProfiler()) :
+    BackendContract, WriteContract, TrashContract,
+    SearchContract, MountContract, ThumbnailContract,
+    RecentContract, ArchiveContract, UndoContract {
     init {
         org.gnome.gio.Gio.`javagi$ensureInitialized`()
         GdkPixbuf.`javagi$ensureInitialized`()

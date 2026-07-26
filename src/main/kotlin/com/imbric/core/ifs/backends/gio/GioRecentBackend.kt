@@ -1,6 +1,9 @@
-package com.imbric.core.ifs.backends
+package com.imbric.core.ifs.backends.gio
 
 import com.imbric.core.ifs.*
+import com.imbric.core.ifs.contracts.BackendContract
+import com.imbric.core.ifs.contracts.RecentContract
+import com.imbric.core.ifs.backends.gio.support.GioTypeMappers
 import com.imbric.core.models.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -13,7 +16,7 @@ import org.gnome.glib.BookmarkFile
 import org.gnome.glib.GLib
 import java.nio.file.Paths
 
-class GioRecentBackend : IOBackend {
+class GioRecentBackend : BackendContract, RecentContract {
     override val scheme: String = "recent"
     override val displayName: String = "Recent Files"
 
@@ -64,15 +67,6 @@ class GioRecentBackend : IOBackend {
     override fun exists(uri: String): Boolean = uri.startsWith("recent://")
 
     override suspend fun readHeader(uri: String, size: Long): Result<ByteArray> = Result.failure(UnsupportedOperationException())
-
-    override suspend fun copy(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.emptyFlow()
-    override suspend fun move(job: FileJob): Flow<TransferProgress> = kotlinx.coroutines.flow.emptyFlow()
-    override suspend fun trash(job: FileJob, recoverTrashUri: Boolean): Result<String> = Result.failure(UnsupportedOperationException())
-    override suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String> = Result.failure(UnsupportedOperationException())
-    override suspend fun delete(job: FileJob): Result<Unit> = Result.failure(UnsupportedOperationException())
-    override suspend fun createFolder(parentUri: String, name: String): Result<String> = Result.failure(UnsupportedOperationException())
-    override suspend fun createFile(parentUri: String, name: String): Result<String> = Result.failure(UnsupportedOperationException())
-    override suspend fun rename(uri: String, newName: String): Result<String> = Result.failure(UnsupportedOperationException())
 
     override suspend fun addToRecent(uri: String, mimeType: String?): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {

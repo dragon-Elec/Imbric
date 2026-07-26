@@ -1,9 +1,11 @@
 @file:OptIn(ExperimentalUuidApi::class)
-package com.imbric.core.ifs.backends
+package com.imbric.core.ifs.backends.gio
 
 import com.imbric.core.ifs.BackendCapabilities
 import com.imbric.core.ifs.FileAction
-import com.imbric.core.ifs.IOBackend
+import com.imbric.core.ifs.contracts.BackendContract
+import com.imbric.core.ifs.contracts.SearchContract
+import com.imbric.core.ifs.backends.gio.GioSearchBackend
 import com.imbric.core.ifs.LatencyProfile
 import com.imbric.core.ifs.Locality
 import com.imbric.core.models.*
@@ -21,7 +23,7 @@ import kotlin.uuid.ExperimentalUuidApi
 
 class GioSearchBackendTest {
 
-    class MockFallbackBackend(private val mockResults: List<FileEntry>) : IOBackend {
+    class MockFallbackBackend(private val mockResults: List<FileEntry>) : BackendContract, SearchContract {
         override val scheme: String = "mock"
         override val displayName: String = "Mock Backend"
 
@@ -37,14 +39,6 @@ class GioSearchBackendTest {
         }
         override fun exists(uri: String): Boolean = false
         override suspend fun readHeader(uri: String, size: Long): Result<ByteArray> = Result.failure(Exception("Not implemented"))
-        override suspend fun copy(job: FileJob): Flow<TransferProgress> = flowOf()
-        override suspend fun move(job: FileJob): Flow<TransferProgress> = flowOf()
-        override suspend fun trash(job: FileJob, recoverTrashUri: Boolean): Result<String> = Result.failure(Exception("Not implemented"))
-        override suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String> = Result.failure(Exception("Not implemented"))
-        override suspend fun delete(job: FileJob): Result<Unit> = Result.failure(Exception("Not implemented"))
-        override suspend fun createFolder(parentUri: String, name: String): Result<String> = Result.failure(Exception("Not implemented"))
-        override suspend fun createFile(parentUri: String, name: String): Result<String> = Result.failure(Exception("Not implemented"))
-        override suspend fun rename(uri: String, newName: String): Result<String> = Result.failure(Exception("Not implemented"))
 
         override fun search(query: VfsQuery): Flow<List<FileEntry>> {
             searchCalled = true

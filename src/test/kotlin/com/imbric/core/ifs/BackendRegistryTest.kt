@@ -14,26 +14,26 @@ class BackendRegistryTest {
     fun setup() {
         // Resetting singleton state using reflection or by creating a fresh object is hard.
         // Instead, we just register what we need. 
-        BackendRegistry.registerIo("memory", InMemoryBackend("memory"))
-        BackendRegistry.registerIo("smb", InMemoryBackend("smb"))
-        BackendRegistry.setDefaultIo(InMemoryBackend("file"))
+        BackendRegistry.register("memory", InMemoryBackend("memory"))
+        BackendRegistry.register("smb", InMemoryBackend("smb"))
+        BackendRegistry.setDefault(InMemoryBackend("file"))
     }
 
     @Test
     fun testGetIoByScheme() {
-        val backend = BackendRegistry.getIo("memory://foo/bar")
+        val backend = BackendRegistry.get("memory://foo/bar")
         assertEquals("memory", backend?.scheme)
     }
 
     @Test
     fun testGetIoFallbackToDefault() {
-        val backend = BackendRegistry.getIo("/home/user/foo.txt")
+        val backend = BackendRegistry.get("/home/user/foo.txt")
         assertEquals("file", backend?.scheme)
     }
 
     @Test
     fun testGetIoUnknownScheme() {
-        val backend = BackendRegistry.getIo("unknown://foo/bar")
+        val backend = BackendRegistry.get("unknown://foo/bar")
         assertNull(backend)
     }
 
@@ -49,8 +49,8 @@ class BackendRegistryTest {
         val customBackend = object : InMemoryBackend("custom") {
             override fun canHandle(uri: String): Boolean = uri.startsWith("magic://")
         }
-        BackendRegistry.registerIo("custom", customBackend)
-        val backend = BackendRegistry.getIo("magic://foo/bar")
+        BackendRegistry.register("custom", customBackend)
+        val backend = BackendRegistry.get("magic://foo/bar")
         assertEquals("custom", backend?.scheme)
     }
 }

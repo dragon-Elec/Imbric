@@ -1,4 +1,4 @@
-package com.imbric.core.ifs.provider
+package com.imbric.core.ifs.directories
 
 /**
  * Describes the kind of directory a [DirState] represents.
@@ -21,7 +21,7 @@ enum class DirectoryType {
     /** Starred/bookmarked files. Aggregated from StarredManager, not a real filesystem location. */
     STARRED,
     
-    /** Search results. Content comes from IOBackend.search(), not IOBackend.list(). */
+    /** Search results. Content comes from BackendContract.search(), not BackendContract.list(). */
     SEARCH,
     
     /** Network/SMB/SFTP mount. May have different latency and capability profiles. */

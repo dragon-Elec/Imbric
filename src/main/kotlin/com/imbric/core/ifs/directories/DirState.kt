@@ -1,10 +1,11 @@
 @file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
-package com.imbric.core.ifs.provider
+package com.imbric.core.ifs.directories
 
 import com.imbric.core.ifs.FileEvent
-import com.imbric.core.ifs.IOBackend
+import com.imbric.core.ifs.contracts.BackendContract
 import com.imbric.core.ifs.ListingDispatchers
 import com.imbric.core.ifs.Locality
+import com.imbric.core.ifs.backends.gio.support.PipelineTimer
 
 import com.imbric.core.models.*
 import kotlinx.coroutines.*
@@ -27,12 +28,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class DirState(
     val uri: String,
-    private val backend: IOBackend,
+    private val backend: BackendContract,
     private val parentScope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher = ListingDispatchers.Listing,
     private val strategy: ListingStrategy = ListingStrategy.Standard,
     /** Optional pipeline timing tracer for performance debugging. */
-    var pipelineTimer: com.imbric.core.ifs.backends.PipelineTimer? = null
+    var pipelineTimer: PipelineTimer? = null
 ) {
     private val enrichmentSemaphore = Semaphore(4)
     private val enrichmentChannel = Channel<FileInfo>(Channel.UNLIMITED)

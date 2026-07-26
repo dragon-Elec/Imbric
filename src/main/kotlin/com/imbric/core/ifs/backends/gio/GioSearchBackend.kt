@@ -1,19 +1,18 @@
-package com.imbric.core.ifs.backends
+package com.imbric.core.ifs.backends.gio
 
-import com.imbric.core.ifs.IOBackend
 import com.imbric.core.ifs.BackendCapabilities
 import com.imbric.core.ifs.LatencyProfile
 import com.imbric.core.ifs.Locality
 import com.imbric.core.ifs.FileAction
+import com.imbric.core.ifs.contracts.BackendContract
+import com.imbric.core.ifs.contracts.SearchContract
 import com.imbric.core.models.*
-import com.imbric.core.models.FileJob
-import com.imbric.core.models.TransferProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
-open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IOBackend {
+open class GioSearchBackend(private val fallback: BackendContract = GioBackend()) : BackendContract, SearchContract {
     override val scheme: String = "search"
     override val displayName: String = "GNOME Tracker Search"
 
@@ -93,7 +92,7 @@ open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IO
 
         if (!trackerSuccess) {
             // 2. Fallback to manual walk — collect all batches into results
-            fallback.search(query).collect { batch ->
+            (fallback as? SearchContract)?.search(query)?.collect { batch ->
                 results.addAll(batch)
             }
         }
@@ -133,12 +132,4 @@ open class GioSearchBackend(private val fallback: IOBackend = GioBackend()) : IO
     override suspend fun getMetadata(uri: String): Result<FileInfo> = fallback.getMetadata(uri)
     override fun exists(uri: String): Boolean = fallback.exists(uri)
     override suspend fun readHeader(uri: String, size: Long): Result<ByteArray> = fallback.readHeader(uri, size)
-    override suspend fun copy(job: FileJob): Flow<TransferProgress> = fallback.copy(job)
-    override suspend fun move(job: FileJob): Flow<TransferProgress> = fallback.move(job)
-    override suspend fun trash(job: FileJob, recoverTrashUri: Boolean): Result<String> = fallback.trash(job, recoverTrashUri)
-    override suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String> = fallback.restoreFromTrash(trashPath, originalPath)
-    override suspend fun delete(job: FileJob): Result<Unit> = fallback.delete(job)
-    override suspend fun createFolder(parentUri: String, name: String): Result<String> = fallback.createFolder(parentUri, name)
-    override suspend fun createFile(parentUri: String, name: String): Result<String> = fallback.createFile(parentUri, name)
-    override suspend fun rename(uri: String, newName: String): Result<String> = fallback.rename(uri, newName)
 }

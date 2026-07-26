@@ -2,6 +2,9 @@
 package com.imbric.core.transactions
 
 import com.imbric.core.ifs.BackendRegistry
+import com.imbric.core.ifs.contracts.WriteContract
+import com.imbric.core.ifs.contracts.TrashContract
+import com.imbric.core.ifs.contracts.UndoContract
 import com.imbric.core.models.VfsError
 import com.imbric.core.ifs.uriParent
 import com.imbric.core.ifs.uriJoin
@@ -48,7 +51,7 @@ class TransactionDispatcher(
         policy: SyncPolicy = SyncPolicy.Standard
     ) {
         val jobCoro = scope.launch {
-            val backend = backendRegistry.getIo(op.src) ?: return@launch
+            val backend = backendRegistry.get(op.src) ?: return@launch
             val uriScheme = op.src.substringBefore("://", "file")
             val semaphore = if (uriScheme == "file" || uriScheme == "trash") localSemaphore else networkSemaphore
 
@@ -89,7 +92,7 @@ class TransactionDispatcher(
         while (retry) {
             retry = false
             try {
-                val backend = backendRegistry.getIo(currentOp.src) ?: return
+                val backend = backendRegistry.get(currentOp.src) ?: return
                 val backendScheme = currentOp.src.substringBefore("://", "file")
                 
                 val job = FileJob(
@@ -117,18 +120,18 @@ class TransactionDispatcher(
                 }
 
                 when (currentOp.opType) {
-                    "copy" -> backend.copy(job).collect { 
+                    "copy" -> (backend as? WriteContract)?.copy(job)?.collect { 
                         actualDest = it.actualDest
                         inverse = it.inversePayload
                         emitThrottledProgress(it) 
                     }
-                    "move" -> backend.move(job).collect { 
+                    "move" -> (backend as? WriteContract)?.move(job)?.collect { 
                         actualDest = it.actualDest
                         inverse = it.inversePayload
                         emitThrottledProgress(it) 
                     }
                     "trash" -> {
-                        val actualTrashUri = backend.trash(job).getOrThrow()
+                        val actualTrashUri = ((backend as? TrashContract) ?: error("Trash not supported")).trash(job).getOrThrow()
                         inverse = UndoAction.TrashUndo(
                             itemDescription = job.source.substringAfterLast("/"),
                             trashedUris = listOf(actualTrashUri),
@@ -139,7 +142,7 @@ class TransactionDispatcher(
                     }
                     "restore" -> {
                         val originalUri = job.dest // dest holds the original URI for restore
-                        backend.restoreFromTrash(job.source, originalUri).getOrThrow()
+                        ((backend as? TrashContract) ?: error("Restore not supported")).restoreFromTrash(job.source, originalUri).getOrThrow()
                         inverse = UndoAction.TransferUndo(
                             undoLabel = "Restore",
                             itemDescription = job.source.substringAfterLast("/"),
@@ -150,11 +153,11 @@ class TransactionDispatcher(
                         )
                         onProgress(TransferProgress(job.id, job.source, originalUri, inverse, 1, 1, 0, 0))
                     }
-                    "delete" -> backend.delete(job).getOrThrow().also { 
+                    "delete" -> ((backend as? WriteContract) ?: error("Delete not supported")).delete(job).getOrThrow().also { 
                         onProgress(TransferProgress(job.id, job.source, null, null, 1, 1, 0, 0)) 
                     }
                     "rename" -> {
-                        val renamedUri = backend.rename(job.source, job.dest).getOrThrow()
+                        val renamedUri = ((backend as? WriteContract) ?: error("Rename not supported")).rename(job.source, job.dest).getOrThrow()
                         actualDest = renamedUri
                         inverse = UndoAction.RenameUndo(
                             itemDescription = job.source.substringAfterLast("/"),
@@ -168,7 +171,7 @@ class TransactionDispatcher(
                     }
                     "undo" -> {
                         val payload = job.inversePayload ?: throw Exception("Undo payload missing")
-                        backend.executeInverse(payload).getOrThrow()
+                        ((backend as? UndoContract) ?: error("Undo not supported")).executeInverse(payload).getOrThrow()
                         onProgress(TransferProgress(job.id, job.source, null, null, 1, 1, 0, 0))
                     }
                 }
@@ -184,8 +187,8 @@ class TransactionDispatcher(
                 val isConflict = e is VfsError.AlreadyExists
                 
                 if (isConflict && (currentOp.opType == "copy" || currentOp.opType == "move")) {
-                    val srcBackend = backendRegistry.getIo(currentOp.src)
-                    val destBackend = backendRegistry.getIo(currentOp.dest)
+                    val srcBackend = backendRegistry.get(currentOp.src)
+                    val destBackend = backendRegistry.get(currentOp.dest)
                     
                     if (srcBackend != null && destBackend != null) {
                         val srcMeta = srcBackend.getMetadata(currentOp.src).getOrNull()

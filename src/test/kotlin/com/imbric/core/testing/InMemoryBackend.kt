@@ -2,6 +2,7 @@
 package com.imbric.core.testing
 
 import com.imbric.core.ifs.*
+import com.imbric.core.ifs.contracts.*
 import com.imbric.core.models.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.awaitClose
@@ -13,7 +14,9 @@ import kotlin.uuid.ExperimentalUuidApi
 open class InMemoryBackend(
     override val scheme: String = "memory",
     private val latencyProfiler: LatencyProfiler = NoopLatencyProfiler()
-) : IOBackend {
+) : BackendContract, WriteContract, TrashContract,
+    SearchContract, MountContract, ThumbnailContract,
+    RecentContract, ArchiveContract, UndoContract {
     override val displayName: String = "In-Memory Test Backend"
     
     override fun getCapabilities(uri: String) = BackendCapabilities(
@@ -288,6 +291,30 @@ open class InMemoryBackend(
             }
         }
     }
+
+    override fun search(query: VfsQuery): Flow<List<FileEntry>> = flow {
+        val all = mutableListOf<FileEntry>()
+        val stack = ArrayDeque<Pair<String, Int>>()
+        stack.add(query.rootUri to 0)
+        while (stack.isNotEmpty()) {
+            val (dirUri, depth) = stack.removeLast()
+            if (depth > query.maxDepth) continue
+            val items = list(dirUri)
+            for (info in items) {
+                if (info.isDirectory && query.recursive) {
+                    stack.add(info.uri to depth + 1)
+                }
+                if (!query.includeHidden && info.isVisiblyHidden()) continue
+                val matchesText = query.text.isEmpty() || info.name.contains(query.text, ignoreCase = true)
+                if (!matchesText) continue
+                val matchesMime = query.mimeFilter == null || info.mimeType.startsWith(query.mimeFilter)
+                if (!matchesMime) continue
+                all.add(info)
+            }
+        }
+        emit(all)
+    }
+
     override fun canHandle(uri: String): Boolean = uri.startsWith("$scheme://") || !uri.contains("://")
     
     // --- Test helpers ---

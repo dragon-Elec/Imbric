@@ -1,12 +1,12 @@
 package com.imbric.core.testing
 
-import com.imbric.core.ifs.IOBackend
-import com.imbric.core.ifs.backends.GioBackend
+import com.imbric.core.ifs.contracts.BackendContract
+import com.imbric.core.ifs.backends.gio.GioBackend
 
 class GioBackendContractTest : IOBackendContractTest() {
     private val testDir = "/tmp/imbric-gio-contract-test"
 
-    override fun createBackend(): IOBackend = GioBackend()
+    override fun createBackend(): BackendContract = GioBackend()
 
     override fun getTestRootUri(): String = "file://$testDir"
 

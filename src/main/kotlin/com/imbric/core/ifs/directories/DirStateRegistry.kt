@@ -1,6 +1,7 @@
-package com.imbric.core.ifs.provider
+package com.imbric.core.ifs.directories
 
-import com.imbric.core.ifs.IOBackend
+import com.imbric.core.ifs.contracts.BackendContract
+import com.imbric.core.ifs.backends.gio.support.PipelineTimer
 import kotlinx.coroutines.CoroutineScope
 
 /**
@@ -17,7 +18,7 @@ import kotlinx.coroutines.CoroutineScope
  * creating a strong reference path that prevents garbage collection.
  *
  * Backend dispatch: when [backendResolver] is provided, each URI is routed
- * to the correct [IOBackend] by scheme. When null, the hardcoded
+ * to the correct [BackendContract] by scheme. When null, the hardcoded
  * [fallbackBackend] is used for all URIs (simple mode for tests).
  *
  * This is the Kotlin equivalent of Nautilus's shared directory objects
@@ -26,19 +27,19 @@ import kotlinx.coroutines.CoroutineScope
  * Usage:
  * ```kotlin
  * // Production: dispatch by scheme via BackendRegistry
- * val registry = DirStateRegistry(fallbackBackend, scope) { uri -> BackendRegistry.getIo(uri) }
+ * val registry = DirStateRegistry(fallbackBackend, scope) { uri -> BackendRegistry.get(uri) }
  *
  * // Tests: single backend, no dispatch
  * val registry = DirStateRegistry(fakeBackend, scope)
  * ```
  */
 class DirStateRegistry(
-    private val fallbackBackend: IOBackend,
+    private val fallbackBackend: BackendContract,
     private val scope: CoroutineScope,
     /** When provided, URIs are dispatched to the correct backend by scheme. */
-    private val backendResolver: ((String) -> IOBackend?)? = null,
+    private val backendResolver: ((String) -> BackendContract?)? = null,
     /** Optional pipeline timer. Passed to DirState instances for performance tracing. */
-    var pipelineTimer: com.imbric.core.ifs.backends.PipelineTimer? = null,
+    var pipelineTimer: PipelineTimer? = null,
     /** Maximum number of DirState instances to keep in the LRU cache. */
     private val maxSize: Int = DEFAULT_MAX_SIZE
 ) {
@@ -58,10 +59,10 @@ class DirStateRegistry(
     private val lock = Any()
 
     /**
-     * Resolves the correct [IOBackend] for the given URI.
+     * Resolves the correct [BackendContract] for the given URI.
      * Uses [backendResolver] if available, otherwise falls back to [fallbackBackend].
      */
-    private fun resolveBackend(uri: String): IOBackend {
+    private fun resolveBackend(uri: String): BackendContract {
         return backendResolver?.invoke(uri) ?: fallbackBackend
     }
 

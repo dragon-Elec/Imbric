@@ -18,7 +18,7 @@ class TransferOrchestratorTest {
     @BeforeTest
     fun setup() {
         backend = InMemoryBackend()
-        BackendRegistry.registerIo("memory", backend)
+        BackendRegistry.register("memory", backend)
         val dispatcher = TransactionDispatcher(BackendRegistry)
         tm = TransactionManager(BackendRegistry, XferArbiter, dispatcher)
         orchestrator = TransferOrchestrator(BackendRegistry, tm)

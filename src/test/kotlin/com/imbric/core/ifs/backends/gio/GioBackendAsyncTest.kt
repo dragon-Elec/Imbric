@@ -1,7 +1,7 @@
 @file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
-package com.imbric.core.ifs.backends
+package com.imbric.core.ifs.backends.gio
 
-import com.imbric.core.ifs.backends.TestUtils.withGlibPump
+import com.imbric.core.ifs.backends.gio.support.GioCoroutineBridge
 import com.imbric.core.models.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.toList
@@ -56,7 +56,7 @@ class GioBackendAsyncTest {
 
     @Test
     fun testMoveAsync(@TempDir tempDir: Path) = runTest {
-        withGlibPump {
+        TestUtils.withGlibPump {
             BashHelper.runScript("echo -n 'async move test' > src_move.txt", tempDir.toFile())
             val srcUri = "file://${tempDir.toAbsolutePath()}/src_move.txt"
             val destUri = "file://${tempDir.toAbsolutePath()}/dest_move.txt"
@@ -83,7 +83,7 @@ class GioBackendAsyncTest {
 
     @Test
     fun testCopyWithProgress(@TempDir tempDir: Path) = runTest {
-        withGlibPump {
+        TestUtils.withGlibPump {
             BashHelper.runScript("dd if=/dev/zero of=src_large.txt bs=1024 count=100", tempDir.toFile())
             val srcUri = "file://${tempDir.toAbsolutePath()}/src_large.txt"
             val destUri = "file://${tempDir.toAbsolutePath()}/dest_large.txt"
@@ -117,7 +117,7 @@ class GioBackendAsyncTest {
 
     @Test
     fun testRecursiveMoveAsync(@TempDir tempDir: Path) = runTest {
-        withGlibPump {
+        TestUtils.withGlibPump {
             val backend = GioBackend()
             
             BashHelper.runScript("""
@@ -159,7 +159,7 @@ class GioBackendAsyncTest {
 
     @Test
     fun testSearchWithQuery(@TempDir tempDir: Path) = runTest {
-        withGlibPump {
+        TestUtils.withGlibPump {
             val backend = GioBackend()
             
             BashHelper.runScript("""

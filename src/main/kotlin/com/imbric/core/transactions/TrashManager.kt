@@ -4,6 +4,7 @@ package com.imbric.core.transactions
 import com.imbric.core.desktop.TrashMonitor
 import com.imbric.core.desktop.TrashStateProvider
 import com.imbric.core.ifs.BackendRegistry
+import com.imbric.core.ifs.contracts.TrashContract
 import com.imbric.core.models.FileJob
 import com.imbric.core.models.TrashItem
 import kotlinx.coroutines.*
@@ -18,7 +19,7 @@ data class TrashResult(val successful: List<String>, val failed: List<String>)
  * Ported from Python trash_manager.py.
  *
  * TrashManager is the transactional layer — it performs trash operations
- * via IOBackend and observes trash state via TrashMonitor.
+ * via BackendContract and observes trash state via TrashMonitor.
  * Each platform provides its own TrashMonitor implementation:
  * - Linux/GIO: GFileMonitor on trash:/// with TRASH_ITEM_COUNT
  * - Windows: future SHChangeNotifyRegister implementation
@@ -41,13 +42,13 @@ class TrashManager(
         coroutineScope {
             val ops = paths.map { path ->
                 async(dispatcher) {
-                    val backend = backendRegistry.getIo(path)
+                    val backend = backendRegistry.get(path)
                     if (backend == null) {
                         path to Result.failure(Exception("No backend found"))
                     } else {
                         val job = FileJob(id = Uuid.random(), opType = "trash", source = path)
                         // Pass recoverTrashUri = false to avoid O(N^2) bottleneck in GioBackend
-                        val result = backend.trash(job, recoverTrashUri = false)
+                        val result = (backend as? TrashContract)?.trash(job, recoverTrashUri = false) ?: Result.failure(Exception("Trash not supported"))
                         path to result
                     }
                 }
@@ -73,8 +74,8 @@ class TrashManager(
     }
 
     suspend fun restoreFromTrash(trashItem: TrashItem): Result<String> {
-        val backend = backendRegistry.getIo(trashItem.originalPath) ?: return Result.failure(Exception("No backend for ${trashItem.originalPath}"))
-        val result = backend.restoreFromTrash(trashItem.trashPath, trashItem.originalPath)
+        val backend = backendRegistry.get(trashItem.originalPath) ?: return Result.failure(Exception("No backend for ${trashItem.originalPath}"))
+        val result = (backend as? TrashContract)?.restoreFromTrash(trashItem.trashPath, trashItem.originalPath) ?: Result.failure(Exception("Restore not supported"))
         if (result.isSuccess) {
             trashState.refresh()
         }
@@ -87,8 +88,8 @@ class TrashManager(
         coroutineScope {
             val ops = backendRegistry.getRegisteredSchemes().map { scheme ->
                 async {
-                    val backend = backendRegistry.getIo("$scheme:///") ?: return@async null
-                    val trashBackend = backend.getTrashBackend(backendRegistry) ?: return@async null
+                    val backend = backendRegistry.get("$scheme:///") ?: return@async null
+                    val trashBackend = backend.getTrashBackend(backendRegistry) as? TrashContract ?: return@async null
                     trashBackend.emptyTrash()
                 }
             }.awaitAll()
@@ -114,8 +115,8 @@ class TrashManager(
         coroutineScope {
             val ops = backendRegistry.getRegisteredSchemes().map { scheme ->
                 async {
-                    val backend = backendRegistry.getIo("$scheme:///") ?: return@async null
-                    val trashBackend = backend.getTrashBackend(backendRegistry) ?: return@async null
+                    val backend = backendRegistry.get("$scheme:///") ?: return@async null
+                    val trashBackend = backend.getTrashBackend(backendRegistry) as? TrashContract ?: return@async null
                     trashBackend.listTrash()
                 }
             }.awaitAll()
@@ -137,7 +138,7 @@ class TrashManager(
     suspend fun isTrashEmpty(): Boolean = trashState.isEmpty.value
 
     fun canTrash(path: String): Boolean {
-        val backend = backendRegistry.getIo(path) ?: return false
+        val backend = backendRegistry.get(path) ?: return false
         if (!backend.getCapabilities(path).supportsTrash) return false
         return backend.exists(path)
     }

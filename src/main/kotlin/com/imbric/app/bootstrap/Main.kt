@@ -10,8 +10,8 @@ import com.imbric.core.desktop.DeviceManager
 import com.imbric.core.desktop.BookmarkList
 import com.imbric.core.desktop.backends.GioDesktopEnvironment
 import com.imbric.core.ifs.BackendRegistry
-import com.imbric.core.ifs.provider.DirState
-import com.imbric.core.ifs.provider.DirStateRegistry
+import com.imbric.core.ifs.directories.DirState
+import com.imbric.core.ifs.directories.DirStateRegistry
 import org.gnome.gio.Gio
 import mu.KotlinLogging
 import kotlinx.coroutines.flow.combine
@@ -58,7 +58,7 @@ fun main(args: Array<String>) {
         println("[CLI] Diagnostic Mode Active")
         println("[CLI] Emulating App Layer VFS Consumer...")
         
-        val defaultBackend = BackendRegistry.getDefaultIo()
+        val defaultBackend = BackendRegistry.getDefault()
         if (defaultBackend == null) {
             println("[CLI] Error: No default VFS Backend registered")
             return
@@ -68,8 +68,8 @@ fun main(args: Array<String>) {
             kotlinx.coroutines.runBlocking {
                 // Note: GLib MainContext pump is already started natively by ImbricDesktop.initialize()
 
-                val defaultBackend = BackendRegistry.getDefaultIo()
-                requireNotNull(defaultBackend) { "No default IOBackend registered" }
+                val defaultBackend = BackendRegistry.getDefault()
+                requireNotNull(defaultBackend) { "No default BackendContract registered" }
                 val dirState = DirState(cleanTarget, defaultBackend, this)
                 
                 try {
@@ -114,11 +114,11 @@ fun main(args: Array<String>) {
             // MainContextPump()
 
             val scope = rememberCoroutineScope()
-            val defaultBackend = BackendRegistry.getDefaultIo()
-            requireNotNull(defaultBackend) { "No default IOBackend registered" }
+            val defaultBackend = BackendRegistry.getDefault()
+            requireNotNull(defaultBackend) { "No default BackendContract registered" }
             
             // In a real app, this would be provided by a DI container (like Koin)
-            val registry = remember { DirStateRegistry(defaultBackend, scope, backendResolver = { uri -> BackendRegistry.getIo(uri) }) }
+            val registry = remember { DirStateRegistry(defaultBackend, scope, backendResolver = { uri -> BackendRegistry.get(uri) }) }
             val deviceManager = remember { DeviceManager(GioDesktopEnvironment()) }
             val bookmarkList = remember { BookmarkList.getInstance() }
 

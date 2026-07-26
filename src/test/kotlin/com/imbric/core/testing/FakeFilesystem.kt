@@ -1,8 +1,8 @@
 package com.imbric.core.testing
 
 import com.imbric.core.ifs.FileEvent
-import com.imbric.core.ifs.provider.DirState
-import com.imbric.core.ifs.provider.DirStateRegistry
+import com.imbric.core.ifs.directories.DirState
+import com.imbric.core.ifs.directories.DirStateRegistry
 import com.imbric.core.models.FileEntry
 import com.imbric.core.models.FileInfo
 import com.imbric.core.models.SortKey

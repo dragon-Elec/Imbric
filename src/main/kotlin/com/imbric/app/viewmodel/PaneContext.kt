@@ -1,6 +1,6 @@
 package com.imbric.app.viewmodel
 
-import com.imbric.core.ifs.provider.DirStateRegistry
+import com.imbric.core.ifs.directories.DirStateRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Job

@@ -2,9 +2,9 @@ package com.imbric.app.viewmodel
 
 import com.imbric.app.ui.LayoutMode
 import com.imbric.core.ifs.IfsUri
-import com.imbric.core.ifs.backends.PipelineTimer
-import com.imbric.core.ifs.provider.DirState
-import com.imbric.core.ifs.provider.DirStateRegistry
+import com.imbric.core.ifs.backends.gio.support.PipelineTimer
+import com.imbric.core.ifs.directories.DirState
+import com.imbric.core.ifs.directories.DirStateRegistry
 import com.imbric.core.models.FileEntry
 import com.imbric.core.models.SortKey
 import kotlinx.coroutines.CoroutineScope
