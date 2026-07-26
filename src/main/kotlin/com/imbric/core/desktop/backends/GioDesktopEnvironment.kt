@@ -16,7 +16,7 @@ import org.gnome.glib.GLib
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-class GioDesktopEnvironment : DesktopEnvironment {
+class GioDesktopEnvironment : VolumeProvider, AppLauncher, ThemeProvider {
     init {
         Gio.`javagi$ensureInitialized`()
     }

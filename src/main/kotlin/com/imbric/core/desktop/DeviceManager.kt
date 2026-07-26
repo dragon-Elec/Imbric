@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.*
  * UI should consume [drives] to show the sidebar list.
  */
 class DeviceManager(
-    private val environment: DesktopEnvironment,
+    private val environment: VolumeProvider,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 ) {
     /**
