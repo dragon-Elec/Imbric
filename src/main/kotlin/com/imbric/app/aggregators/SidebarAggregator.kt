@@ -64,7 +64,7 @@ class SidebarAggregator(
                             uri = drive.mountUri ?: "",
                             isEjectable = drive.isMounted
                         )
-                    }.filter { it.uri.isNotEmpty() }
+                    }
                 )
             )
         }

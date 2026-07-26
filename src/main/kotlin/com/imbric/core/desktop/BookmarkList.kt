@@ -158,7 +158,8 @@ class BookmarkList internal constructor(
             gtkMonitor = gtkFile.monitorFile(FileMonitorFlags.NONE, null)
 
             gtkMonitor?.onChanged { _, _, eventType ->
-                if (eventType == FileMonitorEvent.CHANGES_DONE_HINT) {
+                if (eventType == FileMonitorEvent.CHANGES_DONE_HINT ||
+                    eventType == FileMonitorEvent.CHANGED) {
                     scope.launch {
                         delay(200) // debounce
                         importFromGtk()

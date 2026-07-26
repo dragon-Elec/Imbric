@@ -33,23 +33,30 @@ class StarredManager private constructor(
      * Sets up a file monitor on the metadata store for starred files.
      * Falls back to periodic refresh if monitoring is not supported.
      */
-    private fun setupMonitor() {
+        private fun setupMonitor() {
         try {
-            // Monitor the Tracker3 database for changes to starred tags
-            // On GNOME, starred files have metadata::nautilus-tags-starred set
-            // We monitor ~/ for metadata changes via a lightweight approach
-            val homeDir = File.forPath(System.getProperty("user.home") ?: "/")
-            monitor = homeDir.monitorDirectory(FileMonitorFlags.NONE, null)
-            
-            monitor?.onChanged { _, _, _ ->
+            val homePath = System.getProperty("user.home") ?: "/"
+            val homeDir = File.forPath(homePath)
+            val gvfsMetadataDir = File.forPath("$homePath/.local/share/gvfs-metadata")
+
+            val onChanged: (Any?, Any?, Any?) -> Unit = { _, _, _ ->
                 refreshJob?.cancel()
                 refreshJob = scope.launch {
                     delay(2000) // debounce rapid changes
                     refresh()
                 }
             }
+
+            monitor = homeDir.monitorDirectory(FileMonitorFlags.NONE, null)
+            monitor?.onChanged(onChanged)
+
+            // Also monitor GNOME's gvfs-metadata directory for Tracker3 changes
+            if (gvfsMetadataDir.queryExists(null)) {
+                gvfsMetadataDir.monitorDirectory(FileMonitorFlags.NONE, null)
+                    ?.onChanged(onChanged)
+            }
         } catch (e: Exception) {
-            GLib.log("Imbric", org.gnome.glib.LogLevelFlags.LEVEL_WARNING, 
+            GLib.log("Imbric", org.gnome.glib.LogLevelFlags.LEVEL_WARNING,
                 "Failed to setup StarredManager monitor: ${e.message}")
         }
     }
