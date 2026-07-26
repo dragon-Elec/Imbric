@@ -25,9 +25,24 @@ class TransferOrchestrator(
         policy: SyncPolicy = SyncPolicy.Standard,
         onManualConflict: suspend (ConflictContext) -> ConflictResponse = { ConflictResponse(ConflictAction.Prompt) }
     ): Flow<TransactionEvent> = channelFlow {
-        val tid = transactionManager.startTransaction("Batch $mode to $destDir")
-
         val session = PlanningSession(mode, policy, onManualConflict)
+        val initialDesc = "Batch $mode to $destDir"
+
+        // 1. Parallel Pre-flight Planning
+        withContext(Dispatchers.IO) {
+            sources.map { src ->
+                async {
+                    session.planOperation(src, destDir)
+                }
+            }.awaitAll()
+        }
+
+        // Surface warning if trash mode skipped files due to unsupported filesystem
+        val desc = if (mode == "trash" && session.skippedUnsupported > 0) {
+            "$initialDesc (${"${session.skippedUnsupported} skipped: filesystem doesn't support trash"})"
+        } else initialDesc
+
+        val tid = transactionManager.startTransaction(desc)
 
         // 1. Parallel Pre-flight Planning
         withContext(Dispatchers.IO) {
@@ -95,6 +110,8 @@ class TransferOrchestrator(
         val validatedOps = Collections.synchronizedList(mutableListOf<ValidatedOp>())
         val totalSourceSize: Long get() = _totalSourceSize.get()
         private val _totalSourceSize = java.util.concurrent.atomic.AtomicLong(0L)
+        var skippedUnsupported: Int = 0
+            private set
 
         suspend fun planOperation(src: String, destParent: String) {
             val fileName = src.uriName
@@ -106,7 +123,10 @@ class TransferOrchestrator(
             val srcMeta = srcBackend.getMetadata(src).getOrNull() ?: return
 
             // Trash pre-flight: skip files on filesystems that don't support trash
-            if (mode == "trash" && !srcBackend.getCapabilities(src).supportsTrash) return
+            if (mode == "trash" && !srcBackend.getCapabilities(src).supportsTrash) {
+                skippedUnsupported++
+                return
+            }
 
             val destMeta = destBackend.getMetadata(dest).getOrNull()
 

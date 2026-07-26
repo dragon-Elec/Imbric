@@ -23,7 +23,7 @@ class UndoManager(
 ) {
     private val undoStack: Deque<Transaction> = ArrayDeque()
     private val redoStack: Deque<Transaction> = ArrayDeque()
-    private var busy = false
+    private val busy = java.util.concurrent.atomic.AtomicBoolean(false)
 
     // --- Callbacks for UI ---
     var onStackChanged: ((Boolean, Boolean) -> Unit)? = null
@@ -34,8 +34,8 @@ class UndoManager(
     }
 
     // --- Stack State ---
-    fun canUndo(): Boolean = !busy && undoStack.isNotEmpty()
-    fun canRedo(): Boolean = !busy && redoStack.isNotEmpty()
+    fun canUndo(): Boolean = !busy.get() && undoStack.isNotEmpty()
+    fun canRedo(): Boolean = !busy.get() && redoStack.isNotEmpty()
 
     /**
      * Returns the UI label for the current undo action, e.g. "Undo Copy" or "Undo Rename".
@@ -202,7 +202,7 @@ class UndoManager(
     }
 
     private fun setBusy(value: Boolean) {
-        busy = value
+        busy.set(value)
         onBusyChanged?.invoke(value)
     }
 }

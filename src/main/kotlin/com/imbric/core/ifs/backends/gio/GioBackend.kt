@@ -481,6 +481,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }.getOrDefault(true)
 
     override suspend fun createFolder(parentUri: String, name: String): Result<String> = withVfsErrorHandling("$parentUri/$name") {
+        require('/' !in name && name.isNotEmpty()) { "Invalid folder name: $name" }
         val parent = File.forUri(parentUri)
             val child = parent.getChild(name)
             
@@ -496,6 +497,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun createFile(parentUri: String, name: String): Result<String> = withVfsErrorHandling("$parentUri/$name") {
+        require('/' !in name && name.isNotEmpty()) { "Invalid file name: $name" }
         val parent = File.forUri(parentUri)
             val child = parent.getChild(name)
             
@@ -511,6 +513,7 @@ override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
     }
 
     override suspend fun rename(uri: String, newName: String): Result<String> = withVfsErrorHandling(uri) {
+        require('/' !in newName && newName.isNotEmpty()) { "Invalid name: $newName" }
         val gfile = File.forUri(uri)
             
             val newFile = GioCoroutineBridge.awaitGioAsync(
