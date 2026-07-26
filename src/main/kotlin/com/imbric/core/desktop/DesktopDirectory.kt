@@ -2,11 +2,12 @@ package com.imbric.core.desktop
 
 import org.gnome.gio.File
 import org.gnome.gio.Gio
+import java.nio.file.Paths
 
 /**
  * Manages the virtual ~/Desktop directory.
- * On GNOME, the desktop directory is typically ~/Desktop or ~/桌面 (localized).
- * Ported from nautilus-desktop-directory.c
+ * Respects XDG user-dirs (e.g., ~/Bureau, ~/桌面) via ~/.config/user-dirs.dirs.
+ * Falls back to ~/Desktop on non-XDG systems.
  */
 object DesktopDirectory {
     init {
@@ -17,8 +18,28 @@ object DesktopDirectory {
      * Returns the URI of the user's desktop directory (e.g., "file:///home/user/Desktop").
      */
     fun getUri(): String {
-        val desktopPath = System.getProperty("user.home") + "/Desktop"
+        val desktopPath = resolveDesktopPath()
         return "file://$desktopPath"
+    }
+
+    /**
+     * Resolves the desktop path via XDG user-dirs, falling back to ~/Desktop.
+     */
+    private fun resolveDesktopPath(): String {
+        val userDirsFile = Paths.get(
+            System.getProperty("user.home"),
+            ".config", "user-dirs.dirs"
+        ).toFile()
+        if (userDirsFile.exists()) {
+            val xdgDesktop = userDirsFile.readLines()
+                .firstOrNull { it.startsWith("XDG_DESKTOP_DIR=") }
+                ?.substringAfter('=')
+                ?.trim('"', '\'')
+            if (xdgDesktop != null) {
+                return xdgDesktop.replace("\$HOME", System.getProperty("user.home"))
+            }
+        }
+        return System.getProperty("user.home") + "/Desktop"
     }
 
     /**
