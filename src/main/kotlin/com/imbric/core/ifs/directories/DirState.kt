@@ -150,11 +150,13 @@ class DirState(
         }
     }
 
-    private fun flushEnrichmentBatch(batch: List<FileEntry>) {
-        val current = _deltas.value
-        val newEnrichments = current.enrichments + batch.filterIsInstance<FileInfo>().associateBy { it.uri }
-        _deltas.value = current.copy(enrichments = newEnrichments)
-        rebuildComposite()
+    private suspend fun flushEnrichmentBatch(batch: List<FileEntry>) {
+        stateMutex.withLock {
+            val current = _deltas.value
+            val newEnrichments = current.enrichments + batch.filterIsInstance<FileInfo>().associateBy { it.uri }
+            _deltas.value = current.copy(enrichments = newEnrichments)
+            rebuildComposite()
+        }
     }
 
     /**

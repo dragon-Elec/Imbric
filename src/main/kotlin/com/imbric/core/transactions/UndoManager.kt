@@ -59,7 +59,7 @@ class UndoManager(
 
     // --- History Commit ---
     fun commitTransaction(tx: Transaction) {
-        if (tx.status != TransactionStatus.COMPLETED) return
+        if (!tx.isReversible) return
         undoStack.push(tx)
         redoStack.clear()
         onStackChanged?.invoke(canUndo(), canRedo())

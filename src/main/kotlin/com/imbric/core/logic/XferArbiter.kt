@@ -106,12 +106,12 @@ object XferArbiter {
         val srcTime = src.modifiedTime ?: return true
         val destTime = dest.modifiedTime ?: return true
         
-        // If source is newer or times differ significantly
-        if (srcTime > destTime) return true
-        
-        // Tolerance: if within 2 seconds, consider same (filesystem rounding)
+        // Tolerance: within 2 seconds, consider same (filesystem rounding)
         val diff = kotlin.math.abs(srcTime.toEpochMilliseconds() - destTime.toEpochMilliseconds())
-        return diff > 2000
+        if (diff <= 2000) return false
+        
+        // Source is significantly newer → modified. Source is older → preserve dest.
+        return srcTime > destTime
     }
 
     fun generateNewName(original: String): String {

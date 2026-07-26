@@ -6,6 +6,7 @@ import com.imbric.core.ifs.*
 import com.imbric.core.ifs.contracts.BackendContract
 import com.imbric.core.logic.*
 import com.imbric.core.transactions.models.TransactionEvent
+import com.imbric.core.transactions.models.TransactionStatus
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
@@ -35,6 +36,16 @@ class TransferOrchestrator(
                     session.planOperation(src, destDir)
                 }
             }.awaitAll()
+        }
+
+        // 1.5 Disk-space pre-flight: halt if total source exceeds free space
+        val destBackend = backendRegistry.get(destDir)
+        if (destBackend != null && session.totalSourceSize > 0L) {
+            val usage = destBackend.getUsage(destDir).getOrNull()
+            if (usage != null && session.totalSourceSize > usage.availableBytes) {
+                send(TransactionEvent.Finished(tid, TransactionStatus.PARTIAL))
+                return@channelFlow
+            }
         }
         
         // 2. Dispatch to TransactionManager
@@ -82,6 +93,8 @@ class TransferOrchestrator(
         val stateMutex = Mutex()
         val promptMutex = Mutex()
         val validatedOps = Collections.synchronizedList(mutableListOf<ValidatedOp>())
+        var totalSourceSize: Long = 0L
+            private set
 
         suspend fun planOperation(src: String, destParent: String) {
             val fileName = src.uriName
@@ -91,9 +104,14 @@ class TransferOrchestrator(
             val destBackend = backendRegistry.get(dest) ?: return
 
             val srcMeta = srcBackend.getMetadata(src).getOrNull() ?: return
+
+            // Trash pre-flight: skip files on filesystems that don't support trash
+            if (mode == "trash" && !srcBackend.getCapabilities(src).supportsTrash) return
+
             val destMeta = destBackend.getMetadata(dest).getOrNull()
 
             if (destMeta == null) {
+                totalSourceSize += srcMeta.size
                 validatedOps.add(ValidatedOp(src, dest, false))
                 return
             }

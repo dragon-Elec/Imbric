@@ -144,17 +144,9 @@ class TransactionManager(
     private fun updateProgress(tid: Uuid, progress: TransferProgress) {
         val tx = transactions[tid] ?: return
         
-        // --- Identity Stability (Fuzzy Matching) ---
-        var op = tx.ops.find { it.jobId == progress.jobId }
-        if (op == null) {
-            // Match by source URI if jobId is new/changed
-            val matchedIndex = tx.ops.indexOfFirst { it.src == progress.currentFile && it.status == TransactionStatus.PENDING }
-            if (matchedIndex != -1) {
-                val matchedOp = tx.ops[matchedIndex]
-                tx.ops[matchedIndex] = matchedOp.copy(jobId = progress.jobId)
-                op = tx.ops[matchedIndex]
-            }
-        }
+        // Strict jobId matching only — GioBackend captures job.id in the callback closure.
+        // No fuzzy fallback: identical filenames from different directories would cross-contaminate.
+        val op = tx.ops.find { it.jobId == progress.jobId } ?: return
 
         val pct = if (tx.totalOps > 0) {
             val completedBase = tx.completedOps.toFloat()
@@ -181,7 +173,9 @@ class TransactionManager(
             onTransactionFinished?.invoke(tid, tx.status)
             _events.tryEmit(TransactionEvent.Finished(tid, tx.status))
             
-            if (tx.isReversible && !hasFailures) {
+            // Commit undo history even for PARTIAL transactions —
+            // UndoManager filters for COMPLETED ops internally.
+            if (tx.isReversible) {
                 onHistoryCommitted?.invoke(tx)
             }
         }
