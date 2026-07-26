@@ -1,6 +1,6 @@
 package com.imbric.core.ifs
 
-import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.newFixedThreadPoolContext
 
 /**
@@ -16,11 +16,24 @@ object ListingDispatchers {
      * 8-thread pool dedicated to listing workers.
      * Matches Python's BatchProcessorWorker pool size.
      */
-    val Listing: CoroutineDispatcher = newFixedThreadPoolContext(8, "listing-worker")
+    val Listing: ExecutorCoroutineDispatcher = newFixedThreadPoolContext(8, "listing-worker")
     
     /**
      * 4-thread pool dedicated to enrichment workers.
      * Enrichment is CPU-bound (Skia/PixbufLoader) so we use fewer threads.
      */
-    val Enrichment: CoroutineDispatcher = newFixedThreadPoolContext(4, "enrichment-worker")
+    val Enrichment: ExecutorCoroutineDispatcher = newFixedThreadPoolContext(4, "enrichment-worker")
+
+    /** Shuts down both thread pools. Safe to call multiple times. */
+    fun close() {
+        Listing.close()
+        Enrichment.close()
+    }
+
+    init {
+        // Register JVM shutdown hook to clean up native thread pools
+        Runtime.getRuntime().addShutdownHook(Thread {
+            close()
+        })
+    }
 }
