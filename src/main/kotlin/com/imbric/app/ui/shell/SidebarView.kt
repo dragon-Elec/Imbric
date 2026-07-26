@@ -48,7 +48,7 @@ fun SidebarView(
                     )
                 }
 
-                items(section.items, key = { it.uri }) { item ->
+                items(section.items, key = { it.uri.ifEmpty { it.label } }) { item ->
                     SidebarItemRow(
                         item = item,
                         isActive = activeUri.startsWith(item.uri),
