@@ -54,7 +54,8 @@ class GioRecentBackend : BackendContract, RecentContract {
                 val info = gfile.queryInfo(queryAttributes, FileQueryInfoFlags.NONE, null)
                 results.add(GioTypeMappers.toImbricFileInfo(gfile, info, "recent"))
             } catch (e: Exception) {
-                // Skip on error (e.g. file deleted since RecentManager last updated)
+                GLib.log("Imbric", org.gnome.glib.LogLevelFlags.LEVEL_DEBUG,
+                    "Skipping missing recent file $itemUri: ${e.message}")
             }
         }
         return results
