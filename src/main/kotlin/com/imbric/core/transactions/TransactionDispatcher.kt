@@ -120,15 +120,15 @@ class TransactionDispatcher(
                 }
 
                 when (currentOp.opType) {
-                    "copy" -> (backend as? WriteContract)?.copy(job)?.collect { 
+                    "copy" -> ((backend as? WriteContract) ?: error("Copy not supported")).copy(job).collect {
                         actualDest = it.actualDest
                         inverse = it.inversePayload
-                        emitThrottledProgress(it) 
+                        emitThrottledProgress(it)
                     }
-                    "move" -> (backend as? WriteContract)?.move(job)?.collect { 
+                    "move" -> ((backend as? WriteContract) ?: error("Move not supported")).move(job).collect {
                         actualDest = it.actualDest
                         inverse = it.inversePayload
-                        emitThrottledProgress(it) 
+                        emitThrottledProgress(it)
                     }
                     "trash" -> {
                         val actualTrashUri = ((backend as? TrashContract) ?: error("Trash not supported")).trash(job).getOrThrow()

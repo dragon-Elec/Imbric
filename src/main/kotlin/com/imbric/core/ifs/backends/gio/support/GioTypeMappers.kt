@@ -72,16 +72,19 @@ object GioTypeMappers {
         }
     }
 
-    /** RFC 3986 unreserved characters: A-Z a-z 0-9 - _ . ~ */
-    private fun String.percentEncodeForUri(): String = buildString(length * 2) {
-        for (ch in this@percentEncodeForUri) {
+    /** RFC 3986 percent-encoding: encodes to UTF-8 bytes first, then percent-encodes each byte. */
+    private fun String.percentEncodeForUri(): String = buildString(length * 3) {
+        val bytes = this@percentEncodeForUri.encodeToByteArray() // UTF-8
+        for (b in bytes) {
+            val unsigned = b.toInt() and 0xFF
             when {
-                ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9'
-                    || ch == '-' || ch == '_' || ch == '.' || ch == '~' -> append(ch)
-                ch == ' ' -> append("%20")
+                unsigned in 'A'.code..'Z'.code || unsigned in 'a'.code..'z'.code
+                    || unsigned in '0'.code..'9'.code
+                    || unsigned == '-'.code || unsigned == '_'.code
+                    || unsigned == '.'.code || unsigned == '~'.code -> append(unsigned.toChar())
                 else -> {
-                    val hex = Integer.toHexString(ch.code).uppercase().takeLast(2).padStart(2, '0')
-                    append('%').append(hex)
+                    append('%')
+                    append(Integer.toHexString(unsigned).uppercase().padStart(2, '0'))
                 }
             }
         }
