@@ -93,9 +93,7 @@ class TransferOrchestrator(
         val stateMutex = Mutex()
         val promptMutex = Mutex()
         val validatedOps = Collections.synchronizedList(mutableListOf<ValidatedOp>())
-        var totalSourceSize: Long = 0L
-            private set
-            get() = _totalSourceSize.get()
+        val totalSourceSize: Long get() = _totalSourceSize.get()
         private val _totalSourceSize = java.util.concurrent.atomic.AtomicLong(0L)
 
         suspend fun planOperation(src: String, destParent: String) {
