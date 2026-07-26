@@ -99,8 +99,7 @@ interface BackendContract {
                 }
                 kotlinx.coroutines.yield()
             } catch (e: Exception) {
-                // Skip directories we can't list (permissions, etc.) instead of crashing
-                // We could optionally emit an error state here if DeepCount supported it
+                kotlinx.coroutines.yield()
             }
         }
         emit(DeepCount(dirs, files, totalSize, isComplete = true))
