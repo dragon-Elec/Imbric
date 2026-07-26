@@ -4,7 +4,7 @@ import com.imbric.core.ifs.contracts.BackendContract
 import com.imbric.core.models.*
 import kotlinx.coroutines.flow.Flow
 
-object BackendRegistry {
+class BackendRegistry {
     private val backends = mutableMapOf<String, BackendContract>()
     private var defaultBackend: BackendContract? = null
 
@@ -25,7 +25,7 @@ object BackendRegistry {
         }
 
         val scheme = pathOrUri.substringBefore("://", "")
-        
+
         // 2. Try exact scheme match
         if (scheme.isNotEmpty()) {
             val exactMatch = backends[scheme]

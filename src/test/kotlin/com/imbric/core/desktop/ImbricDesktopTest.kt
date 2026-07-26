@@ -1,6 +1,5 @@
 package com.imbric.core.desktop
  
-import com.imbric.core.ifs.BackendRegistry
 import org.junit.jupiter.api.BeforeEach
 import org.gnome.gio.Gio
 import kotlin.test.Test
@@ -19,25 +18,25 @@ class ImbricDesktopTest {
     fun testInitializeRegistersExpectedSchemes() {
         if (!Gtk.isInitialized()) Gtk.init()
 
-        ImbricDesktop.initialize()
+        val registry = ImbricDesktop.initialize()
 
-        assertNotNull(BackendRegistry.get("file://"))
-        assertNotNull(BackendRegistry.get("trash://"))
-        assertNotNull(BackendRegistry.get("recent://"))
-        assertNotNull(BackendRegistry.get("search://"))
+        assertNotNull(registry.get("file://"))
+        assertNotNull(registry.get("trash://"))
+        assertNotNull(registry.get("recent://"))
+        assertNotNull(registry.get("search://"))
 
         val vfs = Vfs.getDefault()
         val supported = vfs.supportedUriSchemes?.toList() ?: emptyList()
 
         if (supported.contains("smb")) {
-            assertNotNull(BackendRegistry.get("smb://"))
+            assertNotNull(registry.get("smb://"))
         }
         if (supported.contains("sftp")) {
-            assertNotNull(BackendRegistry.get("sftp://"))
+            assertNotNull(registry.get("sftp://"))
         }
 
         // Also verify with getRegisteredSchemes if we want
-        val registeredSchemes = BackendRegistry.getRegisteredSchemes()
+        val registeredSchemes = registry.getRegisteredSchemes()
         assertTrue(registeredSchemes.contains("file"))
         assertTrue(registeredSchemes.contains("trash"))
         assertTrue(registeredSchemes.contains("recent"))

@@ -23,9 +23,10 @@ class TransactionManagerTest {
     @BeforeTest
     fun setup() {
         backend = InMemoryBackend()
-        BackendRegistry.register("memory", backend)
-        val dispatcher = TransactionDispatcher(BackendRegistry)
-        tm = TransactionManager(BackendRegistry, XferArbiter, dispatcher)
+        val registry = BackendRegistry()
+        registry.register("memory", backend)
+        val dispatcher = TransactionDispatcher(registry)
+        tm = TransactionManager(registry, XferArbiter, dispatcher)
     }
 
     @Test

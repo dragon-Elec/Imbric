@@ -9,37 +9,37 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 class BackendRegistryTest {
+    private lateinit var registry: BackendRegistry
 
     @BeforeTest
     fun setup() {
-        // Resetting singleton state using reflection or by creating a fresh object is hard.
-        // Instead, we just register what we need. 
-        BackendRegistry.register("memory", InMemoryBackend("memory"))
-        BackendRegistry.register("smb", InMemoryBackend("smb"))
-        BackendRegistry.setDefault(InMemoryBackend("file"))
+        registry = BackendRegistry()
+        registry.register("memory", InMemoryBackend("memory"))
+        registry.register("smb", InMemoryBackend("smb"))
+        registry.setDefault(InMemoryBackend("file"))
     }
 
     @Test
     fun testGetIoByScheme() {
-        val backend = BackendRegistry.get("memory://foo/bar")
+        val backend = registry.get("memory://foo/bar")
         assertEquals("memory", backend?.scheme)
     }
 
     @Test
     fun testGetIoFallbackToDefault() {
-        val backend = BackendRegistry.get("/home/user/foo.txt")
+        val backend = registry.get("/home/user/foo.txt")
         assertEquals("file", backend?.scheme)
     }
 
     @Test
     fun testGetIoUnknownScheme() {
-        val backend = BackendRegistry.get("unknown://foo/bar")
+        val backend = registry.get("unknown://foo/bar")
         assertNull(backend)
     }
 
     @Test
     fun testGetRegisteredSchemes() {
-        val schemes = BackendRegistry.getRegisteredSchemes()
+        val schemes = registry.getRegisteredSchemes()
         assert(schemes.contains("memory"))
         assert(schemes.contains("smb"))
     }
@@ -49,8 +49,8 @@ class BackendRegistryTest {
         val customBackend = object : InMemoryBackend("custom") {
             override fun canHandle(uri: String): Boolean = uri.startsWith("magic://")
         }
-        BackendRegistry.register("custom", customBackend)
-        val backend = BackendRegistry.get("magic://foo/bar")
+        registry.register("custom", customBackend)
+        val backend = registry.get("magic://foo/bar")
         assertEquals("custom", backend?.scheme)
     }
 }

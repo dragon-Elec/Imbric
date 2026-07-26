@@ -15,19 +15,21 @@ class TransferOrchestratorTest {
     private lateinit var tm: TransactionManager
     private lateinit var orchestrator: TransferOrchestrator
 
+    private val registry = BackendRegistry()
+
     @BeforeTest
     fun setup() {
         backend = InMemoryBackend()
-        BackendRegistry.register("memory", backend)
-        val dispatcher = TransactionDispatcher(BackendRegistry)
-        tm = TransactionManager(BackendRegistry, XferArbiter, dispatcher)
-        orchestrator = TransferOrchestrator(BackendRegistry, tm)
+        registry.register("memory", backend)
+        val dispatcher = TransactionDispatcher(registry)
+        tm = TransactionManager(registry, XferArbiter, dispatcher)
+        orchestrator = TransferOrchestrator(registry, tm)
     }
 
     private fun TestScope.initManagers() {
-        val dispatcher = TransactionDispatcher(BackendRegistry, this)
-        tm = TransactionManager(BackendRegistry, XferArbiter, dispatcher, this)
-        orchestrator = TransferOrchestrator(BackendRegistry, tm)
+        val dispatcher = TransactionDispatcher(registry, this)
+        tm = TransactionManager(registry, XferArbiter, dispatcher, this)
+        orchestrator = TransferOrchestrator(registry, tm)
     }
 
     @Test

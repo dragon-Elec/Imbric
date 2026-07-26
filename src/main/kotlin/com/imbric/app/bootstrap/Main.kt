@@ -9,7 +9,6 @@ import com.imbric.core.desktop.ImbricDesktop
 import com.imbric.core.desktop.DeviceManager
 import com.imbric.core.desktop.BookmarkList
 import com.imbric.core.desktop.backends.GioDesktopEnvironment
-import com.imbric.core.ifs.BackendRegistry
 import com.imbric.core.ifs.directories.DirState
 import com.imbric.core.ifs.directories.DirStateRegistry
 import org.gnome.gio.Gio
@@ -58,7 +57,8 @@ fun main(args: Array<String>) {
         println("[CLI] Diagnostic Mode Active")
         println("[CLI] Emulating App Layer VFS Consumer...")
         
-        val defaultBackend = BackendRegistry.getDefault()
+        val registry = ImbricDesktop.registry
+        val defaultBackend = registry.getDefault()
         if (defaultBackend == null) {
             println("[CLI] Error: No default VFS Backend registered")
             return
@@ -68,7 +68,7 @@ fun main(args: Array<String>) {
             kotlinx.coroutines.runBlocking {
                 // Note: GLib MainContext pump is already started natively by ImbricDesktop.initialize()
 
-                val defaultBackend = BackendRegistry.getDefault()
+                val defaultBackend = registry.getDefault()
                 requireNotNull(defaultBackend) { "No default BackendContract registered" }
                 val dirState = DirState(cleanTarget, defaultBackend, this)
                 
@@ -114,17 +114,18 @@ fun main(args: Array<String>) {
             // MainContextPump()
 
             val scope = rememberCoroutineScope()
-            val defaultBackend = BackendRegistry.getDefault()
+            val registry = ImbricDesktop.registry
+            val defaultBackend = registry.getDefault()
             requireNotNull(defaultBackend) { "No default BackendContract registered" }
             
             // In a real app, this would be provided by a DI container (like Koin)
-            val registry = remember { DirStateRegistry(defaultBackend, scope, backendResolver = { uri -> BackendRegistry.get(uri) }) }
+            val dirStateRegistry = remember { DirStateRegistry(defaultBackend, scope, backendResolver = { uri -> registry.get(uri) }) }
             val deviceManager = remember { DeviceManager(GioDesktopEnvironment()) }
             val bookmarkList = remember { BookmarkList.getInstance() }
 
             ImbricTheme {
                 ImbricApp(
-                    registry = registry,
+                    registry = dirStateRegistry,
                     deviceManager = deviceManager,
                     bookmarkList = bookmarkList
                 )

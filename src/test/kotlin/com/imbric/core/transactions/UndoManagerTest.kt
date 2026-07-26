@@ -25,17 +25,18 @@ class UndoManagerTest {
     private lateinit var backend: InMemoryBackend
     private lateinit var transactionManager: TransactionManager
     private lateinit var undoManager: UndoManager
+    private val registry = BackendRegistry()
 
     @BeforeTest
     fun setup() {
         backend = InMemoryBackend()
-        BackendRegistry.register("memory", backend)
+        registry.register("memory", backend)
     }
 
     private fun kotlinx.coroutines.test.TestScope.initManagers() {
-        val dispatcher = TransactionDispatcher(BackendRegistry, this)
-        transactionManager = TransactionManager(BackendRegistry, XferArbiter, dispatcher, this)
-        undoManager = UndoManager(BackendRegistry, transactionManager, this)
+        val dispatcher = TransactionDispatcher(registry, this)
+        transactionManager = TransactionManager(registry, XferArbiter, dispatcher, this)
+        undoManager = UndoManager(registry, transactionManager, this)
         
         // Connect them
         undoManager.attach()

@@ -27,7 +27,7 @@ object GioTypeMappers {
         parentPathType: PathType,
         parentIsRemote: Boolean
     ): ListingFile {
-        val childUri = fastChildUri(parentUri, name) ?: "$parentUri/$name"
+        val childUri = fastChildUri(parentUri, name)
         val childPath = "$parentPath/$name"
         val isDir = gioInfo.fileType == org.gnome.gio.FileType.DIRECTORY
         
@@ -50,12 +50,13 @@ object GioTypeMappers {
 
 
     /**
-     * Fast child URI construction. Encodes only the characters that break URI parsing (#, ?, %).
-     * Returns null if the name contains characters that need encoding — caller should fall back to getChild().
+     * Fast child URI construction. Percent-encodes the name per RFC 3986.
+     * Unreserved chars (A-Z a-z 0-9 - _ . ~) pass through; everything else is percent-encoded.
+     * Always returns a valid URI — never falls back.
      */
-    fun fastChildUri(parentUri: String, name: String): String? {
-        if (name.indexOfAny(CHARS_NEED_ENCODE) >= 0) return null
-        return "$parentUri/$name"
+    fun fastChildUri(parentUri: String, name: String): String {
+        val encodedName = name.percentEncodeForUri()
+        return "$parentUri/$encodedName"
     }
 
     /**
@@ -71,7 +72,20 @@ object GioTypeMappers {
         }
     }
 
-    private val CHARS_NEED_ENCODE = charArrayOf('#', '?', '%', ' ')
+    /** RFC 3986 unreserved characters: A-Z a-z 0-9 - _ . ~ */
+    private fun String.percentEncodeForUri(): String = buildString(length * 2) {
+        for (ch in this@percentEncodeForUri) {
+            when {
+                ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9'
+                    || ch == '-' || ch == '_' || ch == '.' || ch == '~' -> append(ch)
+                ch == ' ' -> append("%20")
+                else -> {
+                    val hex = Integer.toHexString(ch.code).uppercase().takeLast(2).padStart(2, '0')
+                    append('%').append(hex)
+                }
+            }
+        }
+    }
 
     /** Sentinel UUID for listing mode — avoids Uuid.random() crypto overhead per file. */
     private val LISTING_SENTINEL_UUID = Uuid.fromLongs(0, 0)
@@ -100,7 +114,7 @@ object GioTypeMappers {
         val childUri: String
         val childPath: String
         if (parentUri != null) {
-            childUri = fastChildUri(parentUri, name) ?: uri // fallback to provided uri (from getChild)
+            childUri = fastChildUri(parentUri, name)
             childPath = parentPath?.let { "$it/$name" }
                 ?: localPathFromFileUri(childUri)
                 ?: path

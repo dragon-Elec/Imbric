@@ -35,9 +35,10 @@ class DummyBackend : BackendContract {
 class CanTrashBenchmarkTest {
     @Test
     fun benchmarkCanTrash() {
-        BackendRegistry.register("slow", DummyBackend())
+        val registry = BackendRegistry()
+        registry.register("slow", DummyBackend())
 
-        val trashManager = TrashManager(BackendRegistry)
+        val trashManager = TrashManager(registry)
 
         val time = measureTimeMillis {
             for (i in 1..100) {

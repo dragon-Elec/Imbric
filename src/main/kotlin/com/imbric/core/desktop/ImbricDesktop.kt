@@ -11,23 +11,30 @@ import com.imbric.core.ifs.backends.gio.support.GioCoroutineBridge
  * Consumers of the library should call [initialize] at startup.
  */
 object ImbricDesktop {
-    fun initialize() {
+    lateinit var registry: BackendRegistry
+        private set
+
+    fun initialize(): BackendRegistry {
+        val reg = BackendRegistry()
         val gio = GioBackend()
         
         // Start the native OS daemon thread pump for GIO async callbacks
         GioCoroutineBridge.startMainContextPump()
         
         // Register standard VFS handlers
-        BackendRegistry.register("file", gio)
-        BackendRegistry.register("trash", gio)
-        BackendRegistry.register("smb", gio)
-        BackendRegistry.register("sftp", gio)
+        reg.register("file", gio)
+        reg.register("trash", gio)
+        reg.register("smb", gio)
+        reg.register("sftp", gio)
         
         // Register specialized Desktop handlers
-        BackendRegistry.register("recent", GioRecentBackend())
-        BackendRegistry.register("search", GioSearchBackend(gio))
+        reg.register("recent", GioRecentBackend())
+        reg.register("search", GioSearchBackend(gio))
         
         // Set fallback
-        BackendRegistry.setDefault(gio)
+        reg.setDefault(gio)
+
+        registry = reg
+        return reg
     }
 }

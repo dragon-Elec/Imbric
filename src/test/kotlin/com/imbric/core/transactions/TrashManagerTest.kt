@@ -21,11 +21,11 @@ class TrashManagerTest {
 
     @BeforeEach
     fun setup() {
-        BackendRegistry.clear()
+        val registry = BackendRegistry()
         backend = InMemoryBackend()
-        BackendRegistry.register("memory", backend)
+        registry.register("memory", backend)
         fakeTrashState = FakeTrashStateProvider()
-        trashManager = TrashManager(BackendRegistry, trashState = fakeTrashState)
+        trashManager = TrashManager(registry, trashState = fakeTrashState)
     }
 
     @Test
