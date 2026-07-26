@@ -95,6 +95,8 @@ class TransferOrchestrator(
         val validatedOps = Collections.synchronizedList(mutableListOf<ValidatedOp>())
         var totalSourceSize: Long = 0L
             private set
+            get() = _totalSourceSize.get()
+        private val _totalSourceSize = java.util.concurrent.atomic.AtomicLong(0L)
 
         suspend fun planOperation(src: String, destParent: String) {
             val fileName = src.uriName
@@ -111,7 +113,7 @@ class TransferOrchestrator(
             val destMeta = destBackend.getMetadata(dest).getOrNull()
 
             if (destMeta == null) {
-                totalSourceSize += srcMeta.size
+                _totalSourceSize.addAndGet(srcMeta.size)
                 validatedOps.add(ValidatedOp(src, dest, false))
                 return
             }
