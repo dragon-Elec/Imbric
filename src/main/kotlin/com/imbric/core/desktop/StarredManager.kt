@@ -21,6 +21,7 @@ class StarredManager private constructor(
     override val starredUris: StateFlow<Set<String>> = _starredUris.asStateFlow()
 
     private var monitor: FileMonitor? = null
+    private var metadataMonitor: FileMonitor? = null
     private var refreshJob: Job? = null
 
     init {
@@ -52,8 +53,8 @@ class StarredManager private constructor(
 
             // Also monitor GNOME's gvfs-metadata directory for Tracker3 changes
             if (gvfsMetadataDir.queryExists(null)) {
-                gvfsMetadataDir.monitorDirectory(FileMonitorFlags.NONE, null)
-                    ?.onChanged(onChanged)
+                metadataMonitor = gvfsMetadataDir.monitorDirectory(FileMonitorFlags.NONE, null)
+                metadataMonitor?.onChanged(onChanged)
             }
         } catch (e: Exception) {
             GLib.log("Imbric", org.gnome.glib.LogLevelFlags.LEVEL_WARNING,
