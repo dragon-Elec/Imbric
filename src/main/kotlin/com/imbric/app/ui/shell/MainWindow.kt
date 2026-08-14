@@ -2,10 +2,6 @@ package com.imbric.app.ui.shell
 
 import androidx.compose.animation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ViewList
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -21,7 +17,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import com.imbric.app.orchestrators.GlobalShortcutHandler
 import com.imbric.app.aggregators.SidebarSection
-import com.imbric.app.ui.AddressBar
+import com.imbric.app.ui.header.TopHeader
 import com.imbric.app.ui.LayoutMode
 import com.imbric.app.ui.home.HomePageView
 import com.imbric.app.ui.pane.FileBrowserPane
@@ -87,65 +83,19 @@ fun MainWindow(
                 Scaffold(
                     modifier = Modifier.weight(1f),
                     topBar = {
-                        TopAppBar(
-                            modifier = Modifier.height(42.dp),
-                            windowInsets = WindowInsets(0.dp),
-                            title = {
-                                if (isHome) {
-                                    Text(
-                                        text = "Home",
-                                        style = MaterialTheme.typography.titleLarge,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                } else {
-                                    val activeState = state!!.value
-                                    AddressBar(
-                                        uri = activeState.uri,
-                                        virtualUri = activeState.virtualUri,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .onGloballyPositioned { coordinates ->
-                                                addressBarBounds = coordinates.boundsInWindow()
-                                            },
-                                        onSegmentClick = { uri -> viewModel!!.navigateTo(uri) }
-                                    )
-                                }
-                            },
-                            navigationIcon = {
-                                if (!isHome && state!!.value.canGoUp) {
-                                    IconButton(
-                                        onClick = { viewModel!!.goUp() },
-                                        enabled = state.value.canGoUp
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.ArrowUpward,
-                                            contentDescription = "Go Up"
-                                        )
-                                    }
-                                }
-                            },
-                            actions = {
-                                if (!isHome) {
-                                    IconButton(onClick = { forceShowAnimation = !forceShowAnimation }) {
-                                        Text(
-                                            text = "🪄",
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = if (forceShowAnimation) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    IconButton(onClick = { viewModel!!.toggleLayoutMode() }) {
-                                        Icon(
-                                            imageVector = if (layoutMode!!.value == LayoutMode.GRID) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
-                                            contentDescription = "Toggle Layout",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            },
-                            colors = TopAppBarDefaults.topAppBarColors(
-                                containerColor = MaterialTheme.colorScheme.surface,
-                                titleContentColor = MaterialTheme.colorScheme.onSurface,
-                            )
+                        TopHeader(
+                            isHome = isHome,
+                            canGoUp = !isHome && state!!.value.canGoUp,
+                            onGoUp = { viewModel!!.goUp() },
+                            uri = state?.value?.uri ?: "",
+                            virtualUri = state?.value?.virtualUri ?: "",
+                            onNavigate = { uri -> viewModel!!.navigateTo(uri) },
+                            onAddressBarPositioned = { bounds -> addressBarBounds = bounds },
+                            layoutMode = layoutMode?.value ?: LayoutMode.GRID,
+                            onToggleLayout = { viewModel!!.toggleLayoutMode() },
+                            onGoHome = { shellViewModel.openHome() },
+                            forceShowAnimation = forceShowAnimation,
+                            onToggleAnimation = { forceShowAnimation = !forceShowAnimation }
                         )
                     }
                 ) { innerPadding ->

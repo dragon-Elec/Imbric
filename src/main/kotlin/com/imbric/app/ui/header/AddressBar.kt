@@ -1,10 +1,11 @@
-package com.imbric.app.ui
+package com.imbric.app.ui.header
 
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -58,8 +59,8 @@ fun AddressBar(
     var isEditing by remember { mutableStateOf(false) }
 
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = MaterialTheme.shapes.medium,
         modifier = modifier.clickable(
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
@@ -67,7 +68,7 @@ fun AddressBar(
         ) { isEditing = true }
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp).fillMaxWidth(),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
@@ -133,7 +134,7 @@ private fun AddressInput(
                         }
                     } else false
                 },
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
@@ -250,17 +251,17 @@ private fun Crumb(name: String, isLastActive: Boolean, isFuture: Boolean, onClic
                 scaleY = scale
                 alpha = opacity
             }
-            .clip(RoundedCornerShape(6.dp))
+            .clip(MaterialTheme.shapes.small)
             .background(backgroundColor)
             .clickable(
                 interactionSource = interactionSource,
                 indication = LocalIndication.current
             ) { onClick() }
-            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
         Text(
             text = name,
-            style = if (isLastActive) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
+            style = if (isLastActive) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge,
             color = contentColor,
             fontWeight = if (isLastActive) FontWeight.Bold else FontWeight.Normal
         )

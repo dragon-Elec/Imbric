@@ -73,6 +73,27 @@ class ShellViewModel(
     }
 
     /**
+     * Navigates the active tab to the Home dashboard.
+     */
+    fun openHome() {
+        val currentTabs = _tabs.value
+        val activeIndex = currentTabs.indexOfFirst { it.id == _activePaneId.value }
+        if (activeIndex == -1) return
+
+        val old = currentTabs[activeIndex]
+        if (old.isHome) return
+
+        old.destroy()
+        val homePane = PaneContext(
+            id = old.id,
+            type = TabType.Home,
+            registry = registry,
+            parentScope = shellScope
+        )
+        _tabs.update { tabs -> tabs.mapIndexed { i, pane -> if (i == activeIndex) homePane else pane } }
+    }
+
+    /**
      * Closes a tab. If it was the active tab, falls back to the previous tab.
      */
     fun closeTab(id: Uuid) {
