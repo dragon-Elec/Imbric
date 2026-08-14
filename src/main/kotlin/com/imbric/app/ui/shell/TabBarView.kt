@@ -21,7 +21,7 @@ import com.imbric.core.ifs.IfsUri
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
-@OptIn(ExperimentalUuidApi::class)
+@OptIn(ExperimentalUuidApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun TabBarView(
     tabs: List<PaneContext>,
@@ -41,7 +41,7 @@ fun TabBarView(
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ScrollableTabRow(
+            PrimaryScrollableTabRow(
                 selectedTabIndex = tabs.indexOfFirst { it.id == activePaneId }.coerceAtLeast(0),
                 edgePadding = 0.dp,
                 containerColor = MaterialTheme.colorScheme.surface,

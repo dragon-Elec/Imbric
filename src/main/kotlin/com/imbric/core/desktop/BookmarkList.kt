@@ -135,6 +135,7 @@ class BookmarkList internal constructor(
     // ── Reactive Save ────────────────────────────────────────────────────
 
     /** Debounced auto-save: persists JSON + GTK on any bookmark change. */
+    @OptIn(FlowPreview::class)
     private fun setupReactiveSave() {
         scope.launch {
             _bookmarks

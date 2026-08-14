@@ -3,9 +3,9 @@ package com.imbric.app.ui.shell
 import androidx.compose.animation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -98,9 +98,10 @@ fun MainWindow(
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                 } else {
+                                    val activeState = state!!.value
                                     AddressBar(
-                                        uri = state!!.value.uri,
-                                        virtualUri = state!!.value.virtualUri,
+                                        uri = activeState.uri,
+                                        virtualUri = activeState.virtualUri,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .onGloballyPositioned { coordinates ->
@@ -114,7 +115,7 @@ fun MainWindow(
                                 if (!isHome && state!!.value.canGoUp) {
                                     IconButton(
                                         onClick = { viewModel!!.goUp() },
-                                        enabled = state!!.value.canGoUp
+                                        enabled = state.value.canGoUp
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.ArrowUpward,
@@ -134,7 +135,7 @@ fun MainWindow(
                                     }
                                     IconButton(onClick = { viewModel!!.toggleLayoutMode() }) {
                                         Icon(
-                                            imageVector = if (layoutMode!!.value == LayoutMode.GRID) Icons.Default.ViewList else Icons.Default.GridView,
+                                            imageVector = if (layoutMode!!.value == LayoutMode.GRID) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
                                             contentDescription = "Toggle Layout",
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -158,23 +159,25 @@ fun MainWindow(
                                     .padding(innerPadding)
                             )
                         } else {
+                            val activeVm = viewModel!!
+                            val activeState = state!!.value
                             FileBrowserPane(
-                                state = state!!.value,
+                                state = activeState,
                                 layoutMode = layoutMode!!.value,
                                 sortKey = sortKey!!.value,
                                 forceShowAnimation = forceShowAnimation,
-                                pipelineTimer = viewModel!!.pipelineTimer,
-                                onReportDone = { viewModel!!.pipelineTimer = null },
+                                pipelineTimer = activeVm.pipelineTimer,
+                                onReportDone = { activeVm.pipelineTimer = null },
                                 onItemClick = { item ->
                                     if (item.isDirectory) {
                                         val timer = PipelineTimer("navigateTo")
                                         timer.mark("ui_click", detail = item.uri)
-                                        viewModel!!.pipelineTimer = timer
-                                        viewModel!!.navigateTo(item.uri)
+                                        activeVm.pipelineTimer = timer
+                                        activeVm.navigateTo(item.uri)
                                     }
                                 },
                                 onVisibleItemsChanged = { visibleUris ->
-                                    viewModel!!.enrichVisibleItems(visibleUris)
+                                    activeVm.enrichVisibleItems(visibleUris)
                                 },
                                 modifier = Modifier
                                     .fillMaxSize()

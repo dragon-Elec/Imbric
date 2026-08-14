@@ -139,25 +139,21 @@ class ListingDirectory(initialCapacity: Int = 512) {
     }
 
     private fun swap(i: Int, j: Int) {
-        var tmp: Any?
+        val tmpName = names[i]; names[i] = names[j]; names[j] = tmpName
+        val tmpUri = uris[i]; uris[i] = uris[j]; uris[j] = tmpUri
+        val tmpPath = paths[i]; paths[i] = paths[j]; paths[j] = tmpPath
+        val tmpType = pathTypes[i]; pathTypes[i] = pathTypes[j]; pathTypes[j] = tmpType
+        val tmpIcon = iconNames[i]; iconNames[i] = iconNames[j]; iconNames[j] = tmpIcon
+        val tmpMime = mimeTypes[i]; mimeTypes[i] = mimeTypes[j]; mimeTypes[j] = tmpMime
 
-        tmp = names[i]; names[i] = names[j]; names[j] = tmp as? String
-        tmp = uris[i]; uris[i] = uris[j]; uris[j] = tmp as? String
-        tmp = paths[i]; paths[i] = paths[j]; paths[j] = tmp as? String
-        tmp = pathTypes[i]; pathTypes[i] = pathTypes[j]; pathTypes[j] = tmp as? PathType
-        tmp = iconNames[i]; iconNames[i] = iconNames[j]; iconNames[j] = tmp as? String
-        tmp = mimeTypes[i]; mimeTypes[i] = mimeTypes[j]; mimeTypes[j] = tmp as? String
+        val tmpIsDir = isDirs[i]; isDirs[i] = isDirs[j]; isDirs[j] = tmpIsDir
+        val tmpIsHidden = isHiddens[i]; isHiddens[i] = isHiddens[j]; isHiddens[j] = tmpIsHidden
+        val tmpIsInTrash = isInTrashes[i]; isInTrashes[i] = isInTrashes[j]; isInTrashes[j] = tmpIsInTrash
+        val tmpIsInRecent = isInRecents[i]; isInRecents[i] = isInRecents[j]; isInRecents[j] = tmpIsInRecent
+        val tmpIsRemote = isRemotes[i]; isRemotes[i] = isRemotes[j]; isRemotes[j] = tmpIsRemote
 
-        var tmpB: Boolean
-        tmpB = isDirs[i]; isDirs[i] = isDirs[j]; isDirs[j] = tmpB
-        tmpB = isHiddens[i]; isHiddens[i] = isHiddens[j]; isHiddens[j] = tmpB
-        tmpB = isInTrashes[i]; isInTrashes[i] = isInTrashes[j]; isInTrashes[j] = tmpB
-        tmpB = isInRecents[i]; isInRecents[i] = isInRecents[j]; isInRecents[j] = tmpB
-        tmpB = isRemotes[i]; isRemotes[i] = isRemotes[j]; isRemotes[j] = tmpB
-
-        var tmpL: Long
-        tmpL = sizes[i]; sizes[i] = sizes[j]; sizes[j] = tmpL
-        tmpL = modifiedTimes[i]; modifiedTimes[i] = modifiedTimes[j]; modifiedTimes[j] = tmpL
+        val tmpSize = sizes[i]; sizes[i] = sizes[j]; sizes[j] = tmpSize
+        val tmpModified = modifiedTimes[i]; modifiedTimes[i] = modifiedTimes[j]; modifiedTimes[j] = tmpModified
     }
 
     /** Returns a lazy List<FileEntry> view. Objects created only when accessed by index. */

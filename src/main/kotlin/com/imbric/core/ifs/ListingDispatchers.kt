@@ -1,5 +1,6 @@
 package com.imbric.core.ifs
 
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.newFixedThreadPoolContext
 
@@ -11,6 +12,7 @@ import kotlinx.coroutines.newFixedThreadPoolContext
  * previous batches in parallel. This eliminates thread contention between
  * listing and other I/O operations on the shared Dispatchers.IO.
  */
+@OptIn(DelicateCoroutinesApi::class)
 object ListingDispatchers {
     /**
      * 8-thread pool dedicated to listing workers.

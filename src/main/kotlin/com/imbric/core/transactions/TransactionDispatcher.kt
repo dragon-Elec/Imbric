@@ -254,10 +254,10 @@ class TransactionDispatcher(
                                 }
                             }
                         } else {
-                            onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, e.message ?: "Conflict metadata error", null, null)
+                            onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, e.message, null, null)
                         }
                     } else {
-                        onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, e.message ?: "Backend not found for conflict resolution", null, null)
+                        onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, e.message, null, null)
                     }
                 } else {
                     onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, e.message ?: "Transfer failed", null, null)
