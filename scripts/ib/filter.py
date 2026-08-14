@@ -1,6 +1,7 @@
 import re
 import sys
 import time
+from .compressor import compress_warnings
 
 class OutputFilter:
     NOISE_PATTERNS = [
@@ -29,8 +30,9 @@ class OutputFilter:
     WARNING_PATTERN = re.compile(r"^w: ")
     BOOT_PATTERN = re.compile(r"^\[BOOT\]")
 
-    def __init__(self, mode: str = "run"):
+    def __init__(self, mode: str = "run", show_warnings: bool = False):
         self.mode = mode
+        self.show_warnings = show_warnings
         self.in_error = False
         self.dot_count = 0
         self.warnings: list[str] = []
@@ -117,7 +119,11 @@ class OutputFilter:
     def flush_warnings(self):
         if self.warnings:
             count = len(self.warnings)
-            sys.stderr.write(f"\n[{count} warning{'s' if count != 1 else ''}]\n")
+            if not self.show_warnings:
+                sys.stderr.write(f"\n[{count} warning{'s' if count != 1 else ''} (use -w / --warnings to view)]\n")
+            else:
+                formatted = compress_warnings(self.warnings)
+                sys.stderr.write(f"\n--- {count} Compiler Warning{'s' if count != 1 else ''} ---{formatted}\n")
             sys.stderr.flush()
 
     def reset(self):

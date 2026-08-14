@@ -7,6 +7,8 @@ from ..filter import OutputFilter
 def register(subparsers):
     p = subparsers.add_parser("compile", help="Compile Kotlin sources with filtered output")
     p.add_argument("--tests", action="store_true", help="Also compile test sources")
+    p.add_argument("-w", "--warnings", action="store_true", help="Display full compiler warnings")
+    p.add_argument("--rerun", action="store_true", help="Force task re-execution bypassing Gradle cache")
     p.add_argument("--full", action="store_true", help="Full build (all tasks, not just compileKotlin)")
 
 def run(args):
@@ -17,8 +19,11 @@ def run(args):
     else:
         gradle_cmd = ["./gradlew", "compileKotlin", "--console=plain"]
 
+    if args.rerun:
+        gradle_cmd.append("--rerun-tasks")
+
     print(f"Compiling...")
-    filt = OutputFilter(mode="compile")
+    filt = OutputFilter(mode="compile", show_warnings=args.warnings)
     start = time.time()
 
     try:

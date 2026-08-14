@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalFocusManager
@@ -22,16 +23,20 @@ import com.imbric.app.orchestrators.GlobalShortcutHandler
 import com.imbric.app.aggregators.SidebarSection
 import com.imbric.app.ui.AddressBar
 import com.imbric.app.ui.LayoutMode
+import com.imbric.app.ui.home.HomePageView
 import com.imbric.app.ui.pane.FileBrowserPane
 import com.imbric.app.viewmodel.ShellViewModel
 import kotlin.uuid.ExperimentalUuidApi
 import com.imbric.core.ifs.backends.gio.support.PipelineTimer
+import com.imbric.app.aggregators.HomeUiState
+import kotlinx.coroutines.flow.StateFlow
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalUuidApi::class)
 @Composable
 fun MainWindow(
     shellViewModel: ShellViewModel,
-    sidebarSections: List<SidebarSection>
+    sidebarSections: List<SidebarSection>,
+    homeState: StateFlow<HomeUiState>,
 ) {
     val tabs by shellViewModel.tabs.collectAsState()
     val activePaneId by shellViewModel.activePaneId.collectAsState()
@@ -41,10 +46,14 @@ fun MainWindow(
     val focusManager = LocalFocusManager.current
 
     CompositionLocalProvider(LocalActivePane provides activePane) {
+        val isHome = activePane.isHome
         val viewModel = activePane.viewModel
-        val state = viewModel.state.collectAsState()
-        val layoutMode by viewModel.layoutMode.collectAsState()
-        val sortKey by viewModel.sortKey.collectAsState()
+
+        // Folder-pane state is only collected when this pane actually is a folder.
+        val state = if (isHome) null else viewModel!!.state.collectAsState()
+        val layoutMode = if (isHome) null else viewModel!!.layoutMode.collectAsState()
+        val sortKey = if (isHome) null else viewModel!!.sortKey.collectAsState()
+
         var forceShowAnimation by remember { mutableStateOf(false) }
         var addressBarBounds by remember { mutableStateOf<Rect?>(null) }
 
@@ -69,46 +78,53 @@ fun MainWindow(
             ) {
                 SidebarView(
                     sections = sidebarSections,
-                    activeUri = state.value.uri,
-                    onItemClick = { uri -> viewModel.navigateTo(uri) }
+                    activeUri = state?.value?.uri ?: "",
+                    onItemClick = { uri ->
+                        if (isHome) shellViewModel.openFolder(uri) else viewModel!!.navigateTo(uri)
+                    }
                 )
-                
+
                 Scaffold(
                     modifier = Modifier.weight(1f),
                     topBar = {
-                        Column {
-                            TabBarView(
-                                tabs = tabs,
-                                activePaneId = activePaneId,
-                                onTabSelected = { shellViewModel.setActiveTab(it) },
-                                onTabClosed = { shellViewModel.closeTab(it) },
-                                onNewTab = { shellViewModel.addTab("file:///") }
-                            )
-                            TopAppBar(
-                                title = {
+                        TopAppBar(
+                            modifier = Modifier.height(42.dp),
+                            windowInsets = WindowInsets(0.dp),
+                            title = {
+                                if (isHome) {
+                                    Text(
+                                        text = "Home",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                } else {
                                     AddressBar(
-                                        uri = state.value.uri,
-                                        virtualUri = state.value.virtualUri,
+                                        uri = state!!.value.uri,
+                                        virtualUri = state!!.value.virtualUri,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .onGloballyPositioned { coordinates ->
                                                 addressBarBounds = coordinates.boundsInWindow()
                                             },
-                                        onSegmentClick = { uri -> viewModel.navigateTo(uri) }
+                                        onSegmentClick = { uri -> viewModel!!.navigateTo(uri) }
                                     )
-                                },
-                                navigationIcon = {
+                                }
+                            },
+                            navigationIcon = {
+                                if (!isHome && state!!.value.canGoUp) {
                                     IconButton(
-                                        onClick = { viewModel.goUp() },
-                                        enabled = state.value.canGoUp
+                                        onClick = { viewModel!!.goUp() },
+                                        enabled = state!!.value.canGoUp
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.ArrowUpward,
                                             contentDescription = "Go Up"
                                         )
                                     }
-                                },
-                                actions = {
+                                }
+                            },
+                            actions = {
+                                if (!isHome) {
                                     IconButton(onClick = { forceShowAnimation = !forceShowAnimation }) {
                                         Text(
                                             text = "🪄",
@@ -116,45 +132,55 @@ fun MainWindow(
                                             color = if (forceShowAnimation) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    IconButton(onClick = { viewModel.toggleLayoutMode() }) {
+                                    IconButton(onClick = { viewModel!!.toggleLayoutMode() }) {
                                         Icon(
-                                            imageVector = if (layoutMode == LayoutMode.GRID) Icons.Default.ViewList else Icons.Default.GridView,
+                                            imageVector = if (layoutMode!!.value == LayoutMode.GRID) Icons.Default.ViewList else Icons.Default.GridView,
                                             contentDescription = "Toggle Layout",
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                },
-                                colors = TopAppBarDefaults.topAppBarColors(
-                                    containerColor = MaterialTheme.colorScheme.surface,
-                                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                                )
+                                }
+                            },
+                            colors = TopAppBarDefaults.topAppBarColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                titleContentColor = MaterialTheme.colorScheme.onSurface,
                             )
-                        }
+                        )
                     }
                 ) { innerPadding ->
                     stateHolder.SaveableStateProvider(activePane.id) {
-                        FileBrowserPane(
-                            state = state.value,
-                            layoutMode = layoutMode,
-                            sortKey = sortKey,
-                            forceShowAnimation = forceShowAnimation,
-                            pipelineTimer = viewModel.pipelineTimer,
-                            onReportDone = { viewModel.pipelineTimer = null },
-                            onItemClick = { item ->
-                                if (item.isDirectory) {
-                                    val timer = PipelineTimer("navigateTo")
-                                    timer.mark("ui_click", detail = item.uri)
-                                    viewModel.pipelineTimer = timer
-                                    viewModel.navigateTo(item.uri)
-                                }
-                            },
-                            onVisibleItemsChanged = { visibleUris ->
-                                viewModel.enrichVisibleItems(visibleUris)
-                            },
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(innerPadding)
-                        )
+                        if (isHome) {
+                            HomePageView(
+                                stateFlow = homeState,
+                                onItemClick = { uri -> shellViewModel.openFolder(uri) },
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(innerPadding)
+                            )
+                        } else {
+                            FileBrowserPane(
+                                state = state!!.value,
+                                layoutMode = layoutMode!!.value,
+                                sortKey = sortKey!!.value,
+                                forceShowAnimation = forceShowAnimation,
+                                pipelineTimer = viewModel!!.pipelineTimer,
+                                onReportDone = { viewModel!!.pipelineTimer = null },
+                                onItemClick = { item ->
+                                    if (item.isDirectory) {
+                                        val timer = PipelineTimer("navigateTo")
+                                        timer.mark("ui_click", detail = item.uri)
+                                        viewModel!!.pipelineTimer = timer
+                                        viewModel!!.navigateTo(item.uri)
+                                    }
+                                },
+                                onVisibleItemsChanged = { visibleUris ->
+                                    viewModel!!.enrichVisibleItems(visibleUris)
+                                },
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(innerPadding)
+                            )
+                        }
                     }
                 }
             }

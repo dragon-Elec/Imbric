@@ -52,16 +52,19 @@ class SidebarAggregator(
             )
         }
 
-        // 2. Volumes (Drives)
-        if (drives.isNotEmpty()) {
+        // 2. Volumes (Drives) — only mounted drives with a real mount URI are
+        //    navigable. Unmounted drives would produce empty-URI items that crash
+        //    on click (navigateTo("")), so they are excluded until mount UI exists.
+        val navigableDrives = drives.filter { it.isMounted && !it.mountUri.isNullOrBlank() }
+        if (navigableDrives.isNotEmpty()) {
             sections.add(
                 SidebarSection(
                     title = "Volumes",
-                    items = drives.map { drive ->
+                    items = navigableDrives.map { drive ->
                         SidebarItem(
                             label = drive.name,
                             iconName = drive.icon ?: "drive-harddisk",
-                            uri = drive.mountUri ?: "",
+                            uri = drive.mountUri!!,
                             isEjectable = drive.isMounted
                         )
                     }

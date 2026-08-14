@@ -67,7 +67,7 @@ fun AddressBar(
         ) { isEditing = true }
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).fillMaxWidth(),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
@@ -162,9 +162,9 @@ private fun BreadcrumbRow(uri: String, virtualUri: String, onSegmentClick: (Stri
     val scrollState = rememberScrollState()
     val virtualIfs = remember(virtualUri) { IfsUri(virtualUri) }
     
-    val segments = remember(virtualIfs, uri) { 
-        val result = mutableListOf<Triple<String, String, Boolean>>() // Name, URI, isFuture
-        var current = virtualIfs
+          val segments = remember(virtualIfs, uri) { 
+              val result = mutableListOf<Triple<String, String, Boolean>>() // Name, URI, isFuture
+              var current = virtualIfs
         while (true) {
             val name = if (current.isRootUri()) {
                 if (current.scheme == "file") "Root" else "${current.scheme}://"
@@ -256,7 +256,7 @@ private fun Crumb(name: String, isLastActive: Boolean, isFuture: Boolean, onClic
                 interactionSource = interactionSource,
                 indication = LocalIndication.current
             ) { onClick() }
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 6.dp, vertical = 2.dp)
     ) {
         Text(
             text = name,

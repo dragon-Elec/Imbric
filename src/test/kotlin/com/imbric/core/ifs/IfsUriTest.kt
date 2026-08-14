@@ -91,4 +91,69 @@ class IfsUriTest {
     fun testToString() {
         assertEquals("file:///path/to/file.txt", IfsUri("file:///path/to/file.txt").toString())
     }
+
+    // --- Regression: infinite parent-walk in breadcrumb (GUI freeze, one core at 100%) ---
+
+    @Test
+    fun testIsRootUriPlainPathRoot() {
+        // Plain "/" must be a root. Before the fix, isRootUri() only matched
+        // scheme URIs, so "/" never terminated the breadcrumb's parent walk,
+        // freezing the GUI thread at 100% CPU.
+        assertTrue(IfsUri("/").isRootUri())
+        assertTrue(IfsUri("file:///").isRootUri())
+        assertTrue(IfsUri("file://").isRootUri())
+        assertTrue(IfsUri("smb:///").isRootUri())
+        assertTrue(IfsUri("smb://").isRootUri())
+        assertFalse(IfsUri("/media/ray/data").isRootUri())
+        assertFalse(IfsUri("file:///path").isRootUri())
+    }
+
+    @Test
+    fun testParentWalkTerminatesAtPlainRoot() {
+        // Simulates the breadcrumb's while(true) loop: walk parents until root.
+        // Before the fix this looped forever for plain paths.
+        var current = IfsUri("/media/ray/data")
+        var steps = 0
+        while (!current.isRootUri()) {
+            current = current.parent
+            assertTrue(steps++ < 20, "Infinite parent walk: $current")
+        }
+        assertEquals("/", current.uriString)
+    }
+
+    @Test
+    fun testParentWalkTerminatesAtSchemeRoot() {
+        var current = IfsUri("file:///home/user/docs")
+        var steps = 0
+        while (!current.isRootUri()) {
+            current = current.parent
+            assertTrue(steps++ < 20, "Infinite parent walk: $current")
+        }
+        assertEquals("file:///", current.uriString)
+    }
+
+    @Test
+    fun testParentWalkTerminatesForTrashAndRecent() {
+        var current = IfsUri("trash:///some/item")
+        var steps = 0
+        while (!current.isRootUri()) {
+            current = current.parent
+            assertTrue(steps++ < 20, "Infinite parent walk: $current")
+        }
+
+        current = IfsUri("recent:///some/file.txt")
+        steps = 0
+        while (!current.isRootUri()) {
+            current = current.parent
+            assertTrue(steps++ < 20, "Infinite parent walk: $current")
+        }
+    }
+
+    @Test
+    fun testPlainRootParentAndJoinStayPlain() {
+        // Root "/" must not leak a scheme ("file:///") into plain-path URIs.
+        assertEquals("/", IfsUri("/").parent.uriString)
+        assertEquals("/child", IfsUri("/").join("child").uriString)
+        assertEquals("/a/b", IfsUri("/").join("a/b").uriString)
+    }
 }

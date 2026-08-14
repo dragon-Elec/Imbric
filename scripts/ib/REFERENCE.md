@@ -42,6 +42,8 @@ Cleans orphaned app processes before start. Ctrl+C triggers graceful terminate +
 | Command | Description |
 |---------|-------------|
 | `ib test` | All tests, filtered output (dots = pass, full = fail) |
+| `ib test --failed` | Re-runs only the test classes that failed in the previous run |
+| `ib test --rerun` | Force test re-execution bypassing Gradle cache (`--rerun-tasks`) |
 | `ib test --tests X` | Specific class/method |
 | `ib test --continue` | Don't stop on first failure |
 
@@ -50,6 +52,8 @@ Cleans orphaned app processes before start. Ctrl+C triggers graceful terminate +
 | Command | Description |
 |---------|-------------|
 | `ib compile` | Compile Kotlin sources (fast check) |
+| `ib compile -w` | Compile and display grouped, compressed compiler warnings (`--warnings`) |
+| `ib compile --rerun` | Force compile re-execution bypassing Gradle cache (`--rerun-tasks`) |
 | `ib compile --tests` | Also compile test sources |
 | `ib compile --full` | Full build (all tasks except test) |
 | `ib generate` | Regenerate GIO bindings (stops daemon first) |

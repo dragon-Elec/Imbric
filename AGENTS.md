@@ -21,8 +21,12 @@ The canonical way to build, run, and test the project is using the custom `ib` d
 
 ### Primary `ib` Commands:
 *   **`python3 scripts/ib.py compile`**: Fast Kotlin compilation check.
+*   **`python3 scripts/ib.py compile -w`**: Compiles and prints grouped, compressed compiler warnings (`--warnings`).
+*   **`python3 scripts/ib.py compile --rerun`**: Forces task re-execution bypassing Gradle cache (`--rerun-tasks`).
 *   **`python3 scripts/ib.py compile --tests`**: Compiles both main and test sources.
 *   **`python3 scripts/ib.py test`**: Runs the full test suite (prints `.` for passes, full stack traces for failures).
+*   **`python3 scripts/ib.py test --failed`**: Re-runs *only* the test classes that failed in the previous run (fast ~1s loop).
+*   **`python3 scripts/ib.py test --rerun`**: Forces full re-execution of tests bypassing Gradle cache.
 *   **`python3 scripts/ib.py test --tests "ClassName"`**: Runs a specific test class or method.
 *   **`python3 scripts/ib.py run`**: Launches the app in the foreground (automatically kills orphaned UI windows first).
 *   **`python3 scripts/ib.py dev`**: Launches the app in continuous build mode (auto-recompiles when you save files).

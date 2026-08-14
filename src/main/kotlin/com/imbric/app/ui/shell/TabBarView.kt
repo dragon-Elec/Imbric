@@ -84,9 +84,13 @@ private fun TabItem(
     onClick: () -> Unit,
     onClose: () -> Unit
 ) {
-    // Collect the URI from the pane's view model to show the folder name
-    val state by pane.viewModel.state.collectAsState()
-    val folderName = IfsUri(state.uri).name.ifEmpty { "Root" }
+    // Home panes show a fixed label; Folder panes show the folder name.
+    val folderName = if (pane.isHome) {
+        "Home"
+    } else {
+        val state by pane.viewModel!!.state.collectAsState()
+        IfsUri(state.uri).name.ifEmpty { "Root" }
+    }
 
     val backgroundColor = if (isSelected) {
         MaterialTheme.colorScheme.surfaceContainerHigh

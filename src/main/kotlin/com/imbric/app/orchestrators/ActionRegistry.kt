@@ -62,7 +62,7 @@ fun GlobalShortcutHandler(
 
             when (action) {
                 AppAction.NEW_TAB -> {
-                    shellViewModel.addTab("file:///")
+                    shellViewModel.addTab()
                     true
                 }
                 AppAction.CLOSE_TAB -> {

@@ -14,7 +14,10 @@ import org.gnome.gio.File
 import org.gnome.gio.FileQueryInfoFlags
 import org.gnome.glib.BookmarkFile
 import org.gnome.glib.GLib
+import mu.KotlinLogging
 import java.nio.file.Paths
+
+private val recentLogger = KotlinLogging.logger { }
 
 class GioRecentBackend : BackendContract, RecentContract {
     override val scheme: String = "recent"
@@ -45,6 +48,7 @@ class GioRecentBackend : BackendContract, RecentContract {
         val uris = bookmarkFile.uris ?: return emptyList()
         val queryAttributes = "standard::*,time::*,unix::*,owner::*,access::*,trash::*"
         val results = mutableListOf<FileEntry>()
+        val skipped = mutableListOf<String>()
 
         for (itemUri in uris) {
             if (itemUri == null) continue
@@ -54,9 +58,11 @@ class GioRecentBackend : BackendContract, RecentContract {
                 val info = gfile.queryInfo(queryAttributes, FileQueryInfoFlags.NONE, null)
                 results.add(GioTypeMappers.toImbricFileInfo(gfile, info, "recent"))
             } catch (e: Exception) {
-                GLib.log("Imbric", org.gnome.glib.LogLevelFlags.LEVEL_DEBUG,
-                    "Skipping missing recent file $itemUri: ${e.message}")
+                skipped += itemUri
             }
+        }
+        if (skipped.isNotEmpty()) {
+            recentLogger.info { "Recent files: loaded ${results.size}, skipped ${skipped.size} missing entries" }
         }
         return results
     }

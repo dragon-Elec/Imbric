@@ -126,6 +126,7 @@ fun main(args: Array<String>) {
             ImbricTheme {
                 ImbricApp(
                     registry = dirStateRegistry,
+                    backendRegistry = ImbricDesktop.registry,
                     deviceManager = deviceManager,
                     bookmarkList = bookmarkList
                 )

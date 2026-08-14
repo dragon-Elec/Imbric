@@ -2,6 +2,8 @@ import subprocess
 import time
 import sys
 import re
+import xml.etree.ElementTree as ET
+from pathlib import Path
 from ..daemon import PROJECT_ROOT
 from ..filter import OutputFilter
 
@@ -17,18 +19,54 @@ _IMPORTANT = [
     re.compile(r"^> Task :test(?!Classes)"),
 ]
 
-# Use shared noise patterns from OutputFilter
 _GRADLE_NOISE = OutputFilter.NOISE_PATTERNS
+
+def _get_previously_failed_test_classes() -> list[str]:
+    """Scans build/test-results/test/ for XML test reports with failures."""
+    test_results_dir = PROJECT_ROOT / "build" / "test-results" / "test"
+    if not test_results_dir.exists():
+        return []
+
+    failed_classes = set()
+    for xml_file in test_results_dir.glob("TEST-*.xml"):
+        try:
+            tree = ET.parse(xml_file)
+            root = tree.getroot()
+            for testcase in root.findall("testcase"):
+                if testcase.find("failure") is not None or testcase.find("error") is not None:
+                    classname = testcase.get("classname", "")
+                    if classname:
+                        # Extract simple classname if package-prefixed
+                        simple_name = classname.split(".")[-1]
+                        failed_classes.add(simple_name)
+        except Exception:
+            continue
+    return sorted(failed_classes)
 
 def register(subparsers):
     p = subparsers.add_parser("test", help="Run tests with clean, concise filtering")
     p.add_argument("--tests", type=str, help="Run specific test class or method (e.g. 'GioBackendTest')")
+    p.add_argument("--failed", action="store_true", help="Re-run only the test classes that failed in the previous run")
+    p.add_argument("--rerun", action="store_true", help="Force test re-execution bypassing Gradle cache")
     p.add_argument("--continue", dest="continue_on_fail", action="store_true", help="Continue running tests even if some fail")
 
 def run(args):
     gradle_cmd = ["./gradlew", "test", "--console=plain"]
-    if args.tests:
+
+    if args.failed:
+        failed_classes = _get_previously_failed_test_classes()
+        if not failed_classes:
+            print("No failed tests recorded from previous run.")
+            return
+        print(f"Re-running {len(failed_classes)} previously failed test classes: {', '.join(failed_classes)}\n")
+        for cls in failed_classes:
+            gradle_cmd.extend(["--tests", cls])
+    elif args.tests:
         gradle_cmd.extend(["--tests", args.tests])
+
+    if args.rerun:
+        gradle_cmd.append("--rerun-tasks")
+
     if args.continue_on_fail:
         gradle_cmd.append("--continue")
 

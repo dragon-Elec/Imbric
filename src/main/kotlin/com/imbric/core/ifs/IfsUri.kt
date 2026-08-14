@@ -12,7 +12,13 @@ value class IfsUri(val uriString: String) {
     val isNative: Boolean
         get() = scheme == "file" || scheme == "trash" || scheme == "recent"
 
-    fun isRootUri(): Boolean = uriString.matches(Regex("^\\w+:/{2,3}$"))
+    fun isRootUri(): Boolean {
+        // Scheme-based root: file:///, smb:///, etc.
+        if (ROOT_URI_REGEX.matches(uriString)) return true
+        // Plain path root: "/" or "" (empty after trim)
+        val trimmed = uriString.trimEnd('/')
+        return trimmed.isEmpty() || trimmed == "/"
+    }
 
     val name: String
         get() {
@@ -24,7 +30,10 @@ value class IfsUri(val uriString: String) {
 
     val parent: IfsUri
         get() {
-            if (isRootUri()) return IfsUri("$scheme:///")
+            if (isRootUri()) {
+                // Plain path root "/" stays "/"; scheme roots become "$scheme:///"
+                return if (uriString.contains("://")) IfsUri("$scheme:///") else IfsUri("/")
+            }
             val cleanUri = uriString.trimEnd('/')
             val schemeEnd = cleanUri.indexOf("://")
             val lastSlash = cleanUri.lastIndexOf('/')
@@ -52,7 +61,14 @@ value class IfsUri(val uriString: String) {
         }
 
     fun join(child: String): IfsUri {
-        if (isRootUri()) return IfsUri("$scheme:///${child.trimStart('/')}")
+        if (isRootUri()) {
+            // Plain path root "/" joins as "/child"; scheme roots join as "$scheme:///child"
+            return if (uriString.contains("://")) {
+                IfsUri("$scheme:///${child.trimStart('/')}")
+            } else {
+                IfsUri("/${child.trimStart('/')}")
+            }
+        }
         val base = uriString.trimEnd('/')
         val safeChild = child.trimStart('/')
         return IfsUri("$base/$safeChild")
@@ -61,6 +77,12 @@ value class IfsUri(val uriString: String) {
     fun renameTarget(newName: String): IfsUri = parent.join(newName)
 
     override fun toString(): String = uriString
+
+    private companion object {
+        // Compiled once at class init — avoids recompiling on every isRootUri() call.
+        // Pattern matches scheme:// or scheme:/// (root URIs).
+        val ROOT_URI_REGEX = Regex("^\\w+:/{2,3}$")
+    }
 }
 
 val String.uriName: String get() = IfsUri(this).name

@@ -17,7 +17,7 @@ import kotlin.uuid.Uuid
 class ShellViewModel(
     private val registry: DirStateRegistry,
     private val shellScope: CoroutineScope,
-    initialUri: String = "file:///"
+    initialTab: TabType = TabType.Home
 ) {
     private val _tabs = MutableStateFlow<List<PaneContext>>(emptyList())
     val tabs: StateFlow<List<PaneContext>> = _tabs.asStateFlow()
@@ -27,20 +27,49 @@ class ShellViewModel(
 
     init {
         // Start with one default tab
-        addTab(initialUri)
+        addTab(initialTab)
     }
 
     /**
      * Opens a new tab and makes it active.
+     * Defaults to a [TabType.Home] dashboard tab.
      */
-    fun addTab(uri: String) {
+    fun addTab(type: TabType = TabType.Home) {
         val newPane = PaneContext(
-            initialUri = uri,
+            type = type,
             registry = registry,
             parentScope = shellScope
         )
         _tabs.update { it + newPane }
         _activePaneId.value = newPane.id
+    }
+
+    /**
+     * Navigates the active pane to a folder.
+     * Folder panes navigate in place (preserving their back stack);
+     * Home panes convert into a fresh Folder pane.
+     */
+    fun openFolder(uri: String) {
+        val currentTabs = _tabs.value
+        val activeIndex = currentTabs.indexOfFirst { it.id == _activePaneId.value }
+        if (activeIndex == -1) return
+
+        val old = currentTabs[activeIndex]
+        val vm = old.viewModel
+        if (vm != null) {
+            vm.navigateTo(uri)
+            return
+        }
+
+        // Home pane → convert to a Folder pane (same tab id, fresh lifecycle)
+        old.destroy()
+        val folderPane = PaneContext(
+            id = old.id,
+            type = TabType.Folder(uri),
+            registry = registry,
+            parentScope = shellScope
+        )
+        _tabs.update { tabs -> tabs.mapIndexed { i, pane -> if (i == activeIndex) folderPane else pane } }
     }
 
     /**
