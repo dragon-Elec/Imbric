@@ -83,7 +83,7 @@ private fun SidebarItemRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 2.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(MaterialTheme.shapes.small)
             .background(backgroundColor)
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 8.dp)

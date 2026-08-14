@@ -113,7 +113,7 @@ fun FileList(
             style = ScrollbarStyle(
                 minimalHeight = 16.dp,
                 thickness = 8.dp,
-                shape = RoundedCornerShape(4.dp),
+                shape = MaterialTheme.shapes.extraSmall,
                 hoverDurationMillis = 300,
                 unhoverColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                 hoverColor = MaterialTheme.colorScheme.outline
@@ -173,7 +173,7 @@ fun FileGrid(
             style = ScrollbarStyle(
                 minimalHeight = 16.dp,
                 thickness = 8.dp,
-                shape = RoundedCornerShape(4.dp),
+                shape = MaterialTheme.shapes.extraSmall,
                 hoverDurationMillis = 300,
                 unhoverColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                 hoverColor = MaterialTheme.colorScheme.outline
@@ -194,7 +194,7 @@ fun FileRow(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(MaterialTheme.shapes.small)
             .background(if (isHovered) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
             .clickable(
                 interactionSource = interactionSource,
@@ -250,7 +250,7 @@ fun FileGridCell(
         modifier = modifier
             .height(130.dp)
             .padding(4.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(MaterialTheme.shapes.medium)
             .background(if (isHovered) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
             .clickable(
                 interactionSource = interactionSource,

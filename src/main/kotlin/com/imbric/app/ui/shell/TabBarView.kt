@@ -109,7 +109,7 @@ private fun TabItem(
         modifier = Modifier
             .padding(horizontal = 4.dp)
             .height(36.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(MaterialTheme.shapes.small)
             .background(backgroundColor)
             .clickable(onClick = onClick)
             .padding(start = 12.dp, end = 4.dp)

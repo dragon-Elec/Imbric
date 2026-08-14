@@ -3,6 +3,7 @@ package com.imbric.app.ui.theme
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
 import com.materialkolor.DynamicMaterialTheme
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
@@ -20,6 +21,7 @@ import com.materialkolor.dynamiccolor.ColorSpec
  *
  * @param content The composable content to theme.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImbricTheme(
     style: PaletteStyle = PaletteStyle.Vibrant,
@@ -43,8 +45,14 @@ fun ImbricTheme(
         style = style,
         specVersion = ColorSpec.SpecVersion.SPEC_2025,
         animate = true, // Smoothly animate theme changes
-        typography = Typography(),
-        shapes = Shapes(),
-        content = content
-    )
+        typography = DesktopTypography,
+        shapes = DesktopShapes,
+    ) {
+        // Enforce desktop interactive component sizing across the entire app.
+        // Drops Android's 48dp minimum touch-target enforcement for all M3 components.
+        CompositionLocalProvider(
+            LocalMinimumInteractiveComponentSize provides Dp.Unspecified,
+            content = content
+        )
+    }
 }
