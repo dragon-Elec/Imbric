@@ -34,7 +34,7 @@ open class InMemoryBackend(
     val fs = mutableMapOf<String, FileInfo>()
     val trashFs = mutableMapOf<String, FileInfo>() // For simulating trash
     val failingUris = mutableSetOf<String>()
-    
+
     // Thumbnail support for testing
     private val thumbnailPaths = mutableMapOf<String, String>()
     private val thumbnailFailures = mutableSetOf<String>()
@@ -68,7 +68,20 @@ open class InMemoryBackend(
 
     override suspend fun copy(job: FileJob): Flow<TransferProgress> = flow {
         val srcUri = job.source.removeSuffix("/")
-        val destUri = job.dest.removeSuffix("/")
+        var destUri = job.dest.removeSuffix("/")
+        if (job.autoRename && fs.containsKey(destUri)) {
+            val parent = destUri.substringBeforeLast("/")
+            val name = destUri.substringAfterLast("/")
+            val baseName = if ("." in name) name.substringBeforeLast(".") else name
+            val ext = if ("." in name) "." + name.substringAfterLast(".") else ""
+            var count = 1
+            var candidate = "$parent/$baseName ($count)$ext"
+            while (fs.containsKey(candidate)) {
+                count++
+                candidate = "$parent/$baseName ($count)$ext"
+            }
+            destUri = candidate
+        }
         copyRecursive(srcUri, destUri, job.id, job.overwrite)
     }
 
@@ -185,7 +198,7 @@ open class InMemoryBackend(
     override suspend fun isTrashEmpty(uri: String): Boolean = trashFs.isEmpty()
 
     override suspend fun createFolder(parentUri: String, name: String): Result<String> {
-        val uri = "${parentUri.removeSuffix("/")}/$name"
+        val uri = if (parentUri.endsWith("://")) "$parentUri$name" else "${parentUri.removeSuffix("/")}/$name"
         fs[uri] = FileInfo(
             path = uri, uri = uri, name = name, displayName = name,
             isDirectory = true, isSymlink = false, symlinkTarget = null,
@@ -196,7 +209,7 @@ open class InMemoryBackend(
     }
 
     override suspend fun createFile(parentUri: String, name: String): Result<String> {
-        val uri = "${parentUri.removeSuffix("/")}/$name"
+        val uri = if (parentUri.endsWith("://")) "$parentUri$name" else "${parentUri.removeSuffix("/")}/$name"
         fs[uri] = FileInfo(
             path = uri, uri = uri, name = name, displayName = name,
             isDirectory = false, isSymlink = false, symlinkTarget = null,
@@ -210,7 +223,7 @@ open class InMemoryBackend(
         val srcUri = uri.removeSuffix("/")
         val info = fs.remove(srcUri) ?: return Result.failure(Exception("Not found"))
         val parent = srcUri.substringBeforeLast("/")
-        val newUri = "$parent/$newName"
+        val newUri = if (parent.endsWith("://")) "$parent$newName" else "$parent/$newName"
         fs[newUri] = info.copy(uri = newUri, path = newUri, name = newName, displayName = newName)
         return Result.success(newUri)
     }
@@ -309,6 +322,11 @@ open class InMemoryBackend(
                 if (!matchesText) continue
                 val matchesMime = query.mimeFilter == null || info.mimeType.startsWith(query.mimeFilter)
                 if (!matchesMime) continue
+                val matchesMinSize = query.minSize == null || info.size >= query.minSize
+                val matchesMaxSize = query.maxSize == null || info.size <= query.maxSize
+                val matchesModifiedAfter = query.modifiedAfter == null || (info.modifiedTime?.toEpochMilliseconds() ?: 0L) >= query.modifiedAfter
+                val matchesModifiedBefore = query.modifiedBefore == null || (info.modifiedTime?.toEpochMilliseconds() ?: 0L) <= query.modifiedBefore
+                if (!matchesMinSize || !matchesMaxSize || !matchesModifiedAfter || !matchesModifiedBefore) continue
                 all.add(info)
             }
         }

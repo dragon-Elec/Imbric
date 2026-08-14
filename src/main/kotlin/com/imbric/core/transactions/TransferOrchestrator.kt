@@ -28,14 +28,7 @@ class TransferOrchestrator(
         val session = PlanningSession(mode, policy, onManualConflict)
         val initialDesc = "Batch $mode to $destDir"
 
-        // 1. Parallel Pre-flight Planning
-        withContext(Dispatchers.IO) {
-            sources.map { src ->
-                async {
-                    session.planOperation(src, destDir)
-                }
-            }.awaitAll()
-        }
+
 
         // Surface warning if trash mode skipped files due to unsupported filesystem
         val desc = if (mode == "trash" && session.skippedUnsupported > 0) {
@@ -45,7 +38,7 @@ class TransferOrchestrator(
         val tid = transactionManager.startTransaction(desc)
 
         // 1. Parallel Pre-flight Planning
-        withContext(Dispatchers.IO) {
+        coroutineScope {
             sources.map { src ->
                 async {
                     session.planOperation(src, destDir)

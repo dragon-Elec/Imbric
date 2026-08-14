@@ -110,7 +110,7 @@ class FileBrowserViewModel(
         val oldUri = _currentUri.value
         if (oldUri != uri) {
             pipelineTimer?.mark("vm_navigate_to", detail = uri)
-            registry.getOrCreate(oldUri).destroy()
+            registry.getOrCreate(oldUri).stop()
             _backStack.update { it + oldUri }
             _forwardStack.value = emptyList()
             
@@ -127,7 +127,7 @@ class FileBrowserViewModel(
         if (back.isNotEmpty()) {
             val oldUri = _currentUri.value
             val targetUri = back.last()
-            registry.getOrCreate(oldUri).destroy()
+            registry.getOrCreate(oldUri).stop()
             _backStack.value = back.dropLast(1)
             _forwardStack.update { listOf(oldUri) + it }
             
@@ -144,7 +144,7 @@ class FileBrowserViewModel(
         if (forward.isNotEmpty()) {
             val oldUri = _currentUri.value
             val targetUri = forward.first()
-            registry.getOrCreate(oldUri).destroy()
+            registry.getOrCreate(oldUri).stop()
             _forwardStack.value = forward.drop(1)
             _backStack.update { it + oldUri }
             

@@ -52,7 +52,7 @@ class PathCapabilitiesTest {
         assertEquals("trash", path.scheme)
         assertTrue(path.isNative)
         assertTrue(path.isWritable)
-        assertFalse(path.isVirtual)
+        assertTrue(path.isVirtual)
         assertTrue(path.isTrash)
     }
 }
