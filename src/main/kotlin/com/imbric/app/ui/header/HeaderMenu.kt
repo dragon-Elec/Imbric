@@ -6,11 +6,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
+import com.imbric.app.ui.theme.ThemeController
 
 /**
  * Top header dropdown menu containing window-level actions (Home, Settings, animation toggles).
@@ -55,6 +57,27 @@ fun HeaderMenu(
                 onClick = {
                     isMenuExpanded = false
                     onGoHome()
+                }
+            )
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        text = "Theme & Dynamic Colors",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Palette,
+                        contentDescription = "Theme Settings",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                modifier = Modifier.heightIn(min = 32.dp),
+                onClick = {
+                    isMenuExpanded = false
+                    ThemeController.togglePanel()
                 }
             )
             DropdownMenuItem(

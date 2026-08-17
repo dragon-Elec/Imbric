@@ -24,17 +24,24 @@ import com.materialkolor.dynamiccolor.ColorSpec
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImbricTheme(
-    style: PaletteStyle = PaletteStyle.Vibrant,
     content: @Composable () -> Unit
 ) {
     // Observe system dark mode preference
-    val isDark by ThemeDetector.observeDarkMode().collectAsState(initial = false)
+    val isDarkSystem by ThemeDetector.observeDarkMode().collectAsState(initial = false)
 
     // Observe accent color from GTK theme name
     val accentSeed by ThemeDetector.observeAccentColor().collectAsState(initial = null)
 
-    // Default Material 3 baseline seed (purple) if no system accent is found
-    val seedColor = accentSeed?.let { Color(it) } ?: Color(0xFF6750A4)
+    // Observe live theme configuration
+    val config by ThemeController.config.collectAsState()
+
+    val isDark = when (config.mode) {
+        ThemeMode.SYSTEM -> isDarkSystem
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+
+    val seedColor = config.customSeed ?: accentSeed?.let { Color(it) } ?: Color(0xFF6750A4)
 
     // DynamicMaterialTheme uses Google's Material Color Utilities (HCT color science)
     // to generate the full 30+ color tonal palette (primary, secondary, surface, etc.)
@@ -42,8 +49,10 @@ fun ImbricTheme(
     DynamicMaterialTheme(
         seedColor = seedColor,
         isDark = isDark,
-        style = style,
-        specVersion = ColorSpec.SpecVersion.SPEC_2025,
+        isAmoled = config.isAmoled,
+        style = config.style,
+        specVersion = config.specVersion,
+        contrastLevel = config.contrastLevel,
         animate = true, // Smoothly animate theme changes
         typography = DesktopTypography,
         shapes = DesktopShapes,

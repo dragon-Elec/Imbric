@@ -1,7 +1,6 @@
 package com.imbric.app.ui.components.animations
 
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -10,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.luminance
 import kotlinx.coroutines.delay
 
 enum class RevealState { HIDDEN, LOADING, REVEALING }
@@ -69,7 +69,7 @@ fun WipeReveal(
         )
     )
 
-    val isDark = isSystemInDarkTheme()
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val curtainColor = if (isDark) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant
     val shimmerHighlight = if (isDark) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
 

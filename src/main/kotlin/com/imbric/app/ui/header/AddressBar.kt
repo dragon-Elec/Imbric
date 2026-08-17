@@ -1,8 +1,8 @@
 package com.imbric.app.ui.header
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.BorderStroke
@@ -81,17 +81,26 @@ fun AddressBar(
             Spacer(modifier = Modifier.width(8.dp))
 
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                if (isEditing) {
-                    AddressInput(
-                        uri = uri,
-                        onSubmit = { newUri -> 
-                            onSegmentClick(newUri)
-                            isEditing = false 
-                        },
-                        onCancel = { isEditing = false }
-                    )
-                } else {
-                    BreadcrumbRow(uri = uri, virtualUri = virtualUri, onSegmentClick = onSegmentClick)
+                AnimatedContent(
+                    targetState = isEditing,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(120, easing = LinearOutSlowInEasing))
+                            .togetherWith(fadeOut(animationSpec = tween(90, easing = FastOutLinearInEasing)))
+                    },
+                    label = "AddressBarTransition"
+                ) { editing ->
+                    if (editing) {
+                        AddressInput(
+                            uri = uri,
+                            onSubmit = { newUri -> 
+                                onSegmentClick(newUri)
+                                isEditing = false 
+                            },
+                            onCancel = { isEditing = false }
+                        )
+                    } else {
+                        BreadcrumbRow(uri = uri, virtualUri = virtualUri, onSegmentClick = onSegmentClick)
+                    }
                 }
             }
         }
@@ -134,7 +143,10 @@ private fun AddressInput(
                         }
                     } else false
                 },
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 14.sp
+            ),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),

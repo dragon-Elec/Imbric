@@ -21,6 +21,8 @@ import com.imbric.app.ui.header.TopHeader
 import com.imbric.app.ui.LayoutMode
 import com.imbric.app.ui.home.HomePageView
 import com.imbric.app.ui.pane.FileBrowserPane
+import com.imbric.app.ui.theme.ThemeController
+import com.imbric.app.ui.theme.ThemeSettingsPanel
 import com.imbric.app.viewmodel.ShellViewModel
 import kotlin.uuid.ExperimentalUuidApi
 import com.imbric.core.ifs.backends.gio.support.PipelineTimer
@@ -134,6 +136,21 @@ fun MainWindow(
                                     .padding(innerPadding)
                             )
                         }
+                    }
+                }
+
+                // Right-Side Inspector Drawer for Live Theme Tweaking
+                val isThemePanelOpen by ThemeController.isPanelOpen.collectAsState()
+                AnimatedVisibility(
+                    visible = isThemePanelOpen,
+                    enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+                    exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+                ) {
+                    Row(modifier = Modifier.fillMaxHeight()) {
+                        VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        ThemeSettingsPanel(
+                            onClose = { ThemeController.setPanelOpen(false) }
+                        )
                     }
                 }
             }
