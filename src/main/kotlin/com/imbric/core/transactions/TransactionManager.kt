@@ -202,19 +202,13 @@ class TransactionManager(
      * stalled subscriber can make `tryEmit` fail with false, which the old code ignored.
      * A suspending `emit` waits for the subscribers instead of dropping. Fast path first:
      * when the buffer has room the terminal lands synchronously with no coroutine at all;
-     * the suspending fallback covers the stalled-subscriber case. And if the manager scope
-     * itself is already cancelled (app teardown racing a finishing worker), the launch
-     * would no-op — so a final synchronous `tryEmit` runs regardless as last resort.
+     * the suspending fallback covers the stalled-subscriber case. If the manager scope is
+     * itself cancelled (teardown racing a finisher), the launch no-ops and the event is
+     * lost — accepted: buffer-full plus a dead scope means no waiter is left to collect.
      */
     private fun emitTerminal(event: TransactionEvent) {
         if (_events.tryEmit(event)) return
-        try {
-            scope.launch { _events.emit(event) }
-        } catch (_: IllegalStateException) {
-            // Scope already closed: launch() throws immediately. The event is already lost
-            // (buffer was full on the fast path), so there is nothing further to do — this
-            // catch exists so a finishing worker can't crash teardown, not to deliver.
-        }
+        scope.launch { _events.emit(event) }
     }
 
     private fun updateOperationStatus(
