@@ -26,11 +26,19 @@ import com.materialkolor.dynamiccolor.ColorSpec
 fun ImbricTheme(
     content: @Composable () -> Unit
 ) {
+    // Hoisted: ThemeDetector.observeDarkMode()/observeAccentColor() build a NEW Flow on
+    // every call, and each collect re-runs the builder's onStart — which connects a
+    // GObject settings signal and re-reads GTK CSS from disk. Calling them inline
+    // would re-subscribe on every recomposition (per drag pixel on the contrast
+    // slider). `remember` keeps one flow per composition for the whole app.
+    val darkModeFlow = remember { ThemeDetector.observeDarkMode() }
+    val accentFlow = remember { ThemeDetector.observeAccentColor() }
+
     // Observe system dark mode preference
-    val isDarkSystem by ThemeDetector.observeDarkMode().collectAsState(initial = false)
+    val isDarkSystem by darkModeFlow.collectAsState(initial = false)
 
     // Observe accent color from GTK theme name
-    val accentSeed by ThemeDetector.observeAccentColor().collectAsState(initial = null)
+    val accentSeed by accentFlow.collectAsState(initial = null)
 
     // Observe live theme configuration
     val config by ThemeController.config.collectAsState()

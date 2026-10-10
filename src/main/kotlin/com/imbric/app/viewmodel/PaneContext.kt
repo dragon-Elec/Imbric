@@ -44,6 +44,14 @@ class PaneContext(
      * pane's pin on the directory it was viewing. Without the release the
      * DirState — its GFile monitor, enrichment workers and full listing —
      * would stay alive under the window scope until LRU eviction.
+     *
+     * The pipeline timer is cleared last. [FileBrowserViewModel.pipelineTimer]
+     * writes through to the *shared* [DirStateRegistry], so a timer installed by
+     * a pane that is closed mid-navigation would otherwise stay stamped on every
+     * DirState and keep collecting marks from all remaining tabs. The normal
+     * clear path (`onReportDone`) only ever runs for the pane that is composed —
+     * i.e. the active one — so a closed or navigated-away pane never reaches it.
+     * `viewModel` is null for Home panes, hence the safe call.
      */
     fun destroy() {
         paneScope.cancel("PaneContext $id was closed")
@@ -51,5 +59,6 @@ class PaneContext(
         // emission may not have been collected yet, in which case currentUri names a
         // URI this pane never pinned (leaking the real one) or never collected.
         viewModel?.releasePin()
+        viewModel?.pipelineTimer = null
     }
 }

@@ -25,6 +25,7 @@ import com.imbric.app.ui.theme.ThemeController
 import com.imbric.app.ui.theme.ThemeSettingsPanel
 import com.imbric.app.viewmodel.ShellViewModel
 import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 import com.imbric.core.ifs.backends.gio.support.PipelineTimer
 import com.imbric.app.aggregators.HomeUiState
 import kotlinx.coroutines.flow.StateFlow
@@ -38,9 +39,26 @@ fun MainWindow(
 ) {
     val tabs by shellViewModel.tabs.collectAsState()
     val activePaneId by shellViewModel.activePaneId.collectAsState()
-    val activePane = tabs.find { it.id == activePaneId } ?: return
 
     val stateHolder = rememberSaveableStateHolder()
+
+    // SaveableStateHolderImpl only ever drops a registry through removeState(key) —
+    // nothing prunes it when a pane goes away. Without this, every tab UUID ever
+    // routed through SaveableStateProvider below retains its SaveableStateRegistry
+    // (scroll position, lazy-list keys, …) for the lifetime of the window.
+    // We track which pane ids have been routed so a closed pane's key can be removed.
+    val seenPaneIds = remember { mutableSetOf<Uuid>() }
+    LaunchedEffect(tabs, activePaneId) {
+        val live = tabs.map { it.id }.toSet()
+        val stale = seenPaneIds - live
+        seenPaneIds.clear()
+        seenPaneIds.addAll(live)
+        stale.forEach { id ->
+            if (id != activePaneId) stateHolder.removeState(id)
+        }
+    }
+
+    val activePane = tabs.find { it.id == activePaneId } ?: return
     val focusManager = LocalFocusManager.current
 
     CompositionLocalProvider(LocalActivePane provides activePane) {
@@ -54,7 +72,18 @@ fun MainWindow(
         var forceShowAnimation by remember { mutableStateOf(false) }
         var addressBarBounds by remember { mutableStateOf<Rect?>(null) }
 
-        GlobalShortcutHandler(shellViewModel = shellViewModel) {
+        // The pointerInput block below is keyed on Unit, so it captures whatever is in
+        // scope when it is created and never restarts. Reading addressBarBounds directly
+        // there would freeze the Rect at creation time. rememberUpdatedState gives the
+        // block a stable State handle whose .value always yields the current bounds, so
+        // click-outside-to-clear-focus works on every event instead of only the first.
+        val currentAddressBarBounds = rememberUpdatedState(addressBarBounds)
+
+        GlobalShortcutHandler(
+            shellViewModel = shellViewModel,
+            tabs = tabs,
+            activePaneId = activePaneId
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxSize()
@@ -64,7 +93,7 @@ fun MainWindow(
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
                                 if (event.type == PointerEventType.Press) {
                                     val pressPosition = event.changes.first().position
-                                    val bounds = addressBarBounds
+                                    val bounds = currentAddressBarBounds.value
                                     if (bounds != null && !bounds.contains(pressPosition)) {
                                         focusManager.clearFocus()
                                     }
@@ -91,7 +120,11 @@ fun MainWindow(
                             uri = state?.value?.uri ?: "",
                             virtualUri = state?.value?.virtualUri ?: "",
                             onNavigate = { uri -> viewModel!!.navigateTo(uri) },
-                            onAddressBarPositioned = { bounds -> addressBarBounds = bounds },
+                            // Guard the write: onGloballyPositioned fires on every layout
+                            // pass, and assigning an equal Rect still schedules recomposition.
+                            onAddressBarPositioned = { bounds ->
+                                if (addressBarBounds != bounds) addressBarBounds = bounds
+                            },
                             layoutMode = layoutMode?.value ?: LayoutMode.GRID,
                             onToggleLayout = { viewModel!!.toggleLayoutMode() },
                             onGoHome = { shellViewModel.openHome() },
