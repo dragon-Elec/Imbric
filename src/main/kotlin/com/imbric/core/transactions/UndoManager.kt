@@ -21,6 +21,25 @@ class UndoManager(
     private val transactionManager: TransactionManager,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) {
+    private companion object {
+        /**
+         * Upper bound on entries kept per history stack. A Transaction retains its operations
+         * and their UndoAction payloads (which can be large: whole URI lists for a batch
+         * transfer), so an unbounded stack is a slow leak on a long-lived session. When the
+         * cap is hit the oldest entries are discarded, which only loses undo/redo depth —
+         * it never corrupts state, since a Transaction here is only ever read.
+         */
+        const val MAX_STACK_SIZE = 100
+
+        /**
+         * Failsafe for the undo/redo Finished-event wait. A well-behaved transaction always
+         * emits Finished; this bounds the wait so a lost event degrades into "push the
+         * transaction back onto its stack" instead of parking the coroutine forever with
+         * `busy` held true, which would disable undo/redo permanently.
+         */
+        const val UNDO_TIMEOUT_MS = 60_000L
+    }
+
     private val undoStack: Deque<Transaction> = ArrayDeque()
     private val redoStack: Deque<Transaction> = ArrayDeque()
     private val busy = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -60,9 +79,21 @@ class UndoManager(
     // --- History Commit ---
     fun commitTransaction(tx: Transaction) {
         if (!tx.isReversible) return
-        undoStack.push(tx)
+        pushBounded(undoStack, tx)
         redoStack.clear()
         onStackChanged?.invoke(canUndo(), canRedo())
+    }
+
+    /**
+     * Pushes onto [stack] and trims the oldest entries from the tail until the stack is back
+     * within [MAX_STACK_SIZE]. ArrayDeque pushes at the head, so the tail holds the oldest
+     * entries and [Deque.removeLast] drops exactly those.
+     */
+    private fun pushBounded(stack: Deque<Transaction>, tx: Transaction) {
+        stack.push(tx)
+        while (stack.size > MAX_STACK_SIZE) {
+            stack.removeLast()
+        }
     }
 
     // --- Undo ---
@@ -127,21 +158,35 @@ class UndoManager(
                     )
                 }
                 
-                val finishedFlow = transactionManager.events
-                    .filter { it.tid == tid }
-                    .filterIsInstance<TransactionEvent.Finished>()
+                // The Finished event must be captured, not awaited cold: `events` has replay = 0,
+                // so an emission that happens before anyone subscribes is dropped forever.
+                // Arm an UNDISPATCHED collector before committing so the subscription is live,
+                // and hand the value over through a Deferred instead of a terminal `first()`.
+                val finalEvent = CompletableDeferred<TransactionEvent.Finished>()
+                val waiter = launch(start = CoroutineStart.UNDISPATCHED) {
+                    transactionManager.events
+                        .filter { it.tid == tid }
+                        .filterIsInstance<TransactionEvent.Finished>()
+                        .first {
+                            finalEvent.complete(it)
+                            true
+                        }
+                }
 
                 transactionManager.commitTransaction(tid)
 
-                val finalEvent = finishedFlow.first()
+                val final = withTimeoutOrNull(UNDO_TIMEOUT_MS) { finalEvent.await() }
+                // No-op once the collector already completed the Deferred; on timeout this is
+                // what releases the still-suspended collector instead of leaking it.
+                waiter.cancel()
 
-                if (finalEvent.status == TransactionStatus.COMPLETED) {
-                    redoStack.push(tx)
+                if (final != null && final.status == TransactionStatus.COMPLETED) {
+                    pushBounded(redoStack, tx)
                 } else {
-                    undoStack.push(tx)
+                    pushBounded(undoStack, tx)
                 }
             } catch (e: Exception) {
-                undoStack.push(tx)
+                pushBounded(undoStack, tx)
             } finally {
                 setBusy(false)
                 onStackChanged?.invoke(canUndo(), canRedo())
@@ -171,15 +216,24 @@ class UndoManager(
                     )
                 }
 
-                val finishedFlow = transactionManager.events
-                    .filter { it.tid == tid }
-                    .filterIsInstance<TransactionEvent.Finished>()
+                // Same pre-armed collector pattern as undo() — see the comment there.
+                val finalEvent = CompletableDeferred<TransactionEvent.Finished>()
+                val waiter = launch(start = CoroutineStart.UNDISPATCHED) {
+                    transactionManager.events
+                        .filter { it.tid == tid }
+                        .filterIsInstance<TransactionEvent.Finished>()
+                        .first {
+                            finalEvent.complete(it)
+                            true
+                        }
+                }
 
                 transactionManager.commitTransaction(tid)
 
-                val finalEvent = finishedFlow.first()
+                val final = withTimeoutOrNull(UNDO_TIMEOUT_MS) { finalEvent.await() }
+                waiter.cancel()
 
-                if (finalEvent.status == TransactionStatus.COMPLETED) {
+                if (final != null && final.status == TransactionStatus.COMPLETED) {
                     // Capture fresh undo actions generated during redo execution
                     tx.ops.forEachIndexed { idx, op ->
                         val freshOp = transactionManager.findOperation(tid, op.jobId)
@@ -187,12 +241,12 @@ class UndoManager(
                             tx.ops[idx] = op.copy(undoAction = freshOp.undoAction)
                         }
                     }
-                    undoStack.push(tx)
+                    pushBounded(undoStack, tx)
                 } else {
-                    redoStack.push(tx)
+                    pushBounded(redoStack, tx)
                 }
             } catch (e: Exception) {
-                redoStack.push(tx)
+                pushBounded(redoStack, tx)
             } finally {
                 setBusy(false)
                 onStackChanged?.invoke(canUndo(), canRedo())

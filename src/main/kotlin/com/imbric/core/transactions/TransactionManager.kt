@@ -8,6 +8,7 @@ import com.imbric.core.transactions.models.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.util.concurrent.ConcurrentHashMap
+import java.util.ArrayDeque
 import kotlin.uuid.Uuid
 import kotlin.uuid.ExperimentalUuidApi
 
@@ -17,7 +18,34 @@ class TransactionManager(
     private val dispatcher: TransactionDispatcher,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) {
+    private companion object {
+        /**
+         * Maximum number of Transaction records retained in memory.
+         *
+         * Every startTransaction (copy / move / trash / rename / undo / redo) would otherwise
+         * pin a full Transaction — its ops plus their UndoAction payloads, which for a batch
+         * transfer hold whole URI lists — for the lifetime of the process. Records are evicted
+         * oldest-first once the cap is exceeded, which costs a bounded amount of history for
+         * anything that still wants to introspect a very old transaction (findOperation,
+         * cancelTransaction); it does not affect undo/redo, whose history lives in UndoManager's
+         * own stacks and holds direct Transaction references.
+         */
+        const val MAX_TRACKED_TRANSACTIONS = 50
+    }
+
+    /**
+     * Live transactions by id. Bounded to [MAX_TRACKED_TRANSACTIONS] entries by
+     * [pruneTransactions]; see there for the rationale.
+     */
     private val transactions = ConcurrentHashMap<Uuid, Transaction>()
+
+    /**
+     * Insertion order of [transactions] keys, oldest first. Kept alongside the map so
+     * eviction is exact FIFO rather than an arbitrary clear-all.
+     */
+    private val insertionOrder: ArrayDeque<Uuid> = ArrayDeque()
+
+    private val insertionLock = Any()
     
     private val _events = MutableSharedFlow<TransactionEvent>(extraBufferCapacity = 128)
     val events: SharedFlow<TransactionEvent> = _events.asSharedFlow()
@@ -31,12 +59,31 @@ class TransactionManager(
     // --- Transaction Lifecycle ---
     fun startTransaction(description: String, isReversible: Boolean = true): Uuid {
         val tid = Uuid.random()
-        transactions[tid] = Transaction(
+        val tx = Transaction(
             id = tid,
             description = description,
             isReversible = isReversible
         )
+        synchronized(insertionLock) {
+            transactions[tid] = tx
+            insertionOrder.addLast(tid)
+            pruneTransactions()
+        }
         return tid
+    }
+
+    /**
+     * Evicts the oldest tracked transactions once [MAX_TRACKED_TRANSACTIONS] is exceeded.
+     *
+     * Called from [startTransaction] immediately after the new entry is inserted, which is what
+     * makes eviction safe for the transaction that was just created: it is the newest element of
+     * [insertionOrder], so it can never be the one dropped while trimming the head.
+     */
+    private fun pruneTransactions() {
+        while (transactions.size > MAX_TRACKED_TRANSACTIONS && insertionOrder.isNotEmpty()) {
+            val oldest = insertionOrder.pollFirst() ?: break
+            transactions.remove(oldest)
+        }
     }
 
     fun addOperation(
