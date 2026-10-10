@@ -142,7 +142,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         val attributes = FileEntry.listingAttributesFor(sortKey)
         val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
             block = { cancellable, callback ->
-                gfile.enumerateChildrenAsync(attributes, FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, callback)
+                gfile.enumerateChildrenAsync(attributes, FileQueryInfoFlags.NOFOLLOW_SYMLINKS, GLib.PRIORITY_DEFAULT, cancellable, callback)
             },
             finish = { result ->
                 gfile.enumerateChildrenFinish(result)
@@ -315,7 +315,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         job: FileJob, 
         channel: kotlinx.coroutines.channels.SendChannel<TransferProgress>
     ) {
-        val info = src.queryInfo("standard::type", FileQueryInfoFlags.NONE, null)
+        val info = src.queryInfo("standard::type", FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null)
         if (info.fileType == FileType.DIRECTORY) {
             if (!dest.queryExists(null)) {
                 GioCoroutineBridge.awaitGioAsync(
@@ -328,7 +328,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 )
             }
             
-            val enumerator = src.enumerateChildren("standard::name", FileQueryInfoFlags.NONE, null)
+            val enumerator = src.enumerateChildren("standard::name", FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null)
             try {
                 var childInfo = enumerator.nextFile(null)
                 while (childInfo != null) {
@@ -362,9 +362,9 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     }
 
     private suspend fun File.deleteRecursive() {
-        val info = queryInfo("standard::type", FileQueryInfoFlags.NONE, null)
+        val info = queryInfo("standard::type", FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null)
         if (info.fileType == FileType.DIRECTORY) {
-            val enumerator = enumerateChildren("standard::name", FileQueryInfoFlags.NONE, null)
+            val enumerator = enumerateChildren("standard::name", FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null)
             try {
                 var childInfo = enumerator.nextFile(null)
                 while (childInfo != null) {
@@ -802,7 +802,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
             if (depth > query.maxDepth) continue
 
             val enumerator = try {
-                dir.enumerateChildren(queryAttributes, FileQueryInfoFlags.NONE, null)
+                dir.enumerateChildren(queryAttributes, FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null)
             } catch (e: Exception) {
                 continue
             }
