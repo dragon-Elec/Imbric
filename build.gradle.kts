@@ -11,10 +11,10 @@ version = "0.1.0-SNAPSHOT"
 
 sourceSets {
     main {
-        java.srcDirs("generated-src")
+        java.srcDirs("build/native-gen/bindings")
     }
     test {
-        java.srcDirs("generated-src")
+        java.srcDirs("build/native-gen/bindings")
     }
 }
 
