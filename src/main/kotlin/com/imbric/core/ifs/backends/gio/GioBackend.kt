@@ -119,66 +119,90 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
     }
 
 
-override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> {
-    val gfile = File.forUri(uri)
-    val timer = PipelineTimer.current()
-
-    timer?.mark("gio_list_start", detail = uri)
-
-    // Async enumeration — fetches all items in one call
-    val attributes = FileEntry.listingAttributesFor(sortKey)
-    val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
-        block = { cancellable, callback ->
-            gfile.enumerateChildrenAsync(attributes, FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, callback)
-        },
-        finish = { result ->
-            gfile.enumerateChildrenFinish(result)
-        }
-    )
-
-    timer?.mark("gio_enumerate_done")
-
-    val isRoot = IfsUri(uri).isRootUri()
-    val parentUri = if (isRoot) uri else uri.trimEnd('/')
-    val parentPath = gfile.path?.toString()?.let { if (it == "/") "/" else it.trimEnd('/') }
-        ?: GioTypeMappers.localPathFromFileUri(parentUri)
-    val parentPathType = GioTypeMappers.determinePathType(parentUri)
-    val parentIsRemote = GioTypeMappers.isRemoteUri(parentUri)
-
-    val allItems = ArrayList<FileEntry>(512)
-
-    try {
-        while (currentCoroutineContext().isActive) {
-            val batch = GioCoroutineBridge.awaitGioAsync<org.gnome.glib.List<org.gnome.gio.FileInfo>>(
-                block = { cancellable, callback ->
-                    enumerator.nextFilesAsync(5000, GLib.PRIORITY_DEFAULT, cancellable, callback)
-                },
-                finish = { result ->
-                    enumerator.nextFilesFinish(result)
-                }
-            )
-            if (batch.isEmpty()) break
-
-            for (info in batch) {
-                val name = info?.name?.toString() ?: continue
-                val fileInfo = GioTypeMappers.toListingFile(
-                    name = name,
-                    parentUri = parentUri,
-                    parentPath = parentPath ?: "",
-                    gioInfo = info,
-                    parentPathType = parentPathType,
-                    parentIsRemote = parentIsRemote
-                )
-                allItems.add(fileInfo)
-            }
-        }
-    } finally {
-        enumerator.close(null)
+    /**
+     * Join base for a child URI under [uri]: trailing slashes stripped, but never below
+     * the scheme separator — `file:///` → `file://`, so a `"$base/$name"` join yields
+     * `file:///name` instead of `file:////name`. A bare `trimEnd('/')` would collapse
+     * `file:///` to `file:`, the same bug class AGENTS.md warns about, hence the explicit
+     * scheme floor. Plain-path roots (`/`) trim to `""`, giving `/name`.
+     */
+    private fun childUriJoinBase(uri: String): String {
+        val schemeEnd = uri.indexOf("://")
+        val trimmed = uri.trimEnd('/')
+        return if (schemeEnd != -1 && trimmed.length <= schemeEnd + 3) uri.substring(0, schemeEnd + 3) else trimmed
     }
 
-    timer?.mark("gio_list_done", itemCount = allItems.size)
-    return allItems.toList()
-}
+    override suspend fun list(uri: String, sortKey: SortKey): List<FileEntry> = withVfsErrorHandling(uri) {
+        val gfile = File.forUri(uri)
+        val timer = PipelineTimer.current()
+
+        timer?.mark("gio_list_start", detail = uri)
+
+        // Async enumeration — fetches all items in one call
+        val attributes = FileEntry.listingAttributesFor(sortKey)
+        val enumerator = GioCoroutineBridge.awaitGioAsync<org.gnome.gio.FileEnumerator>(
+            block = { cancellable, callback ->
+                gfile.enumerateChildrenAsync(attributes, FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, callback)
+            },
+            finish = { result ->
+                gfile.enumerateChildrenFinish(result)
+            }
+        )
+
+        timer?.mark("gio_enumerate_done")
+
+        val isRoot = IfsUri(uri).isRootUri()
+        val childUriBase = childUriJoinBase(uri)
+        val parentUri = if (isRoot) uri else uri.trimEnd('/')
+        val parentPath = gfile.path?.toString()?.let { if (it == "/") "/" else it.trimEnd('/') }
+            ?: GioTypeMappers.localPathFromFileUri(parentUri)
+        val parentPathType = GioTypeMappers.determinePathType(parentUri)
+        val parentIsRemote = GioTypeMappers.isRemoteUri(parentUri)
+
+        val allItems = ArrayList<FileEntry>(512)
+
+        try {
+            while (currentCoroutineContext().isActive) {
+                val batch = GioCoroutineBridge.awaitGioAsync<org.gnome.glib.List<org.gnome.gio.FileInfo>>(
+                    block = { cancellable, callback ->
+                        enumerator.nextFilesAsync(5000, GLib.PRIORITY_DEFAULT, cancellable, callback)
+                    },
+                    finish = { result ->
+                        enumerator.nextFilesFinish(result)
+                    }
+                )
+                if (batch.isEmpty()) break
+
+                for (info in batch) {
+                    val name = info?.name?.toString() ?: continue
+                    val fileInfo = GioTypeMappers.toListingFile(
+                        name = name,
+                        parentUri = parentUri,
+                        parentPath = parentPath ?: "",
+                        gioInfo = info,
+                        parentPathType = parentPathType,
+                        parentIsRemote = parentIsRemote
+                    )
+                    // Root parents already end in '/', so the mapper's "$parentUri/$name" join
+                    // emits a quadruple slash. Re-join against the trimmed base so the child
+                    // carries exactly "file:///usr".
+                    allItems.add(
+                        if (isRoot) fileInfo.copy(uri = GioTypeMappers.fastChildUri(childUriBase, name))
+                        else fileInfo
+                    )
+                }
+            }
+        } finally {
+            // close() can throw (G_IO_ERROR_PENDING when the enumerator is cancelled mid-drain).
+            // An exception here would REPLACE the in-flight CancellationException, turning a
+            // clean cancel into a hard failure — so the teardown is deliberately fail-soft:
+            // the drain result is what matters, not the close.
+            try { enumerator.close(null) } catch (e: Exception) { }
+        }
+
+        timer?.mark("gio_list_done", itemCount = allItems.size)
+        allItems.toList()
+    }.getOrThrow()
 
     override suspend fun getMetadata(uri: String): Result<FileInfo> = withVfsErrorHandling(uri) {
         val gfile = File.forUri(uri)
