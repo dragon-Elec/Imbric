@@ -4,6 +4,7 @@ package com.imbric.core.models
 import kotlin.time.Instant
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
+import java.util.Collections
 
 /** Sort key for directory listing. UI sets this, DirState adapts attribute fetching. */
 enum class SortKey {
@@ -118,8 +119,34 @@ sealed interface FileEntry {
             SortKey.TYPE -> SortByName // fallback to name
         }
 
+        /** Max compiled patterns retained in [globCache]. Patterns are user-typed globs, so the cache must stay bounded. */
+        private const val GLOB_CACHE_MAX = 64
+
+        /**
+         * LRU cache of compiled globs keyed by pattern string.
+         *
+         * Synchronized because [compileGlob] is reachable from any thread:
+         * DirState.matchPattern runs on StateFlow collectors (UI or IO
+         * dispatchers) and FileEntry.matches is a public interface method.
+         * All map access — including access-order touches — goes through the
+         * synchronized wrapper, which access-order LinkedHashMaps require.
+         * A benign race (two threads compiling the same pattern at once)
+         * only wastes one compile; both produce equivalent Regexes.
+         */
+        private val globCache: MutableMap<String, Regex> =
+            Collections.synchronizedMap(
+                object : LinkedHashMap<String, Regex>(GLOB_CACHE_MAX, 0.75f, true) {
+                    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Regex>): Boolean =
+                        size > GLOB_CACHE_MAX
+                }
+            )
+
+        /** Constant wildcard regex for the empty/"*" patterns — compiled once at class load. */
+        private val WILDCARD_GLOB: Regex = Regex(".*")
+
         fun compileGlob(pattern: String): Regex {
-            if (pattern.isEmpty() || pattern == "*") return Regex(".*")
+            if (pattern.isEmpty() || pattern == "*") return WILDCARD_GLOB
+            globCache[pattern]?.let { return it }
             val regexStr = buildString(pattern.length * 2) {
                 for (c in pattern) {
                     when (c) {
@@ -133,7 +160,9 @@ sealed interface FileEntry {
                     }
                 }
             }
-            return Regex(regexStr, RegexOption.IGNORE_CASE)
+            val regex = Regex(regexStr, RegexOption.IGNORE_CASE)
+            globCache[pattern] = regex
+            return regex
         }
     }
 }
