@@ -17,7 +17,8 @@ import kotlin.uuid.ExperimentalUuidApi
 class TransferOrchestrator(
     private val backendRegistry: BackendRegistry,
     private val transactionManager: TransactionManager
-) {
+)
+{
     fun planAndExecute(
         sources: List<String>,
         destDir: String,
@@ -85,6 +86,13 @@ class TransferOrchestrator(
 
         transactionManager.commitTransaction(tid, jitResolver, policy)
         
+        // Wait for the transaction's terminal event. The collector is armed before commit
+        // (UNDISPATCHED), so a synchronous Finished cannot be dropped: TransactionManager
+        // guarantees every dispatched op reaches a terminal status (see
+        // TransactionDispatcher.reportUnrouteable), which is what makes this wait bounded —
+        // no timeout here deliberately: a coroutine-time failsafe fires under virtual-time
+        // test schedulers while real dispatchers are still working (and a finite constant is
+        // arbitrary against legitimately-long network transfers).
         try {
             collector.join()
         } catch (_: CancellationException) {

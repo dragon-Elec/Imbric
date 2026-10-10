@@ -97,7 +97,7 @@ class TransactionManager(
         undoAction: UndoAction? = null
     ) {
         val tx = transactions[tid] ?: return
-        tx.addOperation(TransactionOperation(
+        val op = TransactionOperation(
             jobId = jobId,
             opType = opType,
             src = src,
@@ -105,7 +105,10 @@ class TransactionManager(
             overwrite = overwrite,
             autoRename = autoRename,
             undoAction = undoAction
-        ))
+        )
+        // Same monitor as updateOperationStatus / updateProgress: ops is a plain ArrayList and
+        // readers iterate it while workers write slots.
+        synchronized(tx) { tx.addOperation(op) }
     }
 
     // --- High-level Entry Point ---
@@ -132,12 +135,18 @@ class TransactionManager(
         policy: SyncPolicy = SyncPolicy.Standard
     ) {
         val tx = transactions[tid] ?: return
-        tx.status = TransactionStatus.RUNNING
+
+        // Iterate a snapshot, not the live list: from the first dispatchJob onwards, worker
+        // threads are already writing tx.ops slots as this loop runs.
+        val opsSnapshot: List<TransactionOperation> = synchronized(tx) {
+            tx.status = TransactionStatus.RUNNING
+            tx.ops.toList()
+        }
         
         onTransactionStarted?.invoke(tid, tx.description)
         _events.tryEmit(TransactionEvent.Started(tid, tx.description))
         
-        tx.ops.forEach { op ->
+        opsSnapshot.forEach { op ->
             dispatcher.dispatchJob(
                 tid = tid,
                 op = op,
@@ -150,10 +159,13 @@ class TransactionManager(
             )
         }
         
-        if (tx.ops.isEmpty()) {
-            tx.status = TransactionStatus.COMPLETED
-            _events.tryEmit(TransactionEvent.Finished(tid, tx.status))
-            onTransactionFinished?.invoke(tid, tx.status)
+        if (opsSnapshot.isEmpty()) {
+            val emptyStatus = synchronized(tx) {
+                tx.status = TransactionStatus.COMPLETED
+                tx.status
+            }
+            _events.tryEmit(TransactionEvent.Finished(tid, emptyStatus))
+            onTransactionFinished?.invoke(tid, emptyStatus)
         }
     }
 
@@ -166,65 +178,97 @@ class TransactionManager(
         undoAction: UndoAction? = null
     ) {
         val tx = transactions[tid] ?: return
-        
-        var opIndex = tx.ops.indexOfFirst { it.jobId == jobId }
-        
+
         // Final fallback for identity stability:
         // If the jobId was reassigned during execution (e.g. JIT conflict resolution),
         // updateOperationStatus may not find it by jobId. The fuzzy match in updateProgress
         // already handles re-linking by source URI, so this is a no-op safety net.
-
-        if (opIndex != -1) {
-            val op = tx.ops[opIndex]
-            val updatedOp = op.copy(
-                status = status, 
-                error = error, 
-                resultPath = resultPath ?: op.resultPath,
-                undoAction = undoAction ?: op.undoAction
-            )
-            tx.ops[opIndex] = updatedOp
-            updateProgress(tid, TransferProgress(jobId, op.src, resultPath ?: op.resultPath, undoAction))
+        var src: String? = null
+        var effectiveResult: String? = null
+        synchronized(tx) {
+            val opIndex = tx.ops.indexOfFirst { it.jobId == jobId }
+            if (opIndex != -1) {
+                // Read-modify-write under the tx monitor. Without it, two workers updating
+                // different slots of the same ArrayList can interleave the read and the write
+                // and lose one of the two status updates — which would strand the transaction
+                // short of finishedOps == totalOps forever.
+                val op = tx.ops[opIndex]
+                val merged = op.copy(
+                    status = status, 
+                    error = error, 
+                    resultPath = resultPath ?: op.resultPath,
+                    undoAction = undoAction ?: op.undoAction
+                )
+                tx.ops[opIndex] = merged
+                src = merged.src
+                effectiveResult = merged.resultPath
+            }
         }
+        val opSrc = src ?: return
+
+        // Deliberately outside the synchronized block above: re-entering updateProgress is safe
+        // (the monitor is reentrant), but holding it across the progress callbacks would serialize
+        // every worker's UI notification.
+        updateProgress(tid, TransferProgress(jobId, opSrc, effectiveResult, undoAction))
     }
 
     // --- Progress & Status ---
     private fun updateProgress(tid: Uuid, progress: TransferProgress) {
         val tx = transactions[tid] ?: return
-        
-        // Strict jobId matching only — GioBackend captures job.id in the callback closure.
-        // No fuzzy fallback: identical filenames from different directories would cross-contaminate.
-        val op = tx.ops.find { it.jobId == progress.jobId } ?: return
 
-        val pct = if (tx.totalOps > 0) {
-            val completedBase = tx.completedOps.toFloat()
-            
-            // Calculate fractional progress of currently running jobs
-            // (Simple version: factor in the current job's bytes if available)
-            val currentJobFraction = if (progress.totalSize > 0) {
-                progress.completedSize.toFloat() / progress.totalSize
-            } else if (progress.totalCount > 0) {
-                progress.completedCount.toFloat() / progress.totalCount
+        // 🔒 One critical section per transaction, held only long enough to *derive* state:
+        // the op lookup, the percentage computed from tx.completedOps, and the
+        // finishedOps == totalOps completion test all have to read one consistent snapshot of
+        // tx.ops. They used to be unsynchronized, so concurrent workers could observe a torn
+        // state — a stale non-terminal slot that made the completion test miss, or fire it twice.
+        // The status counters are recomputed (Transaction.finishedOps iterates ops) rather than
+        // incremented, so there is no separate counter to keep in step; the invariant that matters
+        // is "this write and the read that decides Finished are mutually exclusive".
+        var pct = 0f
+        var finalStatus: TransactionStatus? = null
+        synchronized(tx) {
+            // Strict jobId matching only — GioBackend captures job.id in the callback closure.
+            // No fuzzy fallback: identical filenames from different directories would cross-contaminate.
+            if (tx.ops.none { it.jobId == progress.jobId }) return
+
+            pct = if (tx.totalOps > 0) {
+                val completedBase = tx.completedOps.toFloat()
+                
+                // Calculate fractional progress of currently running jobs
+                // (Simple version: factor in the current job's bytes if available)
+                val currentJobFraction = if (progress.totalSize > 0) {
+                    progress.completedSize.toFloat() / progress.totalSize
+                } else if (progress.totalCount > 0) {
+                    progress.completedCount.toFloat() / progress.totalCount
+                } else 0f
+                
+                (completedBase + currentJobFraction.coerceIn(0f, 0.99f)) / tx.totalOps
             } else 0f
-            
-            (completedBase + currentJobFraction.coerceIn(0f, 0.99f)) / tx.totalOps
-        } else 0f
+
+            // tx.status as the "not yet finished" latch: commitTransaction sets RUNNING before
+            // dispatching, so a RUNNING tx that has finished every op is exactly the terminal
+            // transition — and once we flip it here, no sibling worker can emit a second Finished.
+            if (tx.status == TransactionStatus.RUNNING && tx.finishedOps == tx.totalOps) {
+                val hasFailures = tx.ops.any { it.status == TransactionStatus.FAILED }
+                val resolved = if (hasFailures) TransactionStatus.PARTIAL else TransactionStatus.COMPLETED
+                finalStatus = resolved
+                tx.status = resolved
+            }
+        }
         
         onTransactionProgress?.invoke(tid, pct)
         _events.tryEmit(TransactionEvent.Progress(tid, pct))
         _events.tryEmit(TransactionEvent.FileProgress(tid, progress))
+
+        // Emitted outside the monitor so the 31 sibling workers are never blocked on a UI callback.
+        val terminal = finalStatus ?: return
+        onTransactionFinished?.invoke(tid, terminal)
+        _events.tryEmit(TransactionEvent.Finished(tid, terminal))
         
-        if (tx.finishedOps == tx.totalOps) {
-            val hasFailures = tx.ops.any { it.status == TransactionStatus.FAILED }
-            tx.status = if (hasFailures) TransactionStatus.PARTIAL else TransactionStatus.COMPLETED
-            
-            onTransactionFinished?.invoke(tid, tx.status)
-            _events.tryEmit(TransactionEvent.Finished(tid, tx.status))
-            
-            // Commit undo history even for PARTIAL transactions —
-            // UndoManager filters for COMPLETED ops internally.
-            if (tx.isReversible) {
-                onHistoryCommitted?.invoke(tx)
-            }
+        // Commit undo history even for PARTIAL transactions —
+        // UndoManager filters for COMPLETED ops internally.
+        if (tx.isReversible) {
+            onHistoryCommitted?.invoke(tx)
         }
     }
 
@@ -247,8 +291,11 @@ class TransactionManager(
     // --- Cleanup ---
     fun cancelTransaction(tid: Uuid) {
         val tx = transactions[tid] ?: return
-        dispatcher.cancelJobs(tx.ops.map { it.jobId })
-        tx.status = TransactionStatus.CANCELLED
+        val jobIds = synchronized(tx) {
+            tx.status = TransactionStatus.CANCELLED
+            tx.ops.map { it.jobId }
+        }
+        dispatcher.cancelJobs(jobIds)
         _events.tryEmit(TransactionEvent.Finished(tid, TransactionStatus.CANCELLED))
         onTransactionFinished?.invoke(tid, TransactionStatus.CANCELLED)
     }

@@ -51,7 +51,10 @@ class TransactionDispatcher(
         policy: SyncPolicy = SyncPolicy.Standard
     ) {
         val jobCoro = scope.launch {
-            val backend = backendRegistry.get(op.src) ?: return@launch
+            val backend = backendRegistry.get(op.src) ?: run {
+                reportUnrouteable(onStatusUpdate, op.jobId, op.src)
+                return@launch
+            }
             val uriScheme = op.src.substringBefore("://", "file")
             val semaphore = if (uriScheme == "file" || uriScheme == "trash") localSemaphore else networkSemaphore
 
@@ -78,6 +81,23 @@ class TransactionDispatcher(
         }
     }
 
+    /**
+     * Reports a job that can never run as FAILED, using the exact same call shape as the
+     * failure path in [executeSingleJob].
+     *
+     * This is load-bearing, not cosmetic: a job that returns without any terminal status
+     * stays PENDING forever, so `Transaction.finishedOps` never reaches `totalOps`,
+     * `TransactionEvent.Finished` is never emitted, and every waiter on that event
+     * (TransferOrchestrator's collector, UndoManager's undo/redo) parks forever while
+     * retaining the transaction's op list. Every dispatched job must end in a terminal
+     * status for the transaction to finish.
+     */
+    private fun reportUnrouteable(
+        onStatusUpdate: (Uuid, TransactionStatus, String, String?, UndoAction?) -> Unit,
+        jobId: Uuid,
+        src: String
+    ) = onStatusUpdate(jobId, TransactionStatus.FAILED, "No backend registered for $src", null, null)
+
     private suspend fun executeSingleJob(
         tid: Uuid,
         initialOp: TransactionOperation,
@@ -92,7 +112,10 @@ class TransactionDispatcher(
         while (retry) {
             retry = false
             try {
-                val backend = backendRegistry.get(currentOp.src) ?: return
+                val backend = backendRegistry.get(currentOp.src) ?: run {
+                    reportUnrouteable(onStatusUpdate, currentOp.jobId, currentOp.src)
+                    return
+                }
                 val backendScheme = currentOp.src.substringBefore("://", "file")
                 
                 val job = FileJob(
