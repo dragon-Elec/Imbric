@@ -13,6 +13,9 @@ def register(subparsers):
 def run(args):
     gradle_cmd = ["./gradlew", "test", "--console=plain"]
     
+    if args.tests and args.all:
+        print("note: --all ignored because --tests", file=sys.stderr)
+
     if args.tests:
         gradle_cmd.extend(["--tests", args.tests])
     elif args.all:

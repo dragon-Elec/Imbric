@@ -1,4 +1,5 @@
 import shutil
+import sys
 from pathlib import Path
 from ..daemon import DaemonManager, PROJECT_ROOT
 
@@ -10,6 +11,9 @@ def register(subparsers):
 def run(args):
     DaemonManager.stop_daemon()
     
+    if args.bindings and args.deep:
+        print("note: --deep ignored because --bindings", file=sys.stderr)
+
     if args.bindings:
         target = PROJECT_ROOT / "build" / "native-gen"
         if target.exists():

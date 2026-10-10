@@ -236,6 +236,7 @@ def run(args):
             for name in sorted(missing):
                 print(f"  - {name}")
             print(f"\n({len(missing)} missing / {len(src_decls)} total public declarations)")
+            sys.exit(1)
     else:
         print("Scanning codebase for Kotlin files and context files...")
         kt_files = list(PROJECT_ROOT.glob("src/**/*.kt"))
@@ -260,3 +261,4 @@ def run(args):
             print("\n[✓] All public declarations across the codebase are fully documented!")
         else:
             print(f"\nFound {total_missing} missing declarations across {total_files} files.")
+            sys.exit(1)

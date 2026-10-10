@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import time
 from ..daemon import DaemonManager, PROJECT_ROOT
 
@@ -12,10 +13,14 @@ def run(args):
     script = PROJECT_ROOT / "scripts" / "generate_bindings.sh"
     
     start = time.time()
-    res = subprocess.run([str(script)], cwd=str(PROJECT_ROOT))
+    try:
+        res = subprocess.run([str(script)], cwd=str(PROJECT_ROOT))
+    except KeyboardInterrupt:
+        sys.exit(130)
     elapsed = int(time.time() - start)
     
     if res.returncode == 0:
         print(f"\nBindings generated in {elapsed}s")
     else:
         print(f"\nGeneration failed (exit code {res.returncode})")
+        sys.exit(res.returncode)

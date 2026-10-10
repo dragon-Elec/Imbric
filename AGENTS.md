@@ -31,7 +31,7 @@ The canonical way to build, run, and test the project is using the custom `ib` d
 *   **`python3 scripts/ib.py run`**: Launches the app in the foreground (automatically kills orphaned UI windows first).
 *   **`python3 scripts/ib.py dev`**: Launches the app in continuous build mode (auto-recompiles when you save files).
 *   **`python3 scripts/ib.py hot`**: Launches with hot-reload (requires JBR DCEVM).
-*   **`python3 scripts/ib.py generate`**: Regenerates the GIO bindings (stops daemons first, runs generator, and copies files to `generated-src`).
+*   **`python3 scripts/ib.py generate`**: Regenerates the GIO bindings (stops daemons first, runs generator, and writes files to `build/native-gen/bindings`).
 *   **`python3 scripts/ib.py clean`**: Deletes the `build/` directory.
 *   **`python3 scripts/ib.py doctor`**: Verifies your environment (JDK 25, paths, GIR files, and bindings).
 *   **`python3 scripts/ib.py kill`**: Kills all stale Gradle, Kotlin, and Imbric java processes to free up RAM.

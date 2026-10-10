@@ -46,15 +46,13 @@ class OutputFilter:
 
         if self.BUILD_OK.search(line):
             self._flush_dots()
-            elapsed = self._elapsed()
             self.in_error = False
-            return f"BUILD OK in {elapsed}"
+            return None
             
         if self.BUILD_FAIL.search(line):
             self._flush_dots()
-            elapsed = self._elapsed()
             self.in_error = False
-            return f"BUILD FAILED in {elapsed}"
+            return None
 
         if any(p.search(line) for p in self.ERROR_PATTERNS):
             self._flush_dots()

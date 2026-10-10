@@ -65,6 +65,7 @@ def run(args):
             print(f"\nApp exited cleanly in {elapsed_str}")
         else:
             print(f"\nApp exited with code {proc.returncode} in {elapsed_str}")
+            sys.exit(proc.returncode)
 
     except KeyboardInterrupt:
         handle_sigint(None, None)

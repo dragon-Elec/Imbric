@@ -12,6 +12,9 @@ def register(subparsers):
     p.add_argument("--full", action="store_true", help="Full build (all tasks, not just compileKotlin)")
 
 def run(args):
+    if args.full and args.tests:
+        print("note: --tests ignored because --full", file=sys.stderr)
+
     if args.full:
         gradle_cmd = ["./gradlew", "build", "--console=plain", "-x", "test"]
     elif args.tests:

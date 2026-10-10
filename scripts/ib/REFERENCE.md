@@ -98,7 +98,7 @@ Shared by `dev`, `hot`, `run`, `exec`, `compile`, `bench`, `lint`. Behavior:
 - Noise (config cache, UP-TO-DATE, downloads) → suppressed
 - Errors/exceptions → full block shown
 - Warnings → collected, summary at end
-- BUILD SUCCESSFUL/FAILED → shown with elapsed time
+- BUILD SUCCESSFUL/FAILED → passes through; each command prints its own single summary line with elapsed time
 
 ## ProcessManager
 

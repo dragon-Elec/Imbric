@@ -53,6 +53,9 @@ def register(subparsers):
 def run(args):
     gradle_cmd = ["./gradlew", "test", "--console=plain"]
 
+    if args.failed and args.tests:
+        print("note: --tests ignored because --failed", file=sys.stderr)
+
     if args.failed:
         failed_classes = _get_previously_failed_test_classes()
         if not failed_classes:
@@ -97,7 +100,7 @@ def run(args):
 
             # Failure or important line → show full output immediately
             if any(p.search(line) for p in _IMPORTANT):
-                if not in_error and dot_count > 0:
+                if dot_count > 0:
                     print()
                 print(line, flush=True)
                 in_error = True

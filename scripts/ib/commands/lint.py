@@ -13,6 +13,9 @@ def run(args):
     print("Running code quality checks...")
     print()
     
+    if args.fix:
+        print("note: --fix not supported (no auto-fixer configured: lint runs compile + grep checks)", file=sys.stderr)
+    
     checks_passed = True
     
     # 1. Check compilation
@@ -41,7 +44,11 @@ def run(args):
         
         elapsed = int(time.time() - start)
         if proc.returncode == 0:
-            print(f"   ✓ Compilation OK ({elapsed}s)")
+            if args.strict and filt.warnings:
+                print(f"   ✗ Compilation warnings ({elapsed}s)")
+                checks_passed = False
+            else:
+                print(f"   ✓ Compilation OK ({elapsed}s)")
         else:
             print(f"   ✗ Compilation failed ({elapsed}s)")
             checks_passed = False
@@ -77,7 +84,11 @@ def run(args):
         
         elapsed = int(time.time() - start)
         if proc.returncode == 0:
-            print(f"   ✓ Test compilation OK ({elapsed}s)")
+            if args.strict and filt.warnings:
+                print(f"   ✗ Test compilation warnings ({elapsed}s)")
+                checks_passed = False
+            else:
+                print(f"   ✓ Test compilation OK ({elapsed}s)")
         else:
             print(f"   ✗ Test compilation failed ({elapsed}s)")
             checks_passed = False
@@ -103,6 +114,8 @@ def run(args):
                 print(f"     {line}")
             if len(lines) > 5:
                 print(f"     ... and {len(lines) - 5} more")
+            if args.strict:
+                checks_passed = False
         else:
             print("   ✓ No TODO/FIXME comments found")
     except Exception:
@@ -116,6 +129,8 @@ def run(args):
         )
         if result.stdout.strip():
             print("   ⚠ Found potential unused imports")
+            if args.strict:
+                checks_passed = False
         else:
             print("   ✓ No obvious unused imports")
     except Exception:
