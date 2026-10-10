@@ -210,6 +210,17 @@ Read them when working on the corresponding topic.
 - If a Jules bot encounters a Gradle failure about missing `java-25-openjdk-amd64` or `major.minor version 69.0`, the setup script might have failed or the snapshot is stale.
 - Bot PRs MUST be compile-checked before merging.
 
+### UI & Layout Architecture Discipline (STRICT)
+- **Reference First (Never Scratch-Build Without Checking Upstream)**: When prototyping, porting, or building any UI component or layout, ALWAYS trace established upstream reference implementations (e.g. `ref/MaterialKolorBuilder`, `v1.txt`, `kmpv1.txt`) before writing layout code. Never rush to write hardcoded `Row`/`Column` prototypes from scratch.
+- **Adaptive Window Layouts (No Rigid Widths)**: Desktop windows must use `WindowSizeClass` breakpoints (`Expanded`, `Medium`, `Compact`).
+  - **`Expanded` (≥840dp)**: Multi-column side-by-side layout (e.g. sidebar + main content).
+  - **`Medium` (600–840dp)**: Auto-collapse sidebars into `NavigationRail` icon bars to prevent squishing content.
+  - **`Compact` (<600dp)**: Single-column layout with bottom navigation or collapsible drawer.
+  - **Card Grids**: Use `FlowRow` / `FlowColumn` with `Modifier.widthIn(min = 320.dp, max = 450.dp)` so cards naturally reflow across 1 to 4 columns on 1080p/4K displays.
+  - **Side Padding**: Scale paddings dynamically via `windowSizeClass.sidePadding()` (`16.dp` → `24.dp` → `32.dp`).
+- **State Debouncing & Continuous Inputs**: Never run heavy calculations (theme generation, color math, directory scans) synchronously on every pixel of a slider drag or keystroke. Always debounce continuous events by 200–300ms using coroutine debounce or stateholder dispatchers.
+- **Desktop Runtime Scaling**: Use `CompositionLocalProvider(LocalDensity provides ...)` at the window root to support native `Ctrl +/-/0` zoom (`0.5x` to `3.0x`). Never implement manual font size multipliers.
+
 ### PR Review Discipline
 - **Never merge "unused import" PRs without compile-checking.** PR #24 removed `@OptIn(ExperimentalUuidApi::class)` from `TransferOrchestrator.kt`, but `startTransaction()` returns `Uuid`. Broke compilation.
 - **PR #19 was worse** — tried to remove `withContext` from `GioRecentBackend` which IS used on 3 lines. Would have broken build.
