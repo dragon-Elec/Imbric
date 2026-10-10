@@ -45,36 +45,42 @@ fun FileBrowserPane(
         }
     }
 
+    // Snapshot the pane content as a single value. AnimatedContent's outgoing
+    // composition must animate out the PREVIOUS snapshot — if the content lambda
+    // read live outer state instead, the outgoing pane would re-render the
+    // incoming folder's files mid-crossfade.
+    val content = PaneContent(state.uri, sortedItems, state.isLoading)
+
     WipeReveal(
         isLoading = forceShowAnimation || (state.isLoading && sortedItems.isEmpty()),
         delayMillis = if (forceShowAnimation) 0L else 500L,
         modifier = modifier.fillMaxSize()
     ) {
         AnimatedContent(
-            targetState = state.uri,
+            targetState = content,
             transitionSpec = {
                 // A subtle, professional crossfade with a very slight scale (98%) to register the navigation
                 (fadeIn(animationSpec = tween(150)) + scaleIn(initialScale = 0.98f, animationSpec = tween(150))) togetherWith
                 (fadeOut(animationSpec = tween(150)) + scaleOut(targetScale = 0.98f, animationSpec = tween(150)))
             },
             label = "DirectoryTransition"
-        ) { targetUri ->
+        ) { snapshot ->
             // Directory content
-            if (sortedItems.isEmpty() && !state.isLoading) {
-                EmptyFolderView(targetUri)
-            } else if (sortedItems.isNotEmpty()) {
-                // key(targetUri) forces Compose to recreate DirectoryView when directory changes,
+            if (snapshot.items.isEmpty() && !snapshot.isLoading) {
+                EmptyFolderView(snapshot.uri)
+            } else if (snapshot.items.isNotEmpty()) {
+                // key(uri) forces Compose to recreate DirectoryView when directory changes,
                 // which resets the scroll position to top
-                key(targetUri) {
+                key(snapshot.uri) {
                     Box(
                         modifier = Modifier.edgePulse(
-                            trigger = sortedItems.hashCode(),
-                            resetKey = targetUri,
+                            trigger = snapshot.items.hashCode(),
+                            resetKey = snapshot.uri,
                             color = MaterialTheme.colorScheme.primary
                         )
                     ) {
                         DirectoryView(
-                            items = sortedItems,
+                            items = snapshot.items,
                             layoutMode = layoutMode,
                             onItemClick = onItemClick,
                             onVisibleItemsChanged = onVisibleItemsChanged,
@@ -86,6 +92,17 @@ fun FileBrowserPane(
         }
     }
 }
+
+/**
+ * Immutable snapshot of what a pane displays. Used as [AnimatedContent] targetState
+ * so the outgoing crossfade keeps rendering the folder the user navigated away from
+ * instead of the incoming one (stale-capture fix).
+ */
+private data class PaneContent(
+    val uri: String,
+    val items: List<FileEntry>,
+    val isLoading: Boolean
+)
 
 @Composable
 private fun EmptyFolderView(uri: String) {
