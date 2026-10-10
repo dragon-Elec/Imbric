@@ -98,9 +98,15 @@ class ListingDirectory(initialCapacity: Int = 512) {
     /** Get the name at index (no object allocation). */
     fun getName(index: Int): String = names[index]!!
 
-    /** Build the URI → index map. Must be called after sorting or adding entries. */
+    /**
+     * Build the URI → index map. Must be called after sorting or adding entries.
+     *
+     * Reuses the existing HashMap table: clear() keeps the bucket array, so the
+     * common re-sort path (same listing size) allocates nothing and rehashes
+     * nothing; put() grows the table automatically if the listing grew.
+     */
     fun buildUriIndex() {
-        uriIndex = HashMap(size + 16)
+        uriIndex.clear()
         for (i in 0 until size) {
             uriIndex[uris[i]!!] = i
         }
@@ -112,30 +118,103 @@ class ListingDirectory(initialCapacity: Int = 512) {
     /** Check if a URI exists in this directory. O(1) lookup. */
     fun containsUri(uri: String): Boolean = uriIndex.containsKey(uri)
 
-    /** Sort by swapping array indices using the given comparator on FileEntry. */
+    /**
+     * Sort by swapping array indices using the given comparator on FileEntry.
+     *
+     * Allocation-free stable index sort: the order array and one scratch buffer
+     * are the only allocations — no boxed Integers, no per-pass index copies,
+     * no flags array. The sort order is identical to the previous
+     * `indices.sortedWith` implementation (same comparator, same stability):
+     * equal keys keep their original relative order.
+     */
     fun sortWith(comparator: Comparator<FileEntry>) {
-        // Create boxed index array for sorting ( unavoidable boxing for comparator )
-        val indices = Array(size) { it }
-        indices.sortWith { a, b -> comparator.compare(ArrayBackedEntry(a), ArrayBackedEntry(b)) }
-        // Apply permutation to all parallel arrays
-        val perm = IntArray(size) { indices[it] }
-        applyPermutation(perm)
+        if (size > 1) {
+            val order = IntArray(size) { it }
+            val scratch = IntArray(size)
+            mergeSort(order, scratch, comparator)
+            applyPermutation(order)
+        }
         // Rebuild URI index after sort
         buildUriIndex()
     }
 
-    private fun applyPermutation(perm: IntArray) {
-        val done = BooleanArray(size)
-        for (i in 0 until size) {
-            if (done[i]) continue
-            var j = i
-            while (!done[perm[j]]) {
-                swap(j, perm[j])
-                done[j] = true
-                j = perm[j]
+    /**
+     * Bottom-up stable merge sort over the index array. Alternates [src]/[dst]
+     * between passes so no per-pass copy-back is needed; when an odd number of
+     * passes leaves the result in [scratch] it is copied back once at the end.
+     */
+    private fun mergeSort(order: IntArray, scratch: IntArray, comparator: Comparator<FileEntry>) {
+        val n = order.size
+        var src = order
+        var dst = scratch
+        var width = 1
+        while (width < n) {
+            var start = 0
+            while (start < n) {
+                val mid = minOf(start + width, n)
+                val end = minOf(start + 2 * width, n)
+                if (mid < end) {
+                    merge(src, dst, start, mid, end, comparator)
+                } else {
+                    // Tail run with no merge partner: carry it over
+                    // verbatim so dst is fully rewritten every pass
+                    // (otherwise the next pass would read stale slots).
+                    for (x in start until mid) dst[x] = src[x]
+                }
+                start += 2 * width
             }
-            done[j] = true
+            val tmp = src; src = dst; dst = tmp
+            width *= 2
         }
+        if (src !== order) {
+            System.arraycopy(src, 0, order, 0, n)
+        }
+    }
+
+    /** Merges the sorted runs [start, mid) and [mid, end) of [src] into [dst]. */
+    private fun merge(
+        src: IntArray, dst: IntArray, start: Int, mid: Int, end: Int,
+        comparator: Comparator<FileEntry>
+    ) {
+        var i = start
+        var j = mid
+        var k = start
+        while (i < mid && j < end) {
+            // <= (not <) keeps the sort stable: on equal keys the element from
+            // the left run — the one that appeared earlier originally — wins.
+            if (comparator.compare(get(src[i]), get(src[j])) <= 0) {
+                dst[k++] = src[i++]
+            } else {
+                dst[k++] = src[j++]
+            }
+        }
+        while (i < mid) dst[k++] = src[i++]
+        while (j < end) dst[k++] = src[j++]
+    }
+
+    /**
+     * Applies [perm] (position k pulls from perm[k]) to all parallel arrays,
+     * in place, via a cycle walk. Sign-marking (perm[x] -= n) replaces the old
+     * BooleanArray flags — zero extra allocation. [perm] is restored to its
+     * original values before returning, so the helper stays non-destructive.
+     */
+    private fun applyPermutation(perm: IntArray) {
+        val n = perm.size
+        for (i in 0 until n) {
+            if (perm[i] < 0) continue
+            var j = i
+            // The perm[j] >= 0 guard covers self-loops (j == perm[j]): once j
+            // is marked, perm[j] is negative and must not be used as an index
+            // by the nested perm[perm[j]] check.
+            while (perm[j] >= 0 && perm[perm[j]] >= 0) {
+                val target = perm[j]
+                swap(j, target)
+                perm[j] -= n
+                j = target
+            }
+            if (perm[j] >= 0) perm[j] -= n
+        }
+        for (i in 0 until n) perm[i] += n
     }
 
     private fun swap(i: Int, j: Int) {

@@ -281,8 +281,16 @@ class DirState(
 
                 val dir = ListingDirectory(allItems.size + 16)
                 val enrichable = mutableListOf<FileInfo>()
+                // Unchanged-row dedup: fileCache is lazily populated (only rows
+                // actually read are materialized), so it can no longer answer this
+                // check. The previous listing is still installed at this point
+                // (_baseDirectory is swapped inside the lock below), so the old row
+                // is read straight from its URI index — O(1) — and the transient
+                // wrapper is discarded once the comparison is done instead of being
+                // retained in the cache.
                 for (item in allItems) {
-                    val cached = fileCache[item.uri]
+                    val oldIndex = _baseDirectory.findIndex(item.uri)
+                    val cached = if (oldIndex != -1) _baseDirectory.get(oldIndex) else null
                     val itemToStore = if (cached != null && cached.modifiedTime == item.modifiedTime && cached.size == item.size) {
                         cached
                     } else {
@@ -308,11 +316,13 @@ class DirState(
                     timer?.mark("first_chunk_rendered", itemCount = dir.size)
                     timer?.mark("dir_list_done", itemCount = dir.size)
 
-                    // Update cache
+                    // Drop wrappers bound to the replaced listing: they would
+                    // resolve indices against the old parallel arrays and keep
+                    // that directory reachable. The cache is NOT repopulated —
+                    // rows materialize on demand via getOrPut (see
+                    // enrichVisibleItems), so only rows actually read ever
+                    // become objects.
                     fileCache.clear()
-                    for (i in 0 until dir.size) {
-                        fileCache[dir.getUri(i)] = dir.get(i)
-                    }
 
                     // Enrichment AFTER listing — already inside stateMutex, so use the
                     // locked variant and rebuild once after the loop
@@ -542,10 +552,13 @@ class DirState(
                         if (!deltaEntry.isDirectory) collected.add(deltaEntry)
                         return@forEach
                     }
-                    // For base directory entries, look up the original FileInfo from fileCache
+                    // For base directory entries, materialize the row on demand.
+                    // getOrPut is the contract here: after the lazy-cache change the
+                    // lookup must still find the entry, creating the wrapper (bound
+                    // to the current listing) only when actually read.
                     val idx = _baseDirectory.findIndex(uri)
                     if (idx == -1) return@forEach
-                    val cached = fileCache[uri]
+                    val cached = fileCache.getOrPut(uri) { _baseDirectory.get(idx) }
                     if (cached is FileInfo && !cached.isDirectory) {
                         collected.add(cached)
                     }
@@ -614,10 +627,20 @@ class DirState(
      * ```
      */
     fun whenEnriched(uri: String): Flow<FileEntry> =
-        _itemsList.mapNotNull { list ->
-            list.find { info ->
-                info.uri == uri && (info is FileInfo && info.attributes.containsKey("std::enriched"))
+        _itemsList.mapNotNull { _ ->
+            // O(1) per emission — replaces the find-first walk over the whole
+            // composite, which re-ran on every enrichment batch emission.
+            // The composed entry for a URI is enrichments[uri] when present
+            // (enrichments shadow base rows and additions alike, see
+            // EnrichedListingView.get), otherwise additions[uri]; a base row
+            // is an ArrayBackedEntry — not a FileInfo, never std::enriched.
+            // Deleted URIs are absent from the composite, so they must not emit.
+            val deltas = _deltas.value
+            val candidate: FileInfo? = when {
+                uri in deltas.deletions -> null
+                else -> deltas.enrichments[uri] ?: deltas.additions[uri]
             }
+            candidate?.takeIf { it.attributes.containsKey("std::enriched") }
         }.take(1)
 
     // --- Lifecycle ---
@@ -687,14 +710,12 @@ class DirState(
                         _baseDirectory = dir
                         _deltas.value = DeltaState()
 
-                        // Rebuild the cache from the NEW listing. The cached entries are
-                        // ArrayBackedEntry wrappers bound to the listing that produced them —
-                        // leaving the old ones would resolve indices against the previous
-                        // directory's parallel arrays (stale metadata) and keep it reachable.
+                        // Drop wrappers bound to the replaced listing: they would
+                        // resolve indices against the previous directory's parallel
+                        // arrays (stale metadata) and keep it reachable. The cache is
+                        // NOT repopulated — rows materialize on demand via getOrPut
+                        // (see enrichVisibleItems).
                         fileCache.clear()
-                        for (i in 0 until dir.size) {
-                            fileCache[dir.getUri(i)] = dir.get(i)
-                        }
 
                         for (info in enrichable) {
                             enrichItemLocked(info)
