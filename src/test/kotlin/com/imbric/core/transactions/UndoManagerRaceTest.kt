@@ -60,6 +60,15 @@ import kotlin.test.assertTrue
  * without ever launching the waiter — so an empty transaction can never park. A NON-empty op
  * set whose op completes with no suspension point is the reachable version of the race, and
  * that is what [commitRename] reproduces.
+ *
+ * WHICH TEST IS THE RACE PIN (oracle review, 2026-10-10): the second test
+ * (`undo does not park when the operation finishes synchronously during commit`, run on
+ * `Dispatchers.Unconfined`) is the load-bearing regression test — emission happens truly
+ * inline inside `commitTransaction`, so only the UNDISPATCHED pre-armed collector catches it.
+ * The first test runs its dispatcher on the virtual-time test scheduler: even the OLD
+ * subscribe-after-commit bug subscribed in time before `advanceUntilIdle()` ran the job,
+ * so that test pins the happy path (undo completes, stacks rotate, file renamed back) but
+ * would NOT have failed with the bug reintroduced. Keep both; only the second guards the race.
  */
 class UndoManagerRaceTest {
 

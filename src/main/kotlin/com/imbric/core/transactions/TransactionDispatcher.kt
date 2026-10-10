@@ -73,6 +73,12 @@ class TransactionDispatcher(
 
     /**
      * Cancels all currently running and queued jobs for a transaction.
+     *
+     * Cancellation alone never finishes a transaction: cancelled jobs leave their ops
+     * PENDING, so the caller MUST also emit an explicit terminal status event (see
+     * [com.imbric.core.transactions.TransactionManager.cancelTransaction]). A direct
+     * caller that cancels without emitting reintroduces the park-forever class this
+     * package's terminal-status guarantee exists to prevent.
      */
     fun cancelJobs(jobIds: List<Uuid>) {
         jobIds.forEach { jobId ->
@@ -196,6 +202,13 @@ class TransactionDispatcher(
                         val payload = job.inversePayload ?: throw Exception("Undo payload missing")
                         ((backend as? UndoContract) ?: error("Undo not supported")).executeInverse(payload).getOrThrow()
                         onProgress(TransferProgress(job.id, job.source, null, null, 1, 1, 0, 0))
+                    }
+                    else -> {
+                        // An unrecognized opType must not fall through to COMPLETED having done
+                        // nothing — that marks the tx finished with zero work done. planAndExecute
+                        // feeds its `mode` string straight in, so the guard is reachable.
+                        onStatusUpdate(currentOp.jobId, TransactionStatus.FAILED, "Unsupported opType '${currentOp.opType}'", null, null)
+                        return
                     }
                 }
                 

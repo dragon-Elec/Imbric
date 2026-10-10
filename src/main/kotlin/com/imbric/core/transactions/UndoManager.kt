@@ -91,7 +91,7 @@ class UndoManager(
 
     /**
      * Pushes onto [stack] and trims the oldest entries from the tail until the stack is back
-     * within [MAX_STACK_SIZE]. ArrayDeque pushes at the head, so the tail holds the oldest
+     * within [maxHistorySize]. ArrayDeque pushes at the head, so the tail holds the oldest
      * entries and [Deque.removeLast] drops exactly those.
      */
     private fun pushBounded(stack: Deque<Transaction>, tx: Transaction) {
@@ -122,7 +122,11 @@ class UndoManager(
     // --- Undo ---
     fun undo(): Boolean {
         if (!canUndo()) return false
-        setBusy(true)
+        // Atomic claim: canUndo() reads busy, but a second caller can pass the check before
+        // setBusy lands. CAS makes check-and-claim one step — the loser returns false
+        // instead of throwing on a shared ArrayDeque pop or double-launching.
+        if (!busy.compareAndSet(false, true)) return false
+        onBusyChanged?.invoke(true)
         val tx = undoStack.pop()
         
         // Prepare inverse operations from typed UndoAction
@@ -208,6 +212,9 @@ class UndoManager(
                 } else {
                     pushBounded(undoStack, tx)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Scope teardown is not a failure — rethrow so structured concurrency holds.
+                throw e
             } catch (e: Exception) {
                 pushBounded(undoStack, tx)
             } finally {
@@ -221,7 +228,8 @@ class UndoManager(
     // --- Redo ---
     fun redo(): Boolean {
         if (!canRedo()) return false
-        setBusy(true)
+        if (!busy.compareAndSet(false, true)) return false
+        onBusyChanged?.invoke(true)
         val tx = redoStack.pop()
 
         scope.launch {
@@ -233,6 +241,7 @@ class UndoManager(
                         op.opType,
                         op.src,
                         op.dest,
+                        jobId = op.jobId,
                         overwrite = op.overwrite,
                         autoRename = op.autoRename,
                         undoAction = op.undoAction
@@ -268,6 +277,8 @@ class UndoManager(
                 } else {
                     pushBounded(redoStack, tx)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 pushBounded(redoStack, tx)
             } finally {

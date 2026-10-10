@@ -88,10 +88,11 @@ class TransferOrchestrator(
         
         // Wait for the transaction's terminal event. The collector is armed before commit
         // (UNDISPATCHED), so a synchronous Finished cannot be dropped: TransactionManager
-        // guarantees every dispatched op reaches a terminal status (see
-        // TransactionDispatcher.reportUnrouteable), which is what makes this wait bounded —
-        // no timeout here deliberately: a coroutine-time failsafe fires under virtual-time
-        // test schedulers while real dispatchers are still working (and a finite constant is
+        // guarantees (a) every dispatched op reaches a terminal status and (b) terminal events
+        // are delivered through a suspending emit, not a lossy tryEmit — together that is what
+        // makes this wait bounded. No coroutine-time failsafe here deliberately: under runTest's
+        // virtual scheduler the flow runs on the test dispatcher while real workers run on real
+        // threads, so a coroutine-time bound fires spuriously (and a finite wall-clock bound is
         // arbitrary against legitimately-long network transfers).
         try {
             collector.join()

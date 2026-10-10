@@ -73,16 +73,37 @@ class TransactionManager(
     }
 
     /**
-     * Evicts the oldest tracked transactions once [MAX_TRACKED_TRANSACTIONS] is exceeded.
+     * Evicts the oldest *finished* tracked transactions once [MAX_TRACKED_TRANSACTIONS]
+     * is exceeded.
      *
      * Called from [startTransaction] immediately after the new entry is inserted, which is what
      * makes eviction safe for the transaction that was just created: it is the newest element of
      * [insertionOrder], so it can never be the one dropped while trimming the head.
+     *
+     * PENDING/RUNNING transactions are skipped and re-queued: a live tx can sit in a
+     * seconds-wide planning window (TransferOrchestrator suspends in metadata I/O between
+     * startTransaction and commitTransaction). Evicting one there makes addOperation and
+     * commitTransaction silent no-ops, and the transaction's Finished event never fires at
+     * all — a permanent park. If every tracked tx is live, the ring legitimately exceeds the
+     * cap by the in-flight count and the next prune trims again.
      */
     private fun pruneTransactions() {
-        while (transactions.size > MAX_TRACKED_TRANSACTIONS && insertionOrder.isNotEmpty()) {
-            val oldest = insertionOrder.pollFirst() ?: break
-            transactions.remove(oldest)
+        while (transactions.size > MAX_TRACKED_TRANSACTIONS) {
+            var evictedAny = false
+            val ringSize = insertionOrder.size
+            repeat(ringSize) {
+                val tid = insertionOrder.pollFirst() ?: return@repeat
+                val tx = transactions[tid]
+                val live = tx != null &&
+                    (tx.status == TransactionStatus.PENDING || tx.status == TransactionStatus.RUNNING)
+                if (live) {
+                    insertionOrder.addLast(tid) // keep it in the ring for a later prune pass
+                } else {
+                    transactions.remove(tid)
+                    evictedAny = true
+                }
+            }
+            if (!evictedAny) return
         }
     }
 
@@ -164,8 +185,22 @@ class TransactionManager(
                 tx.status = TransactionStatus.COMPLETED
                 tx.status
             }
-            _events.tryEmit(TransactionEvent.Finished(tid, emptyStatus))
+            emitTerminal(TransactionEvent.Finished(tid, emptyStatus))
             onTransactionFinished?.invoke(tid, emptyStatus)
+        }
+    }
+
+    /**
+     * Terminal events must not be lossy. Progress events stay best-effort `tryEmit`, but a
+     * dropped `Finished` parks every waiter forever (the orchestrator's collector.join(),
+     * undo/redo's `.first()`) — status reachability is worthless if delivery isn't. The
+     * SharedFlow is replay-0 with a 128-slot buffer shared across ALL transactions, so a
+     * stalled subscriber can make `tryEmit` fail with false, which the old code ignored.
+     * A suspending `emit` waits for the subscribers instead of dropping.
+     */
+    private fun emitTerminal(event: TransactionEvent) {
+        scope.launch {
+            _events.emit(event)
         }
     }
 
@@ -249,7 +284,9 @@ class TransactionManager(
             // dispatching, so a RUNNING tx that has finished every op is exactly the terminal
             // transition — and once we flip it here, no sibling worker can emit a second Finished.
             if (tx.status == TransactionStatus.RUNNING && tx.finishedOps == tx.totalOps) {
-                val hasFailures = tx.ops.any { it.status == TransactionStatus.FAILED }
+                val hasFailures = tx.ops.any {
+                    it.status == TransactionStatus.FAILED || it.status == TransactionStatus.CANCELLED
+                }
                 val resolved = if (hasFailures) TransactionStatus.PARTIAL else TransactionStatus.COMPLETED
                 finalStatus = resolved
                 tx.status = resolved
@@ -263,7 +300,7 @@ class TransactionManager(
         // Emitted outside the monitor so the 31 sibling workers are never blocked on a UI callback.
         val terminal = finalStatus ?: return
         onTransactionFinished?.invoke(tid, terminal)
-        _events.tryEmit(TransactionEvent.Finished(tid, terminal))
+        emitTerminal(TransactionEvent.Finished(tid, terminal))
         
         // Commit undo history even for PARTIAL transactions —
         // UndoManager filters for COMPLETED ops internally.
@@ -273,8 +310,14 @@ class TransactionManager(
     }
 
     // --- Lookup ---
+    /**
+     * Per-op lookup for callers outside the dispatch lifecycle (UndoManager's redo capture).
+     * Locked like the writers: [Transaction.findOperation] iterates the live `ops` list
+     * while workers mutate it.
+     */
     fun findOperation(tid: Uuid, jobId: Uuid): TransactionOperation? {
-        return transactions[tid]?.findOperation(jobId)
+        val tx = transactions[tid] ?: return null
+        return synchronized(tx) { tx.findOperation(jobId) }
     }
 
      // --- Capabilities ---
@@ -291,12 +334,20 @@ class TransactionManager(
     // --- Cleanup ---
     fun cancelTransaction(tid: Uuid) {
         val tx = transactions[tid] ?: return
-        val jobIds = synchronized(tx) {
-            tx.status = TransactionStatus.CANCELLED
-            tx.ops.map { it.jobId }
+        val alreadyTerminal = synchronized(tx) {
+            if (tx.status != TransactionStatus.PENDING && tx.status != TransactionStatus.RUNNING) {
+                // A worker already flipped this tx terminal — emitting CANCELLED now would be
+                // a second Finished for one tx (COMPLETED then CANCELLED reaching the UI).
+                true
+            } else {
+                tx.status = TransactionStatus.CANCELLED
+                false
+            }
         }
+        if (alreadyTerminal) return
+        val jobIds = synchronized(tx) { tx.ops.map { it.jobId } }
         dispatcher.cancelJobs(jobIds)
-        _events.tryEmit(TransactionEvent.Finished(tid, TransactionStatus.CANCELLED))
+        emitTerminal(TransactionEvent.Finished(tid, TransactionStatus.CANCELLED))
         onTransactionFinished?.invoke(tid, TransactionStatus.CANCELLED)
     }
 }
