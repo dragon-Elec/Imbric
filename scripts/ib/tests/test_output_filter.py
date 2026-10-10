@@ -146,6 +146,26 @@ class TestFailureDigest(unittest.TestCase):
     """
 
     def test_failure_block_passes_through(self):
+        # Cold filter, FAILURE-first (config-phase failure shape): no preceding FAILED
+        # line opens error context, so ONLY the two new patterns can save the block.
+        # Verified vacuous before the fix — this exact sequence passed identically with
+        # the old pattern set. If it ever goes green on a revert, the test is lying.
+        f = OutputFilter()
+        out = [
+            f.filter_line("FAILURE: Build failed with an exception."),
+            f.filter_line(""),
+            f.filter_line("* What went wrong:"),
+            f.filter_line("Execution failed for task ':compileKotlin'."),
+            f.filter_line("> Run with --scan to get full insights."),
+        ]
+        kept = [l for l in out if l]
+        self.assertIn("FAILURE: Build failed with an exception.", kept)
+        self.assertIn("* What went wrong:", kept)
+        self.assertIn("Execution failed for task ':compileKotlin'.", kept)
+        self.assertIn("> Run with --scan to get full insights.", kept)
+
+    def test_task_failure_block_passes_through(self):
+        # Task-phase shape: FAILED line opens context, reason block follows.
         f = OutputFilter()
         out = [
             f.filter_line("> Task :compileKotlin FAILED"),
@@ -153,12 +173,10 @@ class TestFailureDigest(unittest.TestCase):
             f.filter_line("FAILURE: Build failed with an exception."),
             f.filter_line("* What went wrong:"),
             f.filter_line("Execution failed for task ':compileKotlin'."),
-            f.filter_line("> Run with --scan to get full insights."),
         ]
         kept = [l for l in out if l]
         self.assertIn("* What went wrong:", kept)
         self.assertIn("Execution failed for task ':compileKotlin'.", kept)
-        self.assertIn("> Run with --scan to get full insights.", kept)
 
     def test_no_failure_no_stray_block(self):
         # Outside a failure the `> `/`* ` swallow rule still suppresses gradle noise

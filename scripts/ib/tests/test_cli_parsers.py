@@ -178,14 +178,38 @@ class TestPluginIsolation(unittest.TestCase):
 
     def test_command_modules_tuple(self):
         from scripts.ib.cli import COMMAND_MODULES
-        self.assertIn("test", COMMAND_MODULES)
-        self.assertIn("compile", COMMAND_MODULES)
+        cli_names = [cli for cli, _ in COMMAND_MODULES]
+        self.assertIn("test", cli_names)
+        self.assertIn("compile", cli_names)
+        self.assertIn("exec", cli_names)
         self.assertEqual(len(COMMAND_MODULES), len(set(COMMAND_MODULES)))
 
     def test_every_module_importable_and_registers(self):
         import importlib
         from scripts.ib.cli import COMMAND_MODULES
-        for name in COMMAND_MODULES:
-            mod = importlib.import_module(f"scripts.ib.commands.{name}")
-            self.assertTrue(hasattr(mod, "register"), f"{name} has no register()")
-            self.assertTrue(hasattr(mod, "run"), f"{name} has no run()")
+        for cli_name, module_name in COMMAND_MODULES:
+            mod = importlib.import_module(f"scripts.ib.commands.{module_name}")
+            self.assertTrue(hasattr(mod, "register"), f"{cli_name} has no register()")
+            self.assertTrue(hasattr(mod, "run"), f"{cli_name} has no run()")
+
+
+class TestCommandDispatch(unittest.TestCase):
+    """CLI name resolves to the right module — the `exec`/`exec_cmd` split broke this once.
+
+    Pre-fix: the dispatch checked the module name (`exec_cmd`) against the CLI name
+    (`exec`), so `ib exec` printed `Unknown command` and exited 1. Every CLI name must
+    resolve, especially ones whose module name differs.
+    """
+
+    def test_every_cli_name_resolves(self):
+        import importlib
+        from scripts.ib.cli import COMMAND_MODULES
+        for cli_name, module_name in COMMAND_MODULES:
+            mod = importlib.import_module(f"scripts.ib.commands.{module_name}")
+            self.assertTrue(callable(getattr(mod, "run", None)),
+                            f"{cli_name} -> {module_name} has no run()")
+
+    def test_exec_alias_resolves(self):
+        from scripts.ib.cli import COMMAND_MODULES
+        resolved = dict(COMMAND_MODULES).get("exec")
+        self.assertEqual(resolved, "exec_cmd")

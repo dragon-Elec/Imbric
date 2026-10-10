@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import time
 from ..daemon import PROJECT_ROOT
 from ..filter import OutputFilter
@@ -14,6 +15,7 @@ def run(args):
     start = time.time()
     
     try:
+        proc = None
         proc = subprocess.Popen(
             args.cmd,
             cwd=str(PROJECT_ROOT),

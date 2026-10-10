@@ -30,6 +30,7 @@ def run(args):
     start = time.time()
     
     try:
+        proc = None
         proc = subprocess.Popen(
             gradle_cmd,
             cwd=str(PROJECT_ROOT),
@@ -57,6 +58,7 @@ def run(args):
             sys.exit(proc.returncode)
     
     except KeyboardInterrupt:
-        proc.terminate()
+        if proc is not None:
+            proc.terminate()
         print("\nInterrupted.")
-        sys.exit(1)
+        sys.exit(130)

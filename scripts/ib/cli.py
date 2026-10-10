@@ -5,11 +5,15 @@ from .daemon import DaemonManager
 from .process import ProcessManager
 
 # Plugin command modules, registered and dispatched per-module so a single broken
-# import costs only its own command instead of the whole CLI.
+# file costs only its own command instead of the whole CLI.
+# (cli_name, module): the CLI name is what the user types; exec's module is exec_cmd
+# because `exec` is a Python keyword and can't be a module-level import name.
 COMMAND_MODULES = (
-    "clean", "doctor", "generate", "exec_cmd", "history", "run", "test",
-    "audit", "compile", "status", "processes", "memory", "bench",
-    "project", "lint",
+    ("clean", "clean"), ("doctor", "doctor"), ("generate", "generate"),
+    ("exec", "exec_cmd"), ("history", "history"), ("run", "run"),
+    ("test", "test"), ("audit", "audit"), ("compile", "compile"),
+    ("status", "status"), ("processes", "processes"), ("memory", "memory"),
+    ("bench", "bench"), ("project", "project"), ("lint", "lint"),
 )
 
 def cmd_dev(args):
@@ -59,17 +63,16 @@ def main():
     log_p.add_argument("-f", "--follow", action="store_true")
     log_p.add_argument("-n", "--lines", type=int, default=50)
 
-    # Register command plugins
-    # Per-module: one module failing to import (or a typo in one file) used to abort the
-    # whole block — ZERO commands registered, and the user saw 'invalid choice' with only
-    # a stale warning line for context. Each module registers independently so one bad
-    # import costs exactly its own command.
-    for name in COMMAND_MODULES:
+    # Per-module: one broken file used to abort the whole block — ZERO commands
+    # registered, and the user saw 'invalid choice'. Each module registers
+    # independently so one bad file costs exactly its own command. Catches Exception,
+    # not just ImportError: a typo is a SyntaxError, a crashing register() anything.
+    for cli_name, module_name in COMMAND_MODULES:
         try:
-            mod = importlib.import_module(f".commands.{name}", __package__)
+            mod = importlib.import_module(f".commands.{module_name}", __package__)
             mod.register(sub)
-        except ImportError as e:
-            print(f"Warning: '{name}' command not available: {e}")
+        except Exception as e:
+            print(f"Warning: '{cli_name}' command not available: {e}")
 
     args = parser.parse_args()
     if not args.command:
@@ -83,14 +86,15 @@ def main():
     
     if args.command in cmds:
         cmds[args.command](args)
-    elif args.command in COMMAND_MODULES:
-        try:
-            mod = importlib.import_module(f".commands.{args.command}", __package__)
-            mod.run(args)
-        except ImportError as e:
-            print(f"Error: '{args.command}' command not available: {e}")
-            sys.exit(1)
-    else:
+        return
+    module_name = dict(COMMAND_MODULES).get(args.command)
+    if module_name is None:
         print(f"Unknown command: {args.command}")
         parser.print_help()
+        sys.exit(1)
+    try:
+        mod = importlib.import_module(f".commands.{module_name}", __package__)
+        mod.run(args)
+    except Exception as e:
+        print(f"Error: '{args.command}' command not available: {e}")
         sys.exit(1)
