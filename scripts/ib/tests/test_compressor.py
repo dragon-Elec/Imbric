@@ -1,5 +1,5 @@
 import unittest
-from .compressor import (
+from ..compressor import (
     clean_path,
     compress_warnings,
     compress_errors,
@@ -7,7 +7,7 @@ from .compressor import (
     compress_glib_warnings,
     format_pipeline_timer
 )
-from .daemon import PROJECT_ROOT
+from ..daemon import PROJECT_ROOT
 
 class TestCompressor(unittest.TestCase):
     def test_clean_path(self):
