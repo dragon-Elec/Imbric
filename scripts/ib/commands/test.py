@@ -45,7 +45,7 @@ def _get_previously_failed_test_classes() -> list[str]:
 
 def register(subparsers):
     p = subparsers.add_parser("test", help="Run tests with clean, concise filtering")
-    p.add_argument("--tests", type=str, help="Run specific test class or method (e.g. 'GioBackendTest')")
+    p.add_argument("--tests", action="append", type=str, help="Run specific test class or method; repeatable (e.g. --tests FooTest --tests BarTest)")
     p.add_argument("--failed", action="store_true", help="Re-run only the test classes that failed in the previous run")
     p.add_argument("--rerun", action="store_true", help="Force test re-execution bypassing Gradle cache")
     p.add_argument("--continue", dest="continue_on_fail", action="store_true", help="Continue running tests even if some fail")
@@ -62,7 +62,10 @@ def run(args):
         for cls in failed_classes:
             gradle_cmd.extend(["--tests", cls])
     elif args.tests:
-        gradle_cmd.extend(["--tests", args.tests])
+        # repeatable: forward EVERY filter, gradle's --tests is append-friendly (last-wins
+        # silently dropped all but the final class)
+        for t in args.tests:
+            gradle_cmd.extend(["--tests", t])
 
     if args.rerun:
         gradle_cmd.append("--rerun-tasks")
@@ -140,8 +143,11 @@ def run(args):
             print(f"\nTests completed successfully in {elapsed_str}")
         else:
             print(f"\nTests failed (exit code {proc.returncode}) in {elapsed_str}")
+            # Propagate: a test wrapper that always exits 0 cannot gate anything
+            sys.exit(proc.returncode)
 
     except KeyboardInterrupt:
         if proc:
             proc.terminate()
         print("\nInterrupted.")
+        sys.exit(130)

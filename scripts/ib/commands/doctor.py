@@ -29,9 +29,14 @@ def run(args):
         
     # Check Gradle
     try:
+        try:
+            wrapper_props = (PROJECT_ROOT / "gradle" / "wrapper" / "gradle-wrapper.properties").read_text()
+            gradle_version = wrapper_props.split("gradle-")[1].split("-")[0]
+        except Exception:
+            gradle_version = "9.6.1"
         res = subprocess.run(["./gradlew", "--version"], cwd=str(PROJECT_ROOT), capture_output=True, text=True)
-        if "9.5.1" in res.stdout:
-            print("✓ Gradle 9.5.1 wrapper OK")
+        if gradle_version in res.stdout:
+            print(f"✓ Gradle {gradle_version} wrapper OK")
         else:
             print("✗ Gradle wrapper issue")
     except Exception:

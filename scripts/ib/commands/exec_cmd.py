@@ -38,7 +38,8 @@ def run(args):
             print(f"\nCompleted in {elapsed_str}")
         else:
             print(f"\nFailed (code {proc.returncode}) in {elapsed_str}")
-            
+            sys.exit(proc.returncode)
     except KeyboardInterrupt:
         proc.terminate()
         print("\nInterrupted.")
+        sys.exit(130)
