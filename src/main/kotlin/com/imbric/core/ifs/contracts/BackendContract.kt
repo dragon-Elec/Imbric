@@ -66,6 +66,7 @@ interface BackendContract {
      * Recursively counts all items (files + directories) and total size under the given URI.
      * Default implementation composes [list()] — backends can override with native implementations
      * (e.g., Tracker3 SPARQL index, SMB get_folder_size RPC).
+     * Symlinks are counted as files (own size) and are never followed into their target.
      *
      * @param uri The directory URI to count recursively
      * @param maxDepth Maximum recursion depth (default: unlimited)
@@ -85,7 +86,11 @@ interface BackendContract {
             try {
                 val items = list(dirUri)
                 for (info in items) {
-                    if (info.isDirectory) {
+                    if (info.isSymlink) {
+                        // A symlink is just an item with its own size — never walk into its target.
+                        files++
+                        totalSize += info.size
+                    } else if (info.isDirectory) {
                         dirs++
                         stack.add(info.uri to depth + 1)
                     } else {

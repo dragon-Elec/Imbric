@@ -15,5 +15,6 @@ data class ListingFile(
     override val iconName: String? = null,
     override val isInTrash: Boolean = false,
     override val isInRecent: Boolean = false,
-    override val isRemote: Boolean = false
+    override val isRemote: Boolean = false,
+    override val isSymlink: Boolean = false
 ) : FileEntry

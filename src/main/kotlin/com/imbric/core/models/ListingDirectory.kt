@@ -27,6 +27,7 @@ class ListingDirectory(initialCapacity: Int = 512) {
     private var isInTrashes = BooleanArray(initialCapacity)
     private var isInRecents = BooleanArray(initialCapacity)
     private var isRemotes = BooleanArray(initialCapacity)
+    private var isSymlinks = BooleanArray(initialCapacity)
 
     /** URI → array index map. Built after sorting, invalidated only by clear(). */
     private var uriIndex: HashMap<String, Int> = HashMap(initialCapacity)
@@ -47,6 +48,7 @@ class ListingDirectory(initialCapacity: Int = 512) {
         isInTrashes = isInTrashes.copyOf(newCapacity)
         isInRecents = isInRecents.copyOf(newCapacity)
         isRemotes = isRemotes.copyOf(newCapacity)
+        isSymlinks = isSymlinks.copyOf(newCapacity)
     }
 
     /** Add a file entry. Returns the index. */
@@ -66,6 +68,7 @@ class ListingDirectory(initialCapacity: Int = 512) {
         isInTrashes[i] = entry.isInTrash
         isInRecents[i] = entry.isInRecent
         isRemotes[i] = entry.isRemote
+        isSymlinks[i] = entry.isSymlink
         return i
     }
 
@@ -86,6 +89,7 @@ class ListingDirectory(initialCapacity: Int = 512) {
         isInTrashes[i] = listing.isInTrash
         isInRecents[i] = listing.isInRecent
         isRemotes[i] = listing.isRemote
+        isSymlinks[i] = listing.isSymlink
         return i
     }
 
@@ -230,6 +234,7 @@ class ListingDirectory(initialCapacity: Int = 512) {
         val tmpIsInTrash = isInTrashes[i]; isInTrashes[i] = isInTrashes[j]; isInTrashes[j] = tmpIsInTrash
         val tmpIsInRecent = isInRecents[i]; isInRecents[i] = isInRecents[j]; isInRecents[j] = tmpIsInRecent
         val tmpIsRemote = isRemotes[i]; isRemotes[i] = isRemotes[j]; isRemotes[j] = tmpIsRemote
+        val tmpIsSymlink = isSymlinks[i]; isSymlinks[i] = isSymlinks[j]; isSymlinks[j] = tmpIsSymlink
 
         val tmpSize = sizes[i]; sizes[i] = sizes[j]; sizes[j] = tmpSize
         val tmpModified = modifiedTimes[i]; modifiedTimes[i] = modifiedTimes[j]; modifiedTimes[j] = tmpModified
@@ -269,6 +274,7 @@ class ListingDirectory(initialCapacity: Int = 512) {
         override val isInTrash: Boolean get() = isInTrashes[index]
         override val isInRecent: Boolean get() = isInRecents[index]
         override val isRemote: Boolean get() = isRemotes[index]
+        override val isSymlink: Boolean get() = isSymlinks[index]
 
         override fun equals(other: Any?): Boolean {
             if (this === other) return true

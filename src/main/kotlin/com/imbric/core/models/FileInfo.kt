@@ -15,7 +15,7 @@ data class FileInfo(
     override val pathType: PathType = PathType.PHYSICAL,
     override val displayName: String = name,
     override val isDirectory: Boolean,
-    val isSymlink: Boolean = false,
+    override val isSymlink: Boolean = false,
     val symlinkTarget: String? = null,
     override val size: Long = 0L,
     override val mimeType: String = "application/octet-stream",

@@ -41,6 +41,9 @@ object GioTypeMappers {
         // size 0, directory mime, null mtime — Nautilus parity). null (non-links,
         // broken links, ELOOP) keeps the symlink's own type.
         val isDir = (effectiveType ?: gioInfo.fileType) == org.gnome.gio.FileType.DIRECTORY
+        // Read once: standard::is-symlink is part of the shared listing attribute set
+        // (FileEntry.listingAttributesFor), so this is a field read, not an extra FFI call.
+        val isLink = gioInfo.isSymlink
         
         return ListingFile(
             name = name,
@@ -55,7 +58,8 @@ object GioTypeMappers {
             isHidden = name.startsWith("."),
             isInTrash = parentUri.startsWith("trash:///"),
             isInRecent = parentUri.startsWith("recent:///"),
-            isRemote = parentIsRemote
+            isRemote = parentIsRemote,
+            isSymlink = isLink
         )
     }
 

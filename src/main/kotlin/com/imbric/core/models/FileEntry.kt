@@ -17,6 +17,8 @@ sealed interface FileEntry {
     val path: String
     val pathType: PathType
     val isDirectory: Boolean
+    val isSymlink: Boolean
+        get() = false
     val size: Long
     val mimeType: String
     val modifiedTime: Instant?
