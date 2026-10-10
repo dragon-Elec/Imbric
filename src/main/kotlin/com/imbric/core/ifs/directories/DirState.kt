@@ -19,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlin.coroutines.EmptyCoroutineContext
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Live state of an opened directory.
@@ -37,7 +38,12 @@ class DirState(
     /** Optional pipeline timing tracer for performance debugging. */
     var pipelineTimer: PipelineTimer? = null
 ) {
-    /** Serializes writes to _baseDirectory, _deltas, _itemsList across refresh/onActive/handleEventBatch. */
+    /**
+     * Serializes writes to _baseDirectory, _deltas, _itemsList and fileCache across
+     * refresh/onActive/handleEventBatch/flushEnrichmentBatch/enrichItem.
+     * Not reentrant — never call a suspending helper that takes it again from inside a
+     * `withLock` block (see [enrichItemLocked]).
+     */
     private val stateMutex = Mutex()
     private val enrichmentSemaphore = Semaphore(4)
     private val enrichmentChannel = Channel<FileInfo>(Channel.UNLIMITED)
@@ -91,6 +97,15 @@ class DirState(
     private val _loadError = MutableStateFlow<Exception?>(null)
     /** The last error that occurred during loading, if any. Cleared on next refresh. */
     val loadError: StateFlow<Exception?> = _loadError.asStateFlow()
+
+    /**
+     * Monotonic loading generation shared by [refresh] and [onActive] (both drive the
+     * spinner and both install themselves as `refreshJob`). Each new load claims the
+     * next epoch *before* launching, so a superseded job — whose `finally` runs while
+     * the newer one is joining it — can tell it is stale and must not clear
+     * `_isLoading` or publish a load error over the newer load's state.
+     */
+    private val loadEpoch = AtomicLong(0L)
 
     /** The type of directory this DirState represents (derived from URI scheme). */
     val directoryType: DirectoryType = DirectoryType.fromUri(uri)
@@ -169,6 +184,9 @@ class DirState(
         val oldJob = refreshJob
         val timer = pipelineTimer
         val timerContext = timer?.asContextElement() ?: EmptyCoroutineContext
+        // Claim a new loading generation BEFORE launching: the old job's `finally`
+        // runs while we join it below and must already see itself as superseded.
+        val epoch = loadEpoch.incrementAndGet()
         // Set loading flag SYNCHRONOUSLY before launching coroutine to prevent onActive() race
         _isLoading.value = true
         _loadError.value = null
@@ -195,7 +213,6 @@ class DirState(
                     if (itemToStore is FileInfo) enrichable.add(itemToStore)
                 }
                 dir.sortWith(FileEntry.comparatorFor(sortKey))
-                dir.buildUriIndex()
 
                 // Clear deltas and build composite
                 val comparator = FileEntry.comparatorFor(sortKey)
@@ -221,18 +238,20 @@ class DirState(
                         fileCache[dir.getUri(i)] = dir.get(i)
                     }
 
-                    // Enrichment AFTER listing — pass rebuild=false, rebuild once after loop
+                    // Enrichment AFTER listing — already inside stateMutex, so use the
+                    // locked variant and rebuild once after the loop
                     for (info in enrichable) {
-                        enrichItem(info, rebuild = false)
+                        enrichItemLocked(info)
                     }
                     rebuildComposite()
                 }
             } catch (e: Exception) {
-                if (e !is kotlinx.coroutines.CancellationException) {
+                // Fail-soft: a superseded job must not publish its error over a newer load.
+                if (e !is kotlinx.coroutines.CancellationException && epoch == loadEpoch.get()) {
                     _loadError.value = e
                 }
             } finally {
-                _isLoading.value = false
+                if (epoch == loadEpoch.get()) _isLoading.value = false
                 timer?.mark("dir_refresh_done", itemCount = _baseDirectory.size)
             }
         }
@@ -338,49 +357,88 @@ class DirState(
         fetchedInfos.forEach { enrichItem(it) }
     }
 
-    private fun enrichItem(info: FileInfo, rebuild: Boolean = true) {
-        if (!enrichedUris.add(info.uri)) return
-
+    /** Returns [info] with its emblems applied, or null when there are none to record. */
+    private fun applyEmblems(info: FileInfo): FileInfo? {
         val emblems = mutableListOf<String>()
         if (info.isSymlink) emblems.add("emblem-symbolic-link")
         if (!info.isWritable) emblems.add("emblem-readonly")
         val customEmblems = info.attributes["metadata::emblems"] as? List<*>
         customEmblems?.filterIsInstance<String>()?.let { emblems.addAll(it) }
+        if (emblems.isEmpty()) return null
+        return info.copy(attributes = info.attributes + mapOf("std::emblems" to emblems))
+    }
 
-        var currentInfo = info
-        if (emblems.isNotEmpty()) {
-            currentInfo = currentInfo.copy(
-                attributes = currentInfo.attributes + mapOf("std::emblems" to emblems)
-            )
-            val current = _deltas.value
-            _deltas.value = current.copy(enrichments = current.enrichments + (currentInfo.uri to currentInfo))
-            if (rebuild) rebuildComposite()
+    /**
+     * Records emblems into the enrichment delta and queues the item for the async
+     * enrichment workers.
+     *
+     * The read-modify-write of [_deltas] runs under [stateMutex]: it races with
+     * flushEnrichmentBatch, handleEventBatch and the refresh/onActive rebases, which
+     * would otherwise silently drop another writer's additions/deletions.
+     */
+    private suspend fun enrichItem(info: FileInfo, rebuild: Boolean = true) {
+        if (!enrichedUris.add(info.uri)) return
+        val enriched = applyEmblems(info)
+        if (enriched != null) {
+            stateMutex.withLock {
+                val current = _deltas.value
+                _deltas.value = current.copy(enrichments = current.enrichments + (enriched.uri to enriched))
+                if (rebuild) rebuildComposite()
+            }
         }
+        enrichmentChannel.trySend(enriched ?: info)
+    }
 
-        enrichmentChannel.trySend(currentInfo)
+    /**
+     * [enrichItem] for callers that already hold [stateMutex] — the mutex is not
+     * reentrant, so it must not be taken again here. Never rebuilds: the caller
+     * rebuilds once after its loop.
+     */
+    private fun enrichItemLocked(info: FileInfo) {
+        if (!enrichedUris.add(info.uri)) return
+        val enriched = applyEmblems(info)
+        if (enriched != null) {
+            val current = _deltas.value
+            _deltas.value = current.copy(enrichments = current.enrichments + (enriched.uri to enriched))
+        }
+        enrichmentChannel.trySend(enriched ?: info)
     }
 
     /**
      * Viewport-driven enrichment: only enrich items visible in the viewport.
      * Called by the UI when the visible items change (scroll, resize).
+     *
+     * Not a suspend function (UI entry point): the delta writes are mutex-guarded, so
+     * the batch is handed to this DirState's scope instead of blocking the caller.
      */
     fun enrichVisibleItems(visibleUris: List<String>) {
-        val deltas = _deltas.value
-        visibleUris.forEach { uri ->
-            if (enrichedUris.contains(uri)) return@forEach
-            // Check additions/enrichments first (these are FileInfo objects)
-            val deltaEntry = deltas.additions[uri] ?: deltas.enrichments[uri]
-            if (deltaEntry != null) {
-                if (!deltaEntry.isDirectory) enrichItem(deltaEntry)
-                return@forEach
+        // Collect under the mutex inside the coroutine: point-reads of fileCache/
+        // _baseDirectory race with refresh/onActive's under-lock mutations (plain
+        // LinkedHashMap — a structural read during clear()/put is undefined).
+        // Application then runs outside the lock (enrichItem takes it per call).
+        scope.launch {
+            val pending = stateMutex.withLock {
+                val deltas = _deltas.value
+                val collected = mutableListOf<FileInfo>()
+                visibleUris.forEach { uri ->
+                    if (enrichedUris.contains(uri)) return@forEach
+                    // Check additions/enrichments first (these are FileInfo objects)
+                    val deltaEntry = deltas.additions[uri] ?: deltas.enrichments[uri]
+                    if (deltaEntry != null) {
+                        if (!deltaEntry.isDirectory) collected.add(deltaEntry)
+                        return@forEach
+                    }
+                    // For base directory entries, look up the original FileInfo from fileCache
+                    val idx = _baseDirectory.findIndex(uri)
+                    if (idx == -1) return@forEach
+                    val cached = fileCache[uri]
+                    if (cached is FileInfo && !cached.isDirectory) {
+                        collected.add(cached)
+                    }
+                }
+                collected
             }
-            // For base directory entries, look up the original FileInfo from fileCache
-            val idx = _baseDirectory.findIndex(uri)
-            if (idx == -1) return@forEach
-            val cached = fileCache[uri]
-            if (cached is FileInfo && !cached.isDirectory) {
-                enrichItem(cached)
-            }
+            for (info in pending) enrichItem(info)
         }
     }
 
@@ -462,6 +520,10 @@ class DirState(
         val oldJob = refreshJob
         val timer = pipelineTimer
         val timerContext = timer?.asContextElement() ?: EmptyCoroutineContext
+        // Shares the generation counter with refresh(): both paths own the spinner and
+        // both replace refreshJob, so a revalidate superseded by a later refresh (or vice
+        // versa) must not clear _isLoading while the newer one is still working.
+        val epoch = loadEpoch.incrementAndGet()
         // A warm revalidate (cached listing already present) must not flash the spinner:
         // the listing only swaps if the changed-check below finds something different.
         // First load (empty listing) keeps the original loading-flag behaviour.
@@ -481,7 +543,6 @@ class DirState(
                     if (it is FileInfo) enrichable.add(it)
                 }
                 dir.sortWith(FileEntry.comparatorFor(sortKey))
-                dir.buildUriIndex()
 
                 // Compare with current base (quick size + content check).
                 // modifiedTime must be part of the fingerprint: an in-place edit that keeps
@@ -530,18 +591,18 @@ class DirState(
                         }
 
                         for (info in enrichable) {
-                            enrichItem(info, rebuild = false)
+                            enrichItemLocked(info)
                         }
                         rebuildComposite()
                     }
                 }
                 timer?.mark("dir_revalidate_done", detail = uri, itemCount = dir.size)
             } catch (e: Exception) {
-                if (e !is CancellationException) {
+                if (e !is CancellationException && epoch == loadEpoch.get()) {
                     _loadError.value = e
                 }
             } finally {
-                _isLoading.value = false
+                if (epoch == loadEpoch.get()) _isLoading.value = false
             }
         }
         refreshJob = newJob
@@ -564,6 +625,9 @@ class DirState(
      */
     fun destroy() {
         if (isDestroyed.compareAndSet(false, true)) {
+            // Retire any in-flight load generation so its finally block cannot resurrect
+            // loading/error state after teardown.
+            loadEpoch.incrementAndGet()
             job.cancel()
             _baseDirectory = ListingDirectory(0)
             _compositeView = null
