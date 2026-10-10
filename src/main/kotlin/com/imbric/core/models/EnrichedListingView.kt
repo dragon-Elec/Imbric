@@ -15,6 +15,12 @@ package com.imbric.core.models
  * (whole-row reads only, so never torn). When [com.imbric.core.ifs.directories.DirState.sortBy]
  * re-sorts the base in place, this view's reads are transiently reordered until DirState publishes
  * the rebuilt view microseconds later. The view's own state (mapping, deltas) stays immutable.
+ *
+ * **Zero-delta fast path:** when additions, deletions AND enrichments are all empty there is
+ * nothing to merge, so rows are re-viewed through the base's own lazy [ListingDirectory.asList]
+ * delegate — the same zero-overhead view a static directory read uses. No mapping array is
+ * built and no base row is walked. Every rebuild still creates a new instance, so one rebuild
+ * still produces exactly one view and the caller's revision/emission behavior is unchanged.
  */
 class EnrichedListingView(
     private val base: ListingDirectory,
@@ -25,63 +31,87 @@ class EnrichedListingView(
 ) : AbstractList<FileEntry>() {
 
     private val additionsList: List<FileInfo>
-    private val mapping: IntArray
+
+    /**
+     * Zero-delta delegate: the base listing's lazy view. Assigned only when
+     * additions, deletions AND enrichments are all empty — rows then come
+     * straight from the cached base, with no mapping array built at all.
+     */
+    private val passthrough: List<FileEntry>?
+
+    /** Base-index → view-index mapping; null while [passthrough] is active. */
+    private val mapping: IntArray?
 
     init {
         additionsList = additions.values.sortedWith(comparator)
 
-        // Fast path: no deltas
-        if (additions.isEmpty() && deletions.isEmpty()) {
-            mapping = IntArray(base.size) { it }
+        // Fast path: zero deltas of any kind — delegate to the base listing.
+        // A fresh instance is still created on every rebuild, so identity-based
+        // StateFlow emission and the caller's revision bump behave as today.
+        if (additions.isEmpty() && deletions.isEmpty() && enrichments.isEmpty()) {
+            passthrough = base.asList()
+            mapping = null
         } else {
-            // Two-pointer merge: base (skipping deletions/additions) + sorted additions
-            val result = IntArrayList(base.size + additionsList.size)
-            var baseIdx = 0
-            var addIdx = 0
+            passthrough = null
 
-            while (baseIdx < base.size && addIdx < additionsList.size) {
-                val baseUri = base.getUri(baseIdx)
+            // Fast path: no additions/deletions, only enrichment overlays.
+            if (additions.isEmpty() && deletions.isEmpty()) {
+                mapping = IntArray(base.size) { it }
+            } else {
+                // Two-pointer merge: base (skipping deletions/additions) + sorted additions
+                val result = IntArrayList(base.size + additionsList.size)
+                var baseIdx = 0
+                var addIdx = 0
 
-                // Skip deleted or modified base entries (modified = in additions)
-                if (baseUri in deletions || baseUri in additions) {
-                    baseIdx++
-                    continue
+                while (baseIdx < base.size && addIdx < additionsList.size) {
+                    val baseUri = base.getUri(baseIdx)
+
+                    // Skip deleted or modified base entries (modified = in additions)
+                    if (baseUri in deletions || baseUri in additions) {
+                        baseIdx++
+                        continue
+                    }
+
+                    val addEntry = additionsList[addIdx]
+                    val cmp = comparator.compare(base.get(baseIdx), addEntry)
+                    if (cmp <= 0) {
+                        result.add(baseIdx)
+                        baseIdx++
+                    } else {
+                        result.add(-(addIdx + 1))
+                        addIdx++
+                    }
                 }
 
-                val addEntry = additionsList[addIdx]
-                val cmp = comparator.compare(base.get(baseIdx), addEntry)
-                if (cmp <= 0) {
-                    result.add(baseIdx)
+                // Drain remaining base entries
+                while (baseIdx < base.size) {
+                    val baseUri = base.getUri(baseIdx)
+                    if (baseUri !in deletions && baseUri !in additions) {
+                        result.add(baseIdx)
+                    }
                     baseIdx++
-                } else {
+                }
+
+                // Drain remaining additions
+                while (addIdx < additionsList.size) {
                     result.add(-(addIdx + 1))
                     addIdx++
                 }
-            }
 
-            // Drain remaining base entries
-            while (baseIdx < base.size) {
-                val baseUri = base.getUri(baseIdx)
-                if (baseUri !in deletions && baseUri !in additions) {
-                    result.add(baseIdx)
-                }
-                baseIdx++
+                mapping = result.toArray()
             }
-
-            // Drain remaining additions
-            while (addIdx < additionsList.size) {
-                result.add(-(addIdx + 1))
-                addIdx++
-            }
-
-            mapping = result.toArray()
         }
     }
 
-    override val size: Int get() = mapping.size
+    override val size: Int get() = passthrough?.size ?: mapping!!.size
 
     override fun get(index: Int): FileEntry {
-        val encoded = mapping[index]
+        val direct = passthrough
+        if (direct != null) return direct[index]
+
+        // passthrough and mapping are assigned as a pair in init,
+        // so mapping is non-null whenever passthrough is null.
+        val encoded = mapping!![index]
         return if (encoded >= 0) {
             val uri = base.getUri(encoded)
             enrichments[uri] ?: base.get(encoded)

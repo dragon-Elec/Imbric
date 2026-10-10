@@ -42,7 +42,11 @@ class DirState(
 ) {
     /**
      * Serializes writes to _baseDirectory, _deltas, _itemsList and fileCache across
-     * refresh/onActive/handleEventBatch/flushEnrichmentBatch/enrichItem.
+     * refresh/onActive/handleEventBatch/flushEnrichmentBatch/enrichItem. It also
+     * guards the read paths that walk the installed listing (refresh's dedup
+     * pass, onActive's change compare, containsFile): sortBy mutates
+     * _baseDirectory in place under this lock, so an unsynchronized reader
+     * can observe a half-applied permutation.
      * Not reentrant — never call a suspending helper that takes it again from inside a
      * `withLock` block (see [enrichItemLocked]).
      */
@@ -246,9 +250,14 @@ class DirState(
     }
 
     private suspend fun flushEnrichmentBatch(batch: List<FileEntry>) {
+        val enrichedBatch = batch.filterIsInstance<FileInfo>()
+        // Nothing to merge once the non-FileInfo rows are dropped: return
+        // before touching _deltas so no composite is published for an empty
+        // batch (no emission, no pulse replay).
+        if (enrichedBatch.isEmpty()) return
         stateMutex.withLock {
             val current = _deltas.value
-            val newEnrichments = current.enrichments + batch.filterIsInstance<FileInfo>().associateBy { it.uri }
+            val newEnrichments = current.enrichments + enrichedBatch.associateBy { it.uri }
             _deltas.value = current.copy(enrichments = newEnrichments)
             rebuildComposite()
         }
@@ -288,14 +297,29 @@ class DirState(
                 // is read straight from its URI index — O(1) — and the transient
                 // wrapper is discarded once the comparison is done instead of being
                 // retained in the cache.
-                for (item in allItems) {
-                    val oldIndex = _baseDirectory.findIndex(item.uri)
-                    val cached = if (oldIndex != -1) _baseDirectory.get(oldIndex) else null
-                    val itemToStore = if (cached != null && cached.modifiedTime == item.modifiedTime && cached.size == item.size) {
-                        cached
-                    } else {
-                        item
+                //
+                // The old-row reads happen under stateMutex: sortBy mutates the
+                // installed listing in place (sortWith → applyPermutation +
+                // buildUriIndex) under the same lock, so an unlocked findIndex/get
+                // could observe a half-applied permutation. Same shape as
+                // enrichVisibleItems: collect the decisions inside the lock, then
+                // apply them to the local directory outside it.
+                val deduped = stateMutex.withLock {
+                    val decisions = ArrayList<FileEntry>(allItems.size)
+                    for (item in allItems) {
+                        val oldIndex = _baseDirectory.findIndex(item.uri)
+                        val cached = if (oldIndex != -1) _baseDirectory.get(oldIndex) else null
+                        decisions.add(
+                            if (cached != null && cached.modifiedTime == item.modifiedTime && cached.size == item.size) {
+                                cached
+                            } else {
+                                item
+                            }
+                        )
                     }
+                    decisions
+                }
+                for (itemToStore in deduped) {
                     dir.add(itemToStore)
                     // Track FileInfo items for enrichment (before SoA flattens them)
                     if (itemToStore is FileInfo) enrichable.add(itemToStore)
@@ -575,12 +599,22 @@ class DirState(
     val isNotEmpty: Boolean
         get() = _itemsList.value.isNotEmpty()
 
-    /** Returns true if the directory contains a file with the given URI. */
-    fun containsFile(uri: String): Boolean {
+    /**
+     * Returns true if the directory contains a file with the given URI.
+     *
+     * Suspend (like [enrichItem]): the final lookup walks the installed
+     * listing's uriIndex, which sortBy rebuilds in place under [stateMutex],
+     * so the whole check runs inside the lock. The [StateFlow] reads are
+     * atomic on their own, but they stay inside for a single consistent
+     * answer against the base directory.
+     */
+    suspend fun containsFile(uri: String): Boolean = stateMutex.withLock {
         val deltas = _deltas.value
-        if (uri in deltas.deletions) return false
-        if (uri in deltas.additions) return true
-        return _baseDirectory.containsUri(uri)
+        when {
+            uri in deltas.deletions -> false
+            uri in deltas.additions -> true
+            else -> _baseDirectory.containsUri(uri)
+        }
     }
 
     /** Returns the FileEntry for the file with the given name, or null if not found. */
@@ -685,22 +719,30 @@ class DirState(
                 // modifiedTime must be part of the fingerprint: an in-place edit that keeps
                 // the byte count identical (configs, logs, source files) is otherwise invisible
                 // and the listing would stay stale until an external watch event arrives.
-                val current = _baseDirectory
-                var changed = dir.size != current.size
-                if (!changed) {
-                    for (i in 0 until dir.size) {
-                        val next = dir.get(i)
-                        val prev = current.get(i)
-                        if (dir.getUri(i) != current.getUri(i) ||
-                            next.size != prev.size ||
-                            next.modifiedTime != prev.modifiedTime ||
-                            next.isDirectory != prev.isDirectory ||
-                            next.mimeType != prev.mimeType
-                        ) {
-                            changed = true
-                            break
+                // The compare reads the installed listing, so it runs under stateMutex
+                // (same reason as refresh's dedup pass above): an unlocked read races
+                // sortBy's in-place mutation of _baseDirectory. Only the compare is
+                // collected here; the adoption swap below stays in its own lock block
+                // — the mutex is not reentrant.
+                val changed = stateMutex.withLock {
+                    val current = _baseDirectory
+                    var changed = dir.size != current.size
+                    if (!changed) {
+                        for (i in 0 until dir.size) {
+                            val next = dir.get(i)
+                            val prev = current.get(i)
+                            if (dir.getUri(i) != current.getUri(i) ||
+                                next.size != prev.size ||
+                                next.modifiedTime != prev.modifiedTime ||
+                                next.isDirectory != prev.isDirectory ||
+                                next.mimeType != prev.mimeType
+                            ) {
+                                changed = true
+                                break
+                            }
                         }
                     }
+                    changed
                 }
 
                 if (changed) {
