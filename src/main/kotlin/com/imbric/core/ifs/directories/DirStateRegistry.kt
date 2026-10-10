@@ -24,6 +24,14 @@ import kotlinx.coroutines.CoroutineScope
  * This is the Kotlin equivalent of Nautilus's shared directory objects
  * (same URI = same NautilusDirectory).
  *
+ * Pin model (viewer ownership):
+ * - [pin] — an active viewer (open tab) is showing this URI. A pinned URI is never
+ *   evicted by the LRU, so its pane can never blank out from under the user.
+ * - [unpin] — the viewer navigated away. The instance stays cached for instant
+ *   return, but becomes evictable again.
+ * - [release] — the viewer closed. Drops the pin and, if the refcount reaches zero,
+ *   destroys the instance immediately instead of waiting for eviction.
+ *
  * Usage:
  * ```kotlin
  * // Production: dispatch by scheme via BackendRegistry
@@ -31,6 +39,11 @@ import kotlinx.coroutines.CoroutineScope
  *
  * // Tests: single backend, no dispatch
  * val registry = DirStateRegistry(fakeBackend, scope)
+ *
+ * // Tab lifecycle
+ * val state = registry.pin(uri)   // tab opened
+ * registry.unpin(uri)             // navigated away, still cached
+ * registry.release(uri)           // tab closed
  * ```
  */
 class DirStateRegistry(
@@ -44,19 +57,13 @@ class DirStateRegistry(
     private val maxSize: Int = DEFAULT_MAX_SIZE
 ) {
     /** Access-ordered LRU cache. Most-recently-accessed entries are at the tail. */
-    private val cache = object : LinkedHashMap<String, DirState>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DirState>?): Boolean {
-            if (size > maxSize && eldest != null) {
-                // Evict the least-recently-used DirState — stop its native monitor
-                eldest.value.destroy()
-                return true
-            }
-            return false
-        }
-    }
+    private val cache = LinkedHashMap<String, DirState>(16, 0.75f, true)
 
     /** Synchronization lock for cache access. */
     private val lock = Any()
+
+    /** Viewer refcounts per URI. Guarded by [lock]. At 0 (or absent) the URI is evictable. */
+    private val pinCounts = HashMap<String, Int>()
 
     /**
      * Resolves the correct [BackendContract] for the given URI.
@@ -66,25 +73,98 @@ class DirStateRegistry(
         return backendResolver?.invoke(uri) ?: fallbackBackend
     }
 
+    /** Current pin count for [uri]. Must be called while holding [lock]. */
+    private fun refCountLocked(uri: String): Int = pinCounts[uri] ?: 0
+
+    /**
+     * Selects LRU victims and detaches them from [cache] until the cache fits [maxSize].
+     * Pinned URIs are skipped, so an over-budget cache can temporarily retain extra entries.
+     *
+     * Must be called while holding [lock]. This only detaches the victims; the caller
+     * destroys them after releasing the lock.
+     */
+    private fun evictOverflowLocked(): List<DirState> {
+        if (cache.size <= maxSize) return emptyList()
+
+        // Access-ordered LinkedHashMap iterates eldest-first, so head = LRU.
+        // Snapshot the keys first: removing while walking the live key set is unsafe.
+        val eldestFirst: List<String> = ArrayList(cache.keys)
+        val victimUris = ArrayList<String>()
+        for (candidate in eldestFirst) {
+            if (cache.size - victimUris.size <= maxSize) break
+            if (refCountLocked(candidate) > 0) continue
+            victimUris.add(candidate)
+        }
+
+        val victims = ArrayList<DirState>(victimUris.size)
+        victimUris.forEach { victimUri -> cache.remove(victimUri)?.let { victims.add(it) } }
+        return victims
+    }
+
     /**
      * Returns an existing [DirState] for the given URI, or creates a new one.
      * If the cached instance has been destroyed, a new one is created.
      * Thread-safe: uses synchronized access to prevent duplicate creation.
      */
     fun getOrCreate(uri: String): DirState {
-        synchronized(lock) {
+        var evicted: List<DirState> = emptyList()
+        val state = synchronized(lock) {
             val existing = cache[uri]
             if (existing != null && !existing.isDestroyedState) {
                 existing.pipelineTimer = pipelineTimer
-                return existing
+                return@synchronized existing
             }
             // Either not cached or destroyed — create fresh
             cache.remove(uri)
             val backend = resolveBackend(uri)
             val fresh = DirState(uri, backend, scope, pipelineTimer = pipelineTimer)
             cache[uri] = fresh
-            return fresh
+            evicted = evictOverflowLocked()
+            fresh
         }
+        // Destroy evicted states *after* leaving the synchronized block: destroy() runs
+        // teardown callbacks that can re-enter getOrCreate, and calling it inside the
+        // LinkedHashMap mutation would corrupt the cache mid-insert.
+        evicted.forEach { it.destroy() }
+        return state
+    }
+
+    /**
+     * Returns the [DirState] for [uri] and registers an active viewer, making the
+     * instance immune to LRU eviction until the matching [unpin] or [release].
+     */
+    fun pin(uri: String): DirState {
+        val state = getOrCreate(uri)
+        synchronized(lock) { pinCounts[uri] = refCountLocked(uri) + 1 }
+        return state
+    }
+
+    /**
+     * Drops one viewer reference for [uri], floored at zero. The cached [DirState] is
+     * left intact — it simply becomes evictable again.
+     */
+    fun unpin(uri: String) {
+        synchronized(lock) {
+            val current = pinCounts[uri] ?: return
+            if (current <= 1) pinCounts.remove(uri) else pinCounts[uri] = current - 1
+        }
+    }
+
+    /**
+     * Drops one viewer reference for [uri] and, if no viewers remain, removes the entry
+     * from the cache and destroys it immediately.
+     */
+    fun release(uri: String) {
+        unpin(uri)
+        val state = synchronized(lock) {
+            if (refCountLocked(uri) > 0) null else cache.remove(uri)
+        }
+        state?.destroy()
+    }
+
+    /** Returns true when at least one viewer has pinned [uri] and is blocking eviction. */
+    fun isPinned(uri: String): Boolean {
+        return synchronized(lock) { refCountLocked(uri) > 0 }
     }
 
     /**

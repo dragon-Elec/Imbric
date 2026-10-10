@@ -462,7 +462,11 @@ class DirState(
         val oldJob = refreshJob
         val timer = pipelineTimer
         val timerContext = timer?.asContextElement() ?: EmptyCoroutineContext
-        _isLoading.value = true
+        // A warm revalidate (cached listing already present) must not flash the spinner:
+        // the listing only swaps if the changed-check below finds something different.
+        // First load (empty listing) keeps the original loading-flag behaviour.
+        val isWarmRevalidate = _baseDirectory.size > 0
+        if (!isWarmRevalidate) _isLoading.value = true
         val newJob = scope.launch(ioDispatcher + timerContext) {
             oldJob?.cancelAndJoin()
             try {
@@ -479,12 +483,22 @@ class DirState(
                 dir.sortWith(FileEntry.comparatorFor(sortKey))
                 dir.buildUriIndex()
 
-                // Compare with current base (quick size + content check)
+                // Compare with current base (quick size + content check).
+                // modifiedTime must be part of the fingerprint: an in-place edit that keeps
+                // the byte count identical (configs, logs, source files) is otherwise invisible
+                // and the listing would stay stale until an external watch event arrives.
                 val current = _baseDirectory
                 var changed = dir.size != current.size
                 if (!changed) {
                     for (i in 0 until dir.size) {
-                        if (dir.getUri(i) != current.getUri(i) || dir.get(i).size != current.get(i).size) {
+                        val next = dir.get(i)
+                        val prev = current.get(i)
+                        if (dir.getUri(i) != current.getUri(i) ||
+                            next.size != prev.size ||
+                            next.modifiedTime != prev.modifiedTime ||
+                            next.isDirectory != prev.isDirectory ||
+                            next.mimeType != prev.mimeType
+                        ) {
                             changed = true
                             break
                         }
@@ -505,6 +519,15 @@ class DirState(
                         _compositeView = composite
                         _deltas.value = DeltaState()
                         _itemsList.value = composite
+
+                        // Rebuild the cache from the NEW listing. The cached entries are
+                        // ArrayBackedEntry wrappers bound to the listing that produced them —
+                        // leaving the old ones would resolve indices against the previous
+                        // directory's parallel arrays (stale metadata) and keep it reachable.
+                        fileCache.clear()
+                        for (i in 0 until dir.size) {
+                            fileCache[dir.getUri(i)] = dir.get(i)
+                        }
 
                         for (info in enrichable) {
                             enrichItem(info, rebuild = false)
