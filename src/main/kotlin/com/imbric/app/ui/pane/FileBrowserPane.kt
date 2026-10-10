@@ -17,13 +17,11 @@ import com.imbric.app.ui.LayoutMode
 import com.imbric.app.viewmodel.FileBrowserState
 import com.imbric.core.ifs.backends.gio.support.PipelineTimer
 import com.imbric.core.models.FileEntry
-import com.imbric.core.models.SortKey
 
 @Composable
 fun FileBrowserPane(
     state: FileBrowserState,
     layoutMode: LayoutMode,
-    sortKey: SortKey,
     forceShowAnimation: Boolean,
     pipelineTimer: PipelineTimer?,
     onReportDone: () -> Unit,
@@ -31,15 +29,11 @@ fun FileBrowserPane(
     onVisibleItemsChanged: ((List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    // Sort items reactively when either items or sortKey changes
-    val sortedItems = remember(state.items, sortKey) {
-        val comparator = FileEntry.comparatorFor(sortKey)
-        state.items.sortedWith(comparator)
-    }
-
-    LaunchedEffect(state.isLoading, sortedItems) {
+    // DirState emits `items` already sorted for the active SortKey, so the pane
+    // consumes them as-is — no main-thread re-sort.
+    LaunchedEffect(state.isLoading, state.items) {
         if (pipelineTimer != null && !state.isLoading) {
-            pipelineTimer.mark("ui_rendered", sortedItems.size)
+            pipelineTimer.mark("ui_rendered", state.items.size)
             pipelineTimer.report()
             onReportDone()
         }
@@ -48,11 +42,13 @@ fun FileBrowserPane(
     // Snapshot the pane content as a single value. AnimatedContent's outgoing
     // composition must animate out the PREVIOUS snapshot — if the content lambda
     // read live outer state instead, the outgoing pane would re-render the
-    // incoming folder's files mid-crossfade.
-    val content = PaneContent(state.uri, sortedItems, state.isLoading)
+    // incoming folder's files mid-crossfade. The revision travels with the
+    // snapshot for the same reason: reading the live counter here would make the
+    // outgoing pane pulse on the INCOMING folder's emissions.
+    val content = PaneContent(state.uri, state.items, state.isLoading, state.itemsRevision)
 
     WipeReveal(
-        isLoading = forceShowAnimation || (state.isLoading && sortedItems.isEmpty()),
+        isLoading = forceShowAnimation || (state.isLoading && state.items.isEmpty()),
         delayMillis = if (forceShowAnimation) 0L else 500L,
         modifier = modifier.fillMaxSize()
     ) {
@@ -74,7 +70,7 @@ fun FileBrowserPane(
                 key(snapshot.uri) {
                     Box(
                         modifier = Modifier.edgePulse(
-                            trigger = snapshot.items.hashCode(),
+                            trigger = snapshot.revision,
                             resetKey = snapshot.uri,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -101,7 +97,9 @@ fun FileBrowserPane(
 private data class PaneContent(
     val uri: String,
     val items: List<FileEntry>,
-    val isLoading: Boolean
+    val isLoading: Boolean,
+    /** Content-revision counter captured with this snapshot; drives [edgePulse]. */
+    val revision: Int
 )
 
 @Composable

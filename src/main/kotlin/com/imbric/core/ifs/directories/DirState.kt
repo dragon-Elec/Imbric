@@ -19,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlin.coroutines.EmptyCoroutineContext
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -70,6 +71,39 @@ class DirState(
     private val _deltas = MutableStateFlow(DeltaState())
     private val _itemsList = MutableStateFlow<List<FileEntry>>(emptyList())
 
+    /**
+     * Emission counter. Every composite emission bumps it exactly once, so a consumer can
+     * tell "the listing was re-published" apart from "the listing was re-sorted in place"
+     * (both of which must produce a *new* view identity, see [publish]) without having to
+     * diff two lists.
+     */
+    private val emissionRevision = AtomicInteger(0)
+    private val _revision = MutableStateFlow(0)
+
+    /** Monotonic counter incremented once per composite emission. Starts at 0. */
+    val revision: StateFlow<Int> = _revision.asStateFlow()
+
+    /**
+     * The single emission point for the listing. Both the view reference and the public
+     * [items] flow are written here, together with the revision bump, so no code path can
+     * publish a composite without being counted.
+     *
+     * Called from inside [stateMutex.withLock] blocks (refresh/onActive/handleEventBatch/
+     * enrichItem/flushEnrichmentBatch) and from setSortKey's lock block — the reads of
+     * `_baseDirectory`/`_deltas` that produced [composite] happened under the same lock, so
+     * no extra locking belongs here and this stays a plain non-suspend function.
+     */
+    private fun publish(composite: EnrichedListingView) {
+        _compositeView = composite
+        _itemsList.value = composite
+        _revision.value = emissionRevision.incrementAndGet()
+    }
+
+    /**
+     * Builds a fresh [EnrichedListingView] from the current base + deltas and publishes it
+     * via [publish]. Callers must hold [stateMutex] (the rebuild path is the one place
+     * where base, deltas and comparator are read as a consistent triple).
+     */
     private fun rebuildComposite() {
         val base = _baseDirectory
         val deltas = _deltas.value
@@ -81,8 +115,7 @@ class DirState(
             deletions = deltas.deletions,
             enrichments = deltas.enrichments
         )
-        _compositeView = composite
-        _itemsList.value = composite
+        publish(composite)
     }
     
     /**
@@ -119,6 +152,38 @@ class DirState(
 
     /** The current sort key. UI sets this, DirState adapts attribute fetching. */
     var sortKey: SortKey = SortKey.NAME
+
+    /**
+     * Changes the sort key and re-sorts the already-loaded listing.
+     *
+     * No re-listing is performed: [FileEntry.listingAttributesFor] now fetches
+     * `time::modified` for every sort key, so [FileEntry.comparatorFor] can order the local
+     * struct-of-arrays listing correctly for any key. A re-list would pay a full GIO
+     * enumeration (plus enrichment re-queueing) purely to change row order.
+     *
+     * The re-sort mutates [_baseDirectory] and the following [rebuildComposite] reads the
+     * deltas and comparator, so both run inside one [stateMutex] block — same discipline as
+     * [refresh]/[onActive], and an in-flight refresh cannot interleave between them.
+     *
+     * Non-suspend (UI entry point, like [enrichVisibleItems]): [stateMutex] is not
+     * reentrant and cannot be taken from a non-suspending context, so the work is handed to
+     * this DirState's own scope.
+     *
+     * Named `sortBy` rather than `setSortKey` because a property setter with that exact
+     * signature would clash on the JVM.
+     */
+    fun sortBy(key: SortKey) {
+        if (isDestroyed.get()) return
+        if (key == sortKey && _baseDirectory.size > 0) return
+        sortKey = key
+        if (_baseDirectory.size == 0) return
+        scope.launch(ioDispatcher) {
+            stateMutex.withLock {
+                _baseDirectory.sortWith(FileEntry.comparatorFor(key))
+                rebuildComposite()
+            }
+        }
+    }
 
     private val fileCache = LinkedHashMap<String, FileEntry>(512)
 
@@ -214,21 +279,17 @@ class DirState(
                 }
                 dir.sortWith(FileEntry.comparatorFor(sortKey))
 
-                // Clear deltas and build composite
-                val comparator = FileEntry.comparatorFor(sortKey)
-                val composite = EnrichedListingView(
-                    base = dir,
-                    comparator = comparator,
-                    additions = emptyMap(),
-                    deletions = emptySet(),
-                    enrichments = emptyMap()
-                )
+                // Clear deltas. The listing is NOT emitted here: the single emission for this
+                // refresh is the rebuildComposite() at the end of the lock block below, which
+                // carries the enrichments queued by the enrichItemLocked loop. Publishing an
+                // empty-delta composite first (the old behaviour) made every refresh emit twice
+                // — the second emission being the one the UI actually cared about.
                 stateMutex.withLock {
                     _baseDirectory = dir
-                    _compositeView = composite
                     _deltas.value = DeltaState()
-                    _itemsList.value = composite
 
+                    // Trace marks only — they no longer bracket an emission point; the emission
+                    // this used to time now happens at the trailing rebuildComposite().
                     timer?.mark("first_chunk_rendered", itemCount = dir.size)
                     timer?.mark("dir_list_done", itemCount = dir.size)
 
@@ -567,19 +628,11 @@ class DirState(
                 }
 
                 if (changed) {
+                    // Same single-emission rule as refresh(): no empty-delta composite is
+                    // published on adoption; the trailing rebuildComposite() is the emission.
                     stateMutex.withLock {
-                        val comparator = FileEntry.comparatorFor(sortKey)
-                        val composite = EnrichedListingView(
-                            base = dir,
-                            comparator = comparator,
-                            additions = emptyMap(),
-                            deletions = emptySet(),
-                            enrichments = emptyMap()
-                        )
                         _baseDirectory = dir
-                        _compositeView = composite
                         _deltas.value = DeltaState()
-                        _itemsList.value = composite
 
                         // Rebuild the cache from the NEW listing. The cached entries are
                         // ArrayBackedEntry wrappers bound to the listing that produced them —
@@ -632,7 +685,11 @@ class DirState(
             _baseDirectory = ListingDirectory(0)
             _compositeView = null
             _deltas.value = DeltaState()
+            // Not a composite, so not routed through publish(): the listing is being cleared,
+            // not rebuilt. The revision is still bumped so observers of [revision] see the
+            // teardown rather than a stale listing sitting at the previous count.
             _itemsList.value = emptyList()
+            _revision.value = emissionRevision.incrementAndGet()
             _isLoading.value = false
             _loadError.value = null
             enrichedUris.clear()

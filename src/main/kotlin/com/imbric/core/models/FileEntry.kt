@@ -89,13 +89,23 @@ sealed interface FileEntry {
         val SortBySize = compareBy<FileEntry> { !it.isDirectory }.thenByDescending { it.size }
         val SortByDate = compareBy<FileEntry> { !it.isDirectory }.thenByDescending { it.modifiedTime }
 
-        /** Returns the GIO attributes needed for listing, based on the sort key. */
+        /**
+         * Returns the GIO attributes needed for listing, based on the sort key.
+         *
+         * `time::modified` is part of the shared base and is therefore fetched for EVERY
+         * sort key, not just [SortKey.MODIFIED]: [SortByDate] compares [FileEntry.modifiedTime]
+         * directly, so a listing produced under NAME/SIZE/TYPE could never be re-sorted by
+         * date locally, and `onActive`'s change fingerprint needs mtime to detect an in-place
+         * edit that keeps the byte count identical. The cost is a single extra attribute
+         * token in the enumerate string; the benefit is that DirState.setSortKey can re-sort
+         * the cached listing without paying for a fresh GIO enumeration.
+         */
         fun listingAttributesFor(sortKey: SortKey): String {
-            val base = "standard::name,standard::type,standard::is-hidden,standard::size,standard::content-type"
+            val base = "standard::name,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified"
             return when (sortKey) {
                 SortKey.NAME -> base
                 SortKey.SIZE -> base
-                SortKey.MODIFIED -> "$base,time::modified"
+                SortKey.MODIFIED -> base
                 SortKey.TYPE -> base
             }
         }

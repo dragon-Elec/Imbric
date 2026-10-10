@@ -54,20 +54,25 @@ fun WipeReveal(
         }
     }
 
-    // 2. The continuous sweep loop (only active during LOADING)
-    val transition = rememberInfiniteTransition()
-    val loopProgress by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 2000
-                1f at 1200 using CubicBezierEasing(0.45f, 0.0f, 0.55f, 1.0f)
-                1f at 2000
-            },
-            repeatMode = RepeatMode.Restart
+    // 2. The continuous sweep loop. The infinite transition is only created
+    //    while LOADING — an unconditional one keeps requesting a frame every
+    //    vsync forever, even while the curtain is invisible.
+    val loopProgress = if (state == RevealState.LOADING) {
+        val transition = rememberInfiniteTransition()
+        val progress by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = keyframes {
+                    durationMillis = 2000
+                    1f at 1200 using CubicBezierEasing(0.45f, 0.0f, 0.55f, 1.0f)
+                    1f at 2000
+                },
+                repeatMode = RepeatMode.Restart
+            )
         )
-    )
+        progress
+    } else 0f
 
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val curtainColor = if (isDark) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant

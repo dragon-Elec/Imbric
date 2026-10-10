@@ -20,6 +20,14 @@ data class FileBrowserState(
     val uri: String,
     val virtualUri: String,
     val items: List<FileEntry> = emptyList(),
+    /**
+     * Monotonic counter bumped once per published composite emission from
+     * [DirState]. The UI uses it as a stable "content changed" trigger, so a
+     * re-sort that happens to produce an equal [items] list still invalidates
+     * derived state, and consumers never have to walk the list comparing
+     * `hashCode()` (O(n) per emission) to detect change.
+     */
+    val itemsRevision: Int = 0,
     val isLoading: Boolean = true,
     val canGoUp: Boolean = false,
     val canGoBack: Boolean = false,
@@ -111,17 +119,25 @@ class FileBrowserViewModel(
      * flash of "Empty Folder" for folders that actually contained files.
      */
     val state: StateFlow<FileBrowserState> = dirStateFlow.flatMapLatest { dirState ->
+        // The listing and its revision travel together as one pair. `combine` only
+        // has typed overloads up to five flows, and the revision has to stay paired
+        // with `items` anyway — a re-sort that reorders without changing content must
+        // land in the same emission as the reordered list.
+        val content = combine(dirState.items, dirState.revision) { items, revision ->
+            items to revision
+        }
         combine(
-            dirState.items,
+            content,
             dirState.isLoading,
             _backStack,
             _forwardStack,
             _virtualUri
-        ) { items, isLoading, back, forward, virtual ->
+        ) { listing, isLoading, back, forward, virtual ->
             FileBrowserState(
                 uri = dirState.uri,
                 virtualUri = virtual,
-                items = items,
+                items = listing.first,
+                itemsRevision = listing.second,
                 isLoading = isLoading,
                 canGoUp = !IfsUri(dirState.uri).isRootUri(),
                 canGoBack = back.isNotEmpty(),
@@ -204,8 +220,10 @@ class FileBrowserViewModel(
 
     fun setSortKey(key: SortKey) {
         _sortKey.value = key
-        // Update DirState's sort key so it fetches the right attributes on next refresh
-        dirStateFlow.value.sortKey = key
+        // Re-sort the existing listing in place — no re-list, no re-scan.
+    // DirState publishes the reordered items (and a bumped revision), which
+    // flows through `state` on its own.
+    dirStateFlow.value.sortBy(key)
     }
 
     /**

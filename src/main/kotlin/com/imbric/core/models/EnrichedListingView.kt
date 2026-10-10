@@ -10,6 +10,11 @@ package com.imbric.core.models
  * All state is computed once in the constructor. The view is fully immutable and thread-safe.
  * A new instance is created on every delta change, giving [kotlinx.coroutines.flow.MutableStateFlow]
  * a fresh object reference that always triggers emission.
+ *
+ * **Aliasing caveat:** the [ListingDirectory] base is held by reference and read live by [get]
+ * (whole-row reads only, so never torn). When [com.imbric.core.ifs.directories.DirState.sortBy]
+ * re-sorts the base in place, this view's reads are transiently reordered until DirState publishes
+ * the rebuilt view microseconds later. The view's own state (mapping, deltas) stays immutable.
  */
 class EnrichedListingView(
     private val base: ListingDirectory,

@@ -50,7 +50,6 @@ fun MainWindow(
         // Folder-pane state is only collected when this pane actually is a folder.
         val state = if (isHome) null else viewModel!!.state.collectAsState()
         val layoutMode = if (isHome) null else viewModel!!.layoutMode.collectAsState()
-        val sortKey = if (isHome) null else viewModel!!.sortKey.collectAsState()
 
         var forceShowAnimation by remember { mutableStateOf(false) }
         var addressBarBounds by remember { mutableStateOf<Rect?>(null) }
@@ -116,7 +115,6 @@ fun MainWindow(
                             FileBrowserPane(
                                 state = activeState,
                                 layoutMode = layoutMode!!.value,
-                                sortKey = sortKey!!.value,
                                 forceShowAnimation = forceShowAnimation,
                                 pipelineTimer = activeVm.pipelineTimer,
                                 onReportDone = { activeVm.pipelineTimer = null },
