@@ -258,6 +258,19 @@ Read them when working on the corresponding topic.
 
 Before ending a session, update `HANDOVER.md` with the current status, bugs found, and next steps. This ensures the next session can start without re-exploring the entire codebase.
 
+## Communication Style (STRICT)
+
+All agent replies to Ray must follow `.slim/talk-guidelines.md`. Core rules:
+
+- **Lead with the answer/status** on the first line; context after.
+- One idea per sentence, short paragraphs, proper markdown (headers, tables).
+- Jargon explained once on first use; insider shorthand (P3, lane, brief) always glossed.
+- Every fact gets its impact ("X broken → builds compile stale files").
+- Blunt and honest, no reassurance padding; cite the source of verified claims.
+- Human chat tone: contractions, rare emoji/kaomoji for tone, never decorative.
+- End with next action / what's pending Ray's decision.
+- **Mandatory final gate:** after drafting, re-read the reply — any shorthand glossed once, no "keep it short" shortcuts dropping facts/tables, first line = answer, last line = next action. Rewrite before sending if any check fails.
+
 ## Notes
 
 - Always use `rg` (ripgrep) instead of `grep` for codebase searches. OpenCode has its own internal `grep` tool — use that for quick searches; fall back to `rg` via bash for advanced patterns.
