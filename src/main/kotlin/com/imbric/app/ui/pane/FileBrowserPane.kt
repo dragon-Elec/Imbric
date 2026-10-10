@@ -107,14 +107,35 @@ fun FileBrowserPane(
  * Immutable snapshot of what a pane displays. Used as [AnimatedContent] targetState
  * so the outgoing crossfade keeps rendering the folder the user navigated away from
  * instead of the incoming one (stale-capture fix).
+ *
+ * Equality is deliberately NARROWER than the full content:
+ * - uri / isLoading / has-content decide the transition (the only times a crossfade
+ *   should play: folder switched, spinner↔content flipped);
+ * - [revision] rides along so the edgePulse trigger stays snapshot-scoped — the
+ *   outgoing pane pulses on ITS OWN folder's emissions, not the incoming ones — but is
+ *   EXCLUDED from equality. As a data-class field it replayed the 150ms crossfade on
+ *   every enrichment flush and re-sort (revision bumps per emission); excluded, the
+ *   content lambda still recomposes (it reads snapshot.revision) and the pulse fires,
+ *   without a new transition.
  */
-private data class PaneContent(
+private class PaneContent(
     val uri: String,
     val items: List<FileEntry>,
     val isLoading: Boolean,
     /** Content-revision counter captured with this snapshot; drives [edgePulse]. */
     val revision: Int
-)
+) {
+    /** True when this snapshot carries list content (the spinner/empty↔filled flip). */
+    private val hasContent: Boolean get() = items.isNotEmpty()
+
+    override fun equals(other: Any?): Boolean = other is PaneContent &&
+        uri == other.uri &&
+        isLoading == other.isLoading &&
+        hasContent == other.hasContent
+
+    override fun hashCode(): Int =
+        (uri.hashCode() * 31 + isLoading.hashCode()) * 31 + hasContent.hashCode()
+}
 
 @Composable
 private fun EmptyFolderView(uri: String) {

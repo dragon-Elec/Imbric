@@ -61,15 +61,18 @@ class ShellViewModel(
             return
         }
 
-        // Home pane → convert to a Folder pane (same tab id, fresh lifecycle)
+        // Home pane → convert to a Folder pane (fresh id: the saveable-state registry is
+        // keyed by pane id, so reusing the old id restores the Home dashboard's saved state
+        // into the folder view — and closes over the wrong entry on prune).
         old.destroy()
         val folderPane = PaneContext(
-            id = old.id,
+            id = Uuid.random(),
             type = TabType.Folder(uri),
             registry = registry,
             parentScope = shellScope
         )
         _tabs.update { tabs -> tabs.mapIndexed { i, pane -> if (i == activeIndex) folderPane else pane } }
+        _activePaneId.value = folderPane.id
     }
 
     /**
@@ -85,12 +88,13 @@ class ShellViewModel(
 
         old.destroy()
         val homePane = PaneContext(
-            id = old.id,
+            id = Uuid.random(),
             type = TabType.Home,
             registry = registry,
             parentScope = shellScope
         )
         _tabs.update { tabs -> tabs.mapIndexed { i, pane -> if (i == activeIndex) homePane else pane } }
+        _activePaneId.value = homePane.id
     }
 
     /**
