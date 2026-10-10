@@ -167,3 +167,25 @@ class TestDoctorGradleVersionCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPluginIsolation(unittest.TestCase):
+    """One broken command module must cost only its own command.
+
+    Pre-fix: all 15 register() calls shared one try/except ImportError — a single bad
+    import registered ZERO commands and the user got 'invalid choice'.
+    """
+
+    def test_command_modules_tuple(self):
+        from scripts.ib.cli import COMMAND_MODULES
+        self.assertIn("test", COMMAND_MODULES)
+        self.assertIn("compile", COMMAND_MODULES)
+        self.assertEqual(len(COMMAND_MODULES), len(set(COMMAND_MODULES)))
+
+    def test_every_module_importable_and_registers(self):
+        import importlib
+        from scripts.ib.cli import COMMAND_MODULES
+        for name in COMMAND_MODULES:
+            mod = importlib.import_module(f"scripts.ib.commands.{name}")
+            self.assertTrue(hasattr(mod, "register"), f"{name} has no register()")
+            self.assertTrue(hasattr(mod, "run"), f"{name} has no run()")

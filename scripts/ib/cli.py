@@ -1,7 +1,16 @@
 import argparse
+import importlib
 import sys
 from .daemon import DaemonManager
 from .process import ProcessManager
+
+# Plugin command modules, registered and dispatched per-module so a single broken
+# import costs only its own command instead of the whole CLI.
+COMMAND_MODULES = (
+    "clean", "doctor", "generate", "exec_cmd", "history", "run", "test",
+    "audit", "compile", "status", "processes", "memory", "bench",
+    "project", "lint",
+)
 
 def cmd_dev(args):
     DaemonManager.start_daemon()
@@ -51,27 +60,16 @@ def main():
     log_p.add_argument("-n", "--lines", type=int, default=50)
 
     # Register command plugins
-    try:
-        from .commands import clean, doctor, generate, exec_cmd, history, run, test, audit, compile
-        from .commands import status, processes, memory, bench, project, lint
-        clean.register(sub)
-        doctor.register(sub)
-        generate.register(sub)
-        exec_cmd.register(sub)
-        history.register(sub)
-        run.register(sub)
-        test.register(sub)
-        audit.register(sub)
-        compile.register(sub)
-        status.register(sub)
-        processes.register(sub)
-        memory.register(sub)
-        bench.register(sub)
-        project.register(sub)
-        lint.register(sub)
-    except ImportError as e:
-        print(f"Warning: Some commands not available: {e}")
-        pass # Optional commands
+    # Per-module: one module failing to import (or a typo in one file) used to abort the
+    # whole block — ZERO commands registered, and the user saw 'invalid choice' with only
+    # a stale warning line for context. Each module registers independently so one bad
+    # import costs exactly its own command.
+    for name in COMMAND_MODULES:
+        try:
+            mod = importlib.import_module(f".commands.{name}", __package__)
+            mod.register(sub)
+        except ImportError as e:
+            print(f"Warning: '{name}' command not available: {e}")
 
     args = parser.parse_args()
     if not args.command:
@@ -85,34 +83,14 @@ def main():
     
     if args.command in cmds:
         cmds[args.command](args)
-    else:
-        # Delegate to command plugins
+    elif args.command in COMMAND_MODULES:
         try:
-            from .commands import clean, doctor, generate, exec_cmd, history, run, test, audit, compile
-            from .commands import status, processes, memory, bench, project, lint
-            cmd_modules = {
-                "clean": clean.run,
-                "doctor": doctor.run,
-                "generate": generate.run,
-                "exec": exec_cmd.run,
-                "history": history.run,
-                "run": run.run,
-                "test": test.run,
-                "audit": audit.run,
-                "compile": compile.run,
-                "status": status.run,
-                "processes": processes.run,
-                "memory": memory.run,
-                "bench": bench.run,
-                "project": project.run,
-                "lint": lint.run,
-            }
-            if args.command in cmd_modules:
-                cmd_modules[args.command](args)
-            else:
-                print(f"Unknown command: {args.command}")
-                parser.print_help()
-                sys.exit(1)
+            mod = importlib.import_module(f".commands.{args.command}", __package__)
+            mod.run(args)
         except ImportError as e:
-            print(f"Error: Command not available: {e}")
+            print(f"Error: '{args.command}' command not available: {e}")
             sys.exit(1)
+    else:
+        print(f"Unknown command: {args.command}")
+        parser.print_help()
+        sys.exit(1)

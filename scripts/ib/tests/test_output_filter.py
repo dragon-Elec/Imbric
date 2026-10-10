@@ -134,3 +134,34 @@ class TestDotRendering(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFailureDigest(unittest.TestCase):
+    """Gradle's actual failure reason must survive the filter.
+
+    Pre-fix: `* What went wrong:` matched nothing, `FAILURE:` (not `FAILED`) flipped no
+    state, and the `> `/`* ` swallow rule ate the ENTIRE reason block — `ib` printed an
+    exit code with zero explanation (the orchestrator hit this live: a failing test
+    showed no assertion, only "Tests failed (exit code 1)").
+    """
+
+    def test_failure_block_passes_through(self):
+        f = OutputFilter()
+        out = [
+            f.filter_line("> Task :compileKotlin FAILED"),
+            f.filter_line("e: file:///x.kt:3:2: expect '}'"),
+            f.filter_line("FAILURE: Build failed with an exception."),
+            f.filter_line("* What went wrong:"),
+            f.filter_line("Execution failed for task ':compileKotlin'."),
+            f.filter_line("> Run with --scan to get full insights."),
+        ]
+        kept = [l for l in out if l]
+        self.assertIn("* What went wrong:", kept)
+        self.assertIn("Execution failed for task ':compileKotlin'.", kept)
+        self.assertIn("> Run with --scan to get full insights.", kept)
+
+    def test_no_failure_no_stray_block(self):
+        # Outside a failure the `> `/`* ` swallow rule still suppresses gradle noise
+        f = OutputFilter()
+        self.assertIsNone(f.filter_line("* Get more help at https://help.gradle.org"))
+        self.assertIsNone(f.filter_line("> Run some other task"))

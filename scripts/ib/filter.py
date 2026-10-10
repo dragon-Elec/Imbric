@@ -19,6 +19,8 @@ class OutputFilter:
 
     ERROR_PATTERNS = [
         re.compile(r"FAILED"),
+        re.compile(r"^FAILURE:"),
+        re.compile(r"^\* What went wrong:"),
         re.compile(r"^e: file://"),
         re.compile(r"error:", re.IGNORECASE),
         re.compile(r"Exception"),
