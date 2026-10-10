@@ -77,13 +77,27 @@ class DirStateRegistry(
     private fun refCountLocked(uri: String): Int = pinCounts[uri] ?: 0
 
     /**
+     * Reads the cached instance WITHOUT recording an access.
+     *
+     * [cache] is access-ordered, so `cache[uri]` reorders the entry to most-recently-used —
+     * correct for [getOrCreate] (a use is a use) but wrong for a *query* like [contains]:
+     * a read-only existence check must not silently protect the entry from eviction.
+     * The cache is bounded by [maxSize] (plus pinned over-budget entries), so the linear
+     * scan is cheap and honest.
+     */
+    private fun peekLocked(uri: String): DirState? =
+        cache.entries.firstOrNull { it.key == uri }?.value
+
+    /**
      * Selects LRU victims and detaches them from [cache] until the cache fits [maxSize].
-     * Pinned URIs are skipped, so an over-budget cache can temporarily retain extra entries.
+     * Pinned URIs are skipped, so an over-budget cache can temporarily retain extra entries
+     * — the entry just inserted by [getOrCreateLocked] is skipped too: callers are promised
+     * a live instance, and evicting the fresh insert would hand back a destroyed one.
      *
      * Must be called while holding [lock]. This only detaches the victims; the caller
      * destroys them after releasing the lock.
      */
-    private fun evictOverflowLocked(): List<DirState> {
+    private fun evictOverflowLocked(protectedKey: String): List<DirState> {
         if (cache.size <= maxSize) return emptyList()
 
         // Access-ordered LinkedHashMap iterates eldest-first, so head = LRU.
@@ -92,6 +106,7 @@ class DirStateRegistry(
         val victimUris = ArrayList<String>()
         for (candidate in eldestFirst) {
             if (cache.size - victimUris.size <= maxSize) break
+            if (candidate == protectedKey) continue
             if (refCountLocked(candidate) > 0) continue
             victimUris.add(candidate)
         }
@@ -109,18 +124,9 @@ class DirStateRegistry(
     fun getOrCreate(uri: String): DirState {
         var evicted: List<DirState> = emptyList()
         val state = synchronized(lock) {
-            val existing = cache[uri]
-            if (existing != null && !existing.isDestroyedState) {
-                existing.pipelineTimer = pipelineTimer
-                return@synchronized existing
-            }
-            // Either not cached or destroyed — create fresh
-            cache.remove(uri)
-            val backend = resolveBackend(uri)
-            val fresh = DirState(uri, backend, scope, pipelineTimer = pipelineTimer)
-            cache[uri] = fresh
-            evicted = evictOverflowLocked()
-            fresh
+            val (created, victims) = getOrCreateLocked(uri)
+            evicted = victims
+            created
         }
         // Destroy evicted states *after* leaving the synchronized block: destroy() runs
         // teardown callbacks that can re-enter getOrCreate, and calling it inside the
@@ -130,13 +136,40 @@ class DirStateRegistry(
     }
 
     /**
-     * Returns the [DirState] for [uri] and registers an active viewer, making the
-     * instance immune to LRU eviction until the matching [unpin] or [release].
+     * Creates or fetches the instance for [uri] and registers one viewer reference, all
+     * inside a single critical section.
+     *
+     * The refcount registration MUST share the lock with the insert: doing it afterwards
+     * (the old shape) leaves a window where another thread's eviction sees the fresh
+     * instance as unpinned, detaches and destroys it, and the late pin then protects a
+     * dead, detached object — the entry can never be evicted again (stale refcount) and
+     * the viewer's own instance is gone.
      */
     fun pin(uri: String): DirState {
-        val state = getOrCreate(uri)
-        synchronized(lock) { pinCounts[uri] = refCountLocked(uri) + 1 }
+        var evicted: List<DirState> = emptyList()
+        val state = synchronized(lock) {
+            val (created, victims) = getOrCreateLocked(uri)
+            pinCounts[uri] = refCountLocked(uri) + 1
+            evicted = victims
+            created
+        }
+        evicted.forEach { it.destroy() }
         return state
+    }
+
+    /** Locked core shared by [getOrCreate] and [pin]. Caller destroys the returned victims after releasing [lock]. */
+    private fun getOrCreateLocked(uri: String): Pair<DirState, List<DirState>> {
+        val existing = cache[uri]
+        if (existing != null && !existing.isDestroyedState) {
+            existing.pipelineTimer = pipelineTimer
+            return existing to emptyList()
+        }
+        // Either not cached or destroyed — create fresh
+        cache.remove(uri)
+        val backend = resolveBackend(uri)
+        val fresh = DirState(uri, backend, scope, pipelineTimer = pipelineTimer)
+        cache[uri] = fresh
+        return fresh to evictOverflowLocked(protectedKey = uri)
     }
 
     /**
@@ -179,7 +212,7 @@ class DirStateRegistry(
      */
     fun contains(uri: String): Boolean {
         synchronized(lock) {
-            val state = cache[uri] ?: return false
+            val state = peekLocked(uri) ?: return false
             return !state.isDestroyedState
         }
     }
