@@ -23,6 +23,14 @@ class ThumbnailStateTracker(
 ) {
     private val MAX_THUMBNAIL_SIZE = 10 * 1024 * 1024 // 10MB limit for local files
 
+    /**
+     * Cap on how many failed URIs are remembered. Browsing a broken network mount or a
+     * directory of unreadable files would otherwise grow the set without bound — nothing in
+     * the pipeline calls [clearFailedState] on its own. Once the cap is hit the least
+     * recently failed entries are evicted first (see [markFailed]).
+     */
+    private val MAX_TRACKED_FAILURES = 500
+
     /** URIs currently being thumbnailed. UI observes this for loading spinners. */
     private val _thumbnailingInProgress = MutableStateFlow<Set<String>>(emptySet())
     val thumbnailingInProgress: StateFlow<Set<String>> = _thumbnailingInProgress.asStateFlow()
@@ -109,7 +117,25 @@ class ThumbnailStateTracker(
 
     private fun markFailed(uri: String) {
         _thumbnailingInProgress.update { it - uri }
-        _thumbnailingFailed.update { it + uri }
+        _thumbnailingFailed.update { failed ->
+            // Re-inserting moves the URI to the tail of the iteration order, so the eviction
+            // below drops whichever URI has been failing longest rather than an arbitrary one.
+            val ordered = LinkedHashSet<String>(failed.size + 1).apply {
+                addAll(failed)
+                remove(uri)
+                add(uri)
+            }
+            if (ordered.size > MAX_TRACKED_FAILURES) {
+                val evictCount = ordered.size - MAX_TRACKED_FAILURES
+                val iterator = ordered.iterator()
+                repeat(evictCount) {
+                    // evictCount < ordered.size, so the head is always present
+                    iterator.next()
+                    iterator.remove()
+                }
+            }
+            ordered
+        }
     }
 
     /**

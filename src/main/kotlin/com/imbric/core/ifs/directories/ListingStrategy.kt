@@ -6,6 +6,7 @@ import com.imbric.core.ifs.contracts.SearchContract
 import com.imbric.core.models.*
 import com.imbric.core.models.SortKey
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.toList
 
 /**
  * Defines how a [DirState] obtains its initial file listing.
@@ -36,7 +37,9 @@ sealed interface ListingStrategy {
      */
     data class Search(val query: VfsQuery) : ListingStrategy {
         override suspend fun list(backend: BackendContract, uri: String, sortKey: SortKey): List<FileEntry> =
-            (backend as? SearchContract)?.search(query)?.firstOrNull() ?: emptyList()
+            // search emits in chunks of 50 (GioBackend.search, GioSearchBackend.search) —
+            // flatten every batch; firstOrNull() would return only the first 50 results.
+            (backend as? SearchContract)?.search(query)?.toList()?.flatten() ?: emptyList()
 
         override fun watchable(): Boolean = false
     }

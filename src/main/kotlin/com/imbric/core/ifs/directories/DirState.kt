@@ -21,6 +21,7 @@ import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Live state of an opened directory.
@@ -144,8 +145,16 @@ class DirState(
     val directoryType: DirectoryType = DirectoryType.fromUri(uri)
 
     private val enrichedUris = Collections.synchronizedSet(mutableSetOf<String>())
-    private var watchJob: Job? = null
-    private var refreshJob: Job? = null
+    /**
+     * Held in AtomicReferences rather than plain vars: [startWatching]/[refresh]/[onActive]
+     * install these from the Listing dispatcher while [stop]/[destroy] clear them from the
+     * UI thread. With a plain var the cancel-then-assign pair is a read-modify-write that two
+     * threads can interleave, orphaning a watcher Job whose `awaitClose` (and the
+     * GIO `monitor.cancel()` behind it) then never runs. getAndSet makes the swap-and-cancel
+     * atomic at every install site.
+     */
+    private val watchJob = AtomicReference<Job?>(null)
+    private val refreshJob = AtomicReference<Job?>(null)
     private val isDestroyed = AtomicBoolean(false)
     /** True if [destroy] has been called. The registry uses this to detect stale entries. */
     val isDestroyedState: Boolean get() = isDestroyed.get()
@@ -246,7 +255,7 @@ class DirState(
      */
     fun refresh() {
         if (isDestroyed.get()) return
-        val oldJob = refreshJob
+        val oldJob = refreshJob.get()
         val timer = pipelineTimer
         val timerContext = timer?.asContextElement() ?: EmptyCoroutineContext
         // Claim a new loading generation BEFORE launching: the old job's `finally`
@@ -316,14 +325,18 @@ class DirState(
                 timer?.mark("dir_refresh_done", itemCount = _baseDirectory.size)
             }
         }
-        refreshJob = newJob
+        refreshJob.getAndSet(newJob)?.cancel()
     }
 
     private fun startWatching() {
         if (isDestroyed.get()) return
         if (!strategy.watchable()) return // Virtual/Search/Starred strategies don't watch
-        watchJob?.cancel()
-        watchJob = scope.launch(ioDispatcher) {
+        // Cancel the current watcher first (preserves the previous cancel-before-start
+        // ordering, so two consumers never run concurrently), then install atomically:
+        // getAndSet also cancels anything a racing thread installed in between, so no
+        // watcher Job can be orphaned.
+        watchJob.get()?.cancel()
+        val newWatchJob = scope.launch(ioDispatcher) {
             // A boundless bucket to catch the GIO signal storm
             val eventChannel = Channel<FileEvent>(Channel.UNLIMITED)
             
@@ -355,6 +368,7 @@ class DirState(
                 }
             }
         }
+        watchJob.getAndSet(newWatchJob)?.cancel()
     }
 
     private suspend fun handleEventBatch(events: List<FileEvent>) {
@@ -578,7 +592,7 @@ class DirState(
         startWatching()
         if (_isLoading.value) return
 
-        val oldJob = refreshJob
+        val oldJob = refreshJob.get()
         val timer = pipelineTimer
         val timerContext = timer?.asContextElement() ?: EmptyCoroutineContext
         // Shares the generation counter with refresh(): both paths own the spinner and
@@ -658,7 +672,7 @@ class DirState(
                 if (epoch == loadEpoch.get()) _isLoading.value = false
             }
         }
-        refreshJob = newJob
+        refreshJob.getAndSet(newJob)?.cancel()
     }
 
     /**
@@ -667,8 +681,7 @@ class DirState(
      * Call [refresh] to restart monitoring.
      */
     fun stop() {
-        watchJob?.cancel()
-        watchJob = null
+        watchJob.getAndSet(null)?.cancel()
     }
 
     /**
@@ -682,6 +695,8 @@ class DirState(
             // loading/error state after teardown.
             loadEpoch.incrementAndGet()
             job.cancel()
+            watchJob.getAndSet(null)?.cancel()
+            refreshJob.getAndSet(null)?.cancel()
             _baseDirectory = ListingDirectory(0)
             _compositeView = null
             _deltas.value = DeltaState()
@@ -693,6 +708,14 @@ class DirState(
             _isLoading.value = false
             _loadError.value = null
             enrichedUris.clear()
+            // Each cached ListingEntry is an ArrayBackedEntry bound to the ListingDirectory
+            // that produced it, so the cache keeps every column of that directory's
+            // struct-of-arrays alive. Drop it with the rest of the state.
+            fileCache.clear()
+            // Close the enrichment pipes so the workers' `for (info in ...)` loop and the
+            // batcher's receive() terminate instead of sitting on a job that is already dead.
+            enrichmentChannel.close()
+            enrichmentResults.close()
         }
     }
 }

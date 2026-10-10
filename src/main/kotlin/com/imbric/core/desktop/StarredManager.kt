@@ -4,6 +4,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.gnome.gio.*
 import org.gnome.glib.GLib
+import org.javagi.gobject.SignalConnection
 
 /**
  * System-wide manager for starred/tagged files.
@@ -21,7 +22,9 @@ class StarredManager private constructor(
     override val starredUris: StateFlow<Set<String>> = _starredUris.asStateFlow()
 
     private var monitor: FileMonitor? = null
+    private var monitorConnection: SignalConnection<FileMonitor.ChangedCallback>? = null
     private var metadataMonitor: FileMonitor? = null
+    private var metadataMonitorConnection: SignalConnection<FileMonitor.ChangedCallback>? = null
     private var refreshJob: Job? = null
 
     init {
@@ -49,12 +52,12 @@ class StarredManager private constructor(
             }
 
             monitor = homeDir.monitorDirectory(FileMonitorFlags.NONE, null)
-            monitor?.onChanged(onChanged)
+            monitorConnection = monitor?.onChanged(onChanged)
 
             // Also monitor GNOME's gvfs-metadata directory for Tracker3 changes
             if (gvfsMetadataDir.queryExists(null)) {
                 metadataMonitor = gvfsMetadataDir.monitorDirectory(FileMonitorFlags.NONE, null)
-                metadataMonitor?.onChanged(onChanged)
+                metadataMonitorConnection = metadataMonitor?.onChanged(onChanged)
             }
         } catch (e: Exception) {
             GLib.log("Imbric", org.gnome.glib.LogLevelFlags.LEVEL_WARNING,
@@ -125,6 +128,28 @@ class StarredManager private constructor(
         }
     }
 
+    /**
+     * Releases the GIO monitors and cancels the refresh scope.
+     *
+     * Without this the two signal handlers stay attached to the user's home directory and
+     * metadata store for the lifetime of the JVM, re-arming a debounced [refresh] on every
+     * unrelated change. Behaviour is unchanged while the manager is active — this only
+     * matters once the instance is being discarded.
+     */
+    private fun teardown() {
+        refreshJob?.cancel()
+        refreshJob = null
+        monitorConnection?.disconnect()
+        monitorConnection = null
+        metadataMonitorConnection?.disconnect()
+        metadataMonitorConnection = null
+        monitor?.cancel()
+        monitor = null
+        metadataMonitor?.cancel()
+        metadataMonitor = null
+        scope.cancel()
+    }
+
     companion object {
         @Volatile
         private var instance: StarredManager? = null
@@ -132,6 +157,17 @@ class StarredManager private constructor(
         fun getInstance(): StarredManager {
             return instance ?: synchronized(this) {
                 instance ?: StarredManager().also { instance = it }
+            }
+        }
+
+        /**
+         * Destroys the singleton instance. Used for cleanup and testing.
+         * Next call to [getInstance] will create a fresh instance.
+         */
+        fun clear() {
+            synchronized(this) {
+                instance?.teardown()
+                instance = null
             }
         }
     }
