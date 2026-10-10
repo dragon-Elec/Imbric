@@ -66,6 +66,7 @@ data class Transaction(
     val description: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val ops: MutableList<TransactionOperation> = mutableListOf(),
+    @Volatile
     var status: TransactionStatus = TransactionStatus.PENDING,
     var error: String = "",
     var isCommitted: Boolean = false,

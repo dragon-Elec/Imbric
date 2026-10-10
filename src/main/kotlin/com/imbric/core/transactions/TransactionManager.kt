@@ -160,6 +160,10 @@ class TransactionManager(
         // Iterate a snapshot, not the live list: from the first dispatchJob onwards, worker
         // threads are already writing tx.ops slots as this loop runs.
         val opsSnapshot: List<TransactionOperation> = synchronized(tx) {
+            // Never resurrect a CANCELLED tx: a cancel issued during the (seconds-wide)
+            // planning window already emitted Finished once; flipping back to RUNNING would
+            // emit a second terminal for one tid when the workers finish.
+            if (tx.status == TransactionStatus.CANCELLED) return
             tx.status = TransactionStatus.RUNNING
             tx.ops.toList()
         }
@@ -196,11 +200,20 @@ class TransactionManager(
      * undo/redo's `.first()`) — status reachability is worthless if delivery isn't. The
      * SharedFlow is replay-0 with a 128-slot buffer shared across ALL transactions, so a
      * stalled subscriber can make `tryEmit` fail with false, which the old code ignored.
-     * A suspending `emit` waits for the subscribers instead of dropping.
+     * A suspending `emit` waits for the subscribers instead of dropping. Fast path first:
+     * when the buffer has room the terminal lands synchronously with no coroutine at all;
+     * the suspending fallback covers the stalled-subscriber case. And if the manager scope
+     * itself is already cancelled (app teardown racing a finishing worker), the launch
+     * would no-op — so a final synchronous `tryEmit` runs regardless as last resort.
      */
     private fun emitTerminal(event: TransactionEvent) {
-        scope.launch {
-            _events.emit(event)
+        if (_events.tryEmit(event)) return
+        try {
+            scope.launch { _events.emit(event) }
+        } catch (_: IllegalStateException) {
+            // Scope already closed: launch() throws immediately. The event is already lost
+            // (buffer was full on the fast path), so there is nothing further to do — this
+            // catch exists so a finishing worker can't crash teardown, not to deliver.
         }
     }
 

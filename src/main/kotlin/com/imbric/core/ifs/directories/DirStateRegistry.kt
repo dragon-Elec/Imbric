@@ -164,8 +164,10 @@ class DirStateRegistry(
             existing.pipelineTimer = pipelineTimer
             return existing to emptyList()
         }
-        // Either not cached or destroyed — create fresh
+        // Either not cached or destroyed — create fresh. The refcount goes with the old
+        // entry: a stale count would pin the fresh instance forever.
         cache.remove(uri)
+        pinCounts.remove(uri)
         val backend = resolveBackend(uri)
         val fresh = DirState(uri, backend, scope, pipelineTimer = pipelineTimer)
         cache[uri] = fresh

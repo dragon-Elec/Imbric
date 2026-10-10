@@ -59,12 +59,11 @@ class PaneContext(
         // emission may not have been collected yet, in which case currentUri names a
         // URI this pane never pinned (leaking the real one) or never collected.
         viewModel?.releasePin()
-        // Clear the timer only if this pane owns one. The setter writes through to the
-        // SINGLE shared registry field, so an unconditional null from a pane that never
-        // had a timer (idle background tab closing) clobbers another pane's live trace
-        // mid-load — the next getOrCreate would stamp null onto its DirState.
-        if (viewModel?.pipelineTimer != null) {
-            viewModel.pipelineTimer = null
-        }
+        // Clear the timer only if this pane owns one, and only the registry entry it owns.
+        // The setter writes through to the SINGLE shared registry field, so an
+        // unconditional null from an idle background tab clobbers another pane's live
+        // trace mid-load — and with two live timers, last-write-wins means the closing
+        // pane must not clear a timer it doesn't own (see clearPipelineTimer).
+        viewModel?.clearPipelineTimer()
     }
 }

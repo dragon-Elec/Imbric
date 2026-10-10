@@ -61,11 +61,29 @@ class FileBrowserViewModel(
     val sortKey: StateFlow<SortKey> = _sortKey.asStateFlow()
 
     /** Optional pipeline timer. Set to non-null to enable timing traces. */
-    var pipelineTimer: PipelineTimer? = null
+    var pipelineTimer: PipelineTimer?
+        get() = _pipelineTimer
         set(value) {
-            field = value
+            _pipelineTimer = value
             registry.pipelineTimer = value
         }
+    private var _pipelineTimer: PipelineTimer? = null
+
+    /**
+     * Clears this pane's timer, but only if the shared registry still holds THIS pane's
+     * timer. Two panes can each hold a live timer (switch tabs mid-navigation); the
+     * registry keeps last-write-wins, so an unconditional clear from the closing pane
+     * would clobber the surviving pane's trace mid-load. A stale reference is dropped
+     * silently via the backing field, bypassing the write-through setter.
+     */
+    fun clearPipelineTimer() {
+        val mine = _pipelineTimer ?: return
+        if (registry.pipelineTimer === mine) {
+            pipelineTimer = null
+        } else {
+            _pipelineTimer = null
+        }
+    }
 
     /**
      * URI whose [DirState] this viewer currently holds a pin on, or null if none.
