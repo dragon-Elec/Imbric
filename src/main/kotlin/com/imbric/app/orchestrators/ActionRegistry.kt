@@ -2,12 +2,12 @@ package com.imbric.app.orchestrators
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.*
+import com.imbric.app.viewmodel.PaneContext
 import com.imbric.app.viewmodel.ShellViewModel
 import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 /**
  * Defines all global actions that can be triggered via keyboard shortcuts or menus.
@@ -45,15 +45,20 @@ object ShortcutConfig {
 /**
  * Intercepts keyboard events at the root of the application and routes them
  * to the active [PaneContext] via the [ShellViewModel].
+ *
+ * [tabs] and [activePaneId] are supplied by the caller (MainWindow) rather than
+ * collected here: MainWindow already collects both one frame up to resolve the
+ * active pane, so collecting them again would spin up two redundant
+ * `produceState` coroutines for every shell recomposition.
  */
 @OptIn(ExperimentalUuidApi::class)
 @Composable
 fun GlobalShortcutHandler(
     shellViewModel: ShellViewModel,
+    tabs: List<PaneContext>,
+    activePaneId: Uuid?,
     content: @Composable () -> Unit
 ) {
-    val tabs by shellViewModel.tabs.collectAsState()
-    val activePaneId by shellViewModel.activePaneId.collectAsState()
     val activePane = tabs.find { it.id == activePaneId }
 
     Box(
