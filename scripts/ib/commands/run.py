@@ -32,6 +32,8 @@ def run(args):
                 proc.kill()
         # Clean up any orphaned app processes
         ProcessManager.kill_all(force=True, include_daemons=False)
+        # Deliberately 0, not 130: Ctrl-C is the NORMAL way to stop a foreground app.
+        # Reporting it as failure would break wrappers that stop-then-check.
         sys.exit(0)
 
     signal.signal(signal.SIGINT, handle_sigint)

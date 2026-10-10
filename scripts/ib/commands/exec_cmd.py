@@ -42,6 +42,7 @@ def run(args):
             print(f"\nFailed (code {proc.returncode}) in {elapsed_str}")
             sys.exit(proc.returncode)
     except KeyboardInterrupt:
-        proc.terminate()
+        if proc is not None:
+            proc.terminate()
         print("\nInterrupted.")
         sys.exit(130)
