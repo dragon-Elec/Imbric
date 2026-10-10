@@ -14,6 +14,7 @@ import org.gnome.glib.MainContext
 import org.gnome.glib.Source
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import java.lang.ref.Reference
 
 /**
  * Bridges GIO async C functions to Kotlin Coroutines.
@@ -29,11 +30,12 @@ import kotlin.coroutines.resumeWithException
  *    (`GLib.sourceRemove`).
  *
  * ## Thread Safety
- * - `awaitGioAsync` dispatches the GIO call to the GLib main context via `GLib.idleAdd`,
- *   preventing FFM threading crashes.
- * - Cancellation is race-safe: if the coroutine is cancelled before the idle handler fires,
- *   the handler is removed from the queue. If cancelled after, `GCancellable.cancel()`
- *   aborts the running native operation.
+ * - `awaitGioAsync` invokes the GIO call synchronously on the calling dispatcher
+ *   (no `GLib.idleAdd` hop in the live path); the main-context pump thread owns
+ *   callback delivery.
+ * - Cancellation propagates to `GCancellable.cancel()`. GLib cancellation is
+ *   asynchronous, so the callback may still fire after the coroutine is cancelled —
+ *   [pendingCallbacks] keeps it alive across that window.
  *
  * ## Memory Management
  * - java-gi wraps `AsyncReadyCallback` and `FileProgressCallback` in
@@ -42,10 +44,35 @@ import kotlin.coroutines.resumeWithException
  *   and block (which captures `FileProgressCallback`) while suspended. This prevents
  *   premature GC from freeing the native upcall stub while GIO still holds pointers to it.
  *   Without this, you get SIGSEGV in `upcall_stub_load_target`.
+ * - **Cancellation window (P0-1 fix):** GLib cancellation is asynchronous — after the
+ *   coroutine continuation is released on cancel, the main-context pump thread can still
+ *   invoke the callback (with `G_IO_ERROR_CANCELLED`). The state-machine pin dies with
+ *   the continuation, so [pendingCallbacks] holds the strong reference across that window.
+ *   **Contract:** `block` must perform exactly one native `_async` call; only the
+ *   callback itself may unregister.
  *
  * @see ref/GIO-COROUTINE-BRIDGE.md
  */
 object GioCoroutineBridge {
+
+    /**
+     * Strong references to callbacks currently registered with native GIO operations.
+     *
+     * The coroutine state machine pins the callback only while its continuation is alive.
+     * On cancellation the continuation is released immediately, but GLib cancellation is
+     * asynchronous: the pump thread may still invoke the callback after the Java-side
+     * coroutine is gone. Without this set the callback becomes unreachable, its
+     * `ArenaCloseAction.CLEANER` frees the upcall-stub arena, and the pending native
+     * invocation crashes in `upcall_stub_load_target`.
+     *
+     * Entries are removed ONLY by the callback itself on entry (native invocation fired,
+ * GIO no longer holds the upcall). A native operation that never fires its callback —
+ * or a `block` that throws before GIO registration — pins its entry for the process
+ * lifetime: a deliberate leak-vs-SIGSEGV trade (a userspace sweep cannot prove a
+ * native operation dead).
+     */
+    private val pendingCallbacks: MutableSet<AsyncReadyCallback> =
+        java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     /**
      * Starts a background daemon thread that pumps the GLib main context natively.
@@ -119,8 +146,13 @@ object GioCoroutineBridge {
             val result = suspendCancellableCoroutine { cont ->
                 val cancellable = Cancellable()
 
-                // 1. NATIVE CALLBACK (C → Kotlin)
-                val callback = AsyncReadyCallback { _, res, _ ->
+                // 1. NATIVE CALLBACK (C → Kotlin). Local `lateinit var` lets the
+                //    callback unregister itself from pendingCallbacks on entry.
+                lateinit var callback: AsyncReadyCallback
+                callback = AsyncReadyCallback { _, res, _ ->
+                    // The native invocation has fired: GIO has released the upcall,
+                    // so the cycle-safe strong pin is no longer needed.
+                    pendingCallbacks.remove(callback)
                     if (cont.isActive) {
                         try {
                             cont.resume(finish(res))
@@ -130,13 +162,22 @@ object GioCoroutineBridge {
                     }
                 }
 
-                // 2. Pin reference to prevent GC while GIO holds native pointers.
+                // 2. Pin references to prevent GC while GIO holds native pointers:
+                //    - keepAliveCallback bridges the suspend → resume path while the
+                //      coroutine state machine is live;
+                //    - pendingCallbacks survives the continuation's release on
+                //      cancellation, covering the async native-cancel window.
                 keepAliveCallback = callback
+                pendingCallbacks.add(callback)
 
                 // 3. SAFELY DISPATCH TO GLIB MAIN CONTEXT
                 try {
                     block(cancellable, callback)
                 } catch (e: Exception) {
+                    // Do NOT unregister here: block may have registered the callback
+                    // with GIO before throwing, in which case the native invocation
+                    // will still fire and unregister itself. A pre-registration throw
+                    // leaks one entry by design — cheaper than a use-after-free window.
                     cont.resumeWithException(e)
                 }
 
@@ -146,9 +187,9 @@ object GioCoroutineBridge {
                 }
             }
 
-            // 5. Force compiler/JIT to keep keepAliveCallback alive past the suspension point.
-            @Suppress("UNUSED_EXPRESSION")
-            keepAliveCallback.hashCode()
+            // 5. Keep the callback reachable past the suspension point. reachabilityFence
+            //    is opaque to dead-code elimination, unlike the old .hashCode() no-op.
+            Reference.reachabilityFence(keepAliveCallback)
 
             result
         }
