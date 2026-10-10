@@ -729,13 +729,11 @@ class DirState(
                     var changed = dir.size != current.size
                     if (!changed) {
                         for (i in 0 until dir.size) {
-                            val next = dir.get(i)
-                            val prev = current.get(i)
                             if (dir.getUri(i) != current.getUri(i) ||
-                                next.size != prev.size ||
-                                next.modifiedTime != prev.modifiedTime ||
-                                next.isDirectory != prev.isDirectory ||
-                                next.mimeType != prev.mimeType
+                                dir.getSizeAt(i) != current.getSizeAt(i) ||
+                                dir.getModifiedMillisAt(i) != current.getModifiedMillisAt(i) ||
+                                dir.isDirAt(i) != current.isDirAt(i) ||
+                                dir.getMimeAt(i) != current.getMimeAt(i)
                             ) {
                                 changed = true
                                 break

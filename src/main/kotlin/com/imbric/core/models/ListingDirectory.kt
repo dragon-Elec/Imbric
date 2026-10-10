@@ -102,6 +102,18 @@ class ListingDirectory(initialCapacity: Int = 512) {
     /** Get the name at index (no object allocation). */
     fun getName(index: Int): String = names[index]!!
 
+    /** Get the size at index (no allocation). Indexes are valid only while the caller holds DirState's lock / before mutation, same rule as [getUri]. */
+    fun getSizeAt(index: Int): Long = sizes[index]
+
+    /** Get the modified time at index in epoch millis, -1 for null (no allocation). Indexes are valid only while the caller holds DirState's lock / before mutation, same rule as [getUri]. */
+    fun getModifiedMillisAt(index: Int): Long = modifiedTimes[index]
+
+    /** Get the directory flag at index (no allocation). Indexes are valid only while the caller holds DirState's lock / before mutation, same rule as [getUri]. */
+    fun isDirAt(index: Int): Boolean = isDirs[index]
+
+    /** Get the MIME type at index (no allocation). Indexes are valid only while the caller holds DirState's lock / before mutation, same rule as [getUri]. */
+    fun getMimeAt(index: Int): String = mimeTypes[index]!!
+
     /**
      * Build the URI → index map. Must be called after sorting or adding entries.
      *
