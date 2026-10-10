@@ -143,6 +143,12 @@ class FileBrowserViewModel(
      * flash of "Empty Folder" for folders that actually contained files.
      */
     val state: StateFlow<FileBrowserState> = dirStateFlow.flatMapLatest { dirState ->
+        // dirState.uri is a constructor val on DirState, so it is fixed for
+        // the lifetime of this inner flow. The root check therefore only
+        // depends on the DirState itself — hoist it out of the combiner so
+        // it runs once per navigation instead of on every combined emission
+        // (items, revision, loading, back/forward stacks, virtual URI).
+        val canGoUp = !IfsUri(dirState.uri).isRootUri()
         // The listing and its revision travel together as one pair. `combine` only
         // has typed overloads up to five flows, and the revision has to stay paired
         // with `items` anyway — a re-sort that reorders without changing content must
@@ -163,7 +169,7 @@ class FileBrowserViewModel(
                 items = listing.first,
                 itemsRevision = listing.second,
                 isLoading = isLoading,
-                canGoUp = !IfsUri(dirState.uri).isRootUri(),
+                canGoUp = canGoUp,
                 canGoBack = back.isNotEmpty(),
                 canGoForward = forward.isNotEmpty(),
                 forwardStack = forward

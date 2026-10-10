@@ -24,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,9 +54,15 @@ fun DirectoryView(
  */
 fun getIconForFile(item: FileEntry): ImageVector {
     if (item.isDirectory) return Icons.Default.Folder
-    if (item.isArchive) return Icons.Default.Archive
 
+    // Lowercase the MIME type once and share it between the archive check
+    // and the type dispatch below. Reading item.isArchive here would
+    // lowercase mimeType a second time per row (FileEntry.isArchive
+    // lowercases internally), so the archive predicates are mirrored
+    // on the already-lowered string instead.
     val mime = item.mimeType.lowercase()
+    if (isArchiveMimeType(mime)) return Icons.Default.Archive
+
     return when {
         mime.startsWith("image/") -> Icons.Default.Image
         mime.startsWith("video/") -> Icons.Default.Movie
@@ -69,6 +74,29 @@ fun getIconForFile(item: FileEntry): ImageVector {
         else -> Icons.Default.FilePresent // Fallback generic file icon
     }
 }
+
+/**
+ * Mirrors the MIME predicates of [FileEntry.isArchive] so the icon path can
+ * reuse an already-lowercased MIME string. Callers must rule out directories
+ * first — [FileEntry.isArchive] returns false for directories, and the folder
+ * icon is returned before this check runs.
+ */
+private fun isArchiveMimeType(mime: String): Boolean =
+    mime.startsWith("application/zip") ||
+            mime.startsWith("application/x-tar") ||
+            mime.startsWith("application/x-7z") ||
+            mime.startsWith("application/x-rar") ||
+            mime.startsWith("application/x-xz") ||
+            mime.startsWith("application/gzip") ||
+            mime.startsWith("application/x-bzip2") ||
+            mime.startsWith("application/x-compressed-tar") ||
+            mime.endsWith("+zip") ||
+            mime.endsWith("+tar") ||
+            mime.endsWith("+xz") ||
+            mime.endsWith("+bzip2") ||
+            mime.endsWith("+gzip") ||
+            mime.endsWith("+rar") ||
+            mime.endsWith("+7z")
 
 @Composable
 fun FileList(
@@ -142,10 +170,8 @@ fun FileGrid(
 
     // Pre-calculate column count from available width for justified layout
     // This avoids GridCells.Adaptive's per-recomposition column width calculation
-    val density = LocalDensity.current
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val columns = max(1, (maxWidth / 120.dp).toInt())
-        val cellWidth = maxWidth / columns
 
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
@@ -191,6 +217,11 @@ fun FileRow(
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
+    // humanReadableSize formats on every access (log10/pow/String.format);
+    // compute it once per row, keyed on the item so it refreshes only
+    // when the row's data changes.
+    val sizeText = remember(item) { item.humanReadableSize }
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -212,7 +243,7 @@ fun FileRow(
             supportingContent = if (!item.isDirectory) {
                 {
                     Text(
-                        text = item.humanReadableSize,
+                        text = sizeText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

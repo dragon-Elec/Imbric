@@ -212,8 +212,10 @@ private fun BreadcrumbRow(uri: String, virtualUri: String, onSegmentClick: (Stri
             .horizontalScroll(scrollState),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        val lastActiveIndex = segments.indexOfLast { !it.third }
+
         segments.forEachIndexed { index, (name, segmentUri, isFuture) ->
-            val isLastActive = index == segments.indexOfLast { !it.third }
+            val isLastActive = index == lastActiveIndex
             
             if (index > 0) {
                 Text(
