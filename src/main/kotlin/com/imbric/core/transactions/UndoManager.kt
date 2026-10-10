@@ -19,17 +19,22 @@ import java.util.ArrayDeque
 class UndoManager(
     private val backendRegistry: BackendRegistry,
     private val transactionManager: TransactionManager,
-    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default),
+    maxHistorySize: Int = DEFAULT_MAX_HISTORY
 ) {
+    /**
+     * Cap on entries kept per history stack. A Transaction retains its operations and their
+     * UndoAction payloads (whole URI lists for a batch transfer), so an unbounded stack is
+     * a slow leak on a long-lived session. When the cap is hit the oldest entries are
+     * discarded — that only loses undo/redo depth, never state integrity (a Transaction
+     * here is only ever read). Injectable so a user preference ("undo depth: 70") can be
+     * supplied at construction; the manager itself stays free of settings plumbing.
+     */
+    var maxHistorySize: Int = maxHistorySize
+        private set
     private companion object {
-        /**
-         * Upper bound on entries kept per history stack. A Transaction retains its operations
-         * and their UndoAction payloads (which can be large: whole URI lists for a batch
-         * transfer), so an unbounded stack is a slow leak on a long-lived session. When the
-         * cap is hit the oldest entries are discarded, which only loses undo/redo depth —
-         * it never corrupts state, since a Transaction here is only ever read.
-         */
-        const val MAX_STACK_SIZE = 100
+        /** Default cap on entries kept per history stack (overridable per-instance). */
+        const val DEFAULT_MAX_HISTORY = 100
 
         /**
          * Failsafe for the undo/redo Finished-event wait. A well-behaved transaction always
@@ -91,9 +96,27 @@ class UndoManager(
      */
     private fun pushBounded(stack: Deque<Transaction>, tx: Transaction) {
         stack.push(tx)
-        while (stack.size > MAX_STACK_SIZE) {
+        trimToLimit(stack)
+    }
+
+    private fun trimToLimit(stack: Deque<Transaction>) {
+        while (stack.size > maxHistorySize) {
             stack.removeLast()
         }
+    }
+
+    /**
+     * Changes the per-stack history cap at runtime (e.g. a settings slider moving
+     * "undo depth" from 100 to 70) and trims BOTH stacks to the new limit immediately —
+     * leaving the extra entries in place would make the UI's stated limit a lie about
+     * what is actually retained and undoable. Shrinking below the current depth discards
+     * the oldest entries; raising the limit never restores discarded ones.
+     */
+    fun setHistoryLimit(newLimit: Int) {
+        require(newLimit >= 1) { "undo history limit must be >= 1, was $newLimit" }
+        maxHistorySize = newLimit
+        trimToLimit(undoStack)
+        trimToLimit(redoStack)
     }
 
     // --- Undo ---
