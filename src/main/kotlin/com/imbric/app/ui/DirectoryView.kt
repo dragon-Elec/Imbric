@@ -27,7 +27,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.imbric.app.NavTimer
 import com.imbric.core.models.FileEntry
 import kotlin.math.max
 
@@ -79,7 +78,6 @@ fun FileList(
     onVisibleItemsChanged: ((List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    NavTimer.record("list_render")
     val state = rememberLazyListState()
     
     // Report visible items when items list changes (not on every scroll/layout change)
@@ -131,7 +129,6 @@ fun FileGrid(
     onVisibleItemsChanged: ((List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    NavTimer.record("grid_render")
     val state = rememberLazyGridState()
 
     // Report visible items when items list changes (not on every scroll/layout change)
