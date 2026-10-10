@@ -32,7 +32,7 @@ dependencies {
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)
-    implementation("com.materialkolor:material-kolor:4.1.1")
+    implementation("com.materialkolor:material-kolor:5.0.0")
     
     // Use api to ensure visibility in Hot Reload isolated classpath
     api("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
