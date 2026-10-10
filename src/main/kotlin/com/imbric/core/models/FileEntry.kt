@@ -49,22 +49,7 @@ sealed interface FileEntry {
     val isArchive: Boolean
         get() {
             if (isDirectory) return false
-            val m = mimeType.lowercase()
-            return m.startsWith("application/zip") ||
-                   m.startsWith("application/x-tar") ||
-                   m.startsWith("application/x-7z") ||
-                   m.startsWith("application/x-rar") ||
-                   m.startsWith("application/x-xz") ||
-                   m.startsWith("application/gzip") ||
-                   m.startsWith("application/x-bzip2") ||
-                   m.startsWith("application/x-compressed-tar") ||
-                   m.endsWith("+zip") ||
-                   m.endsWith("+tar") ||
-                   m.endsWith("+xz") ||
-                   m.endsWith("+bzip2") ||
-                   m.endsWith("+gzip") ||
-                   m.endsWith("+rar") ||
-                   m.endsWith("+7z")
+            return isArchiveMimeType(mimeType.lowercase())
         }
 
     val humanReadableSize: String
@@ -86,6 +71,31 @@ sealed interface FileEntry {
                 mimeType == "application/x-executable")
 
     companion object {
+        /**
+         * Archive MIME predicates, shared by [isArchive] and the UI icon path.
+         *
+         * The input must already be lowercased — callers lowercase once and
+         * reuse the value (e.g. for icon dispatch) to avoid a second
+         * [String.lowercase] per row. Directories are the caller's concern:
+         * [isArchive] rules them out before delegating here.
+         */
+        fun isArchiveMimeType(mimeLowercase: String): Boolean =
+            mimeLowercase.startsWith("application/zip") ||
+                    mimeLowercase.startsWith("application/x-tar") ||
+                    mimeLowercase.startsWith("application/x-7z") ||
+                    mimeLowercase.startsWith("application/x-rar") ||
+                    mimeLowercase.startsWith("application/x-xz") ||
+                    mimeLowercase.startsWith("application/gzip") ||
+                    mimeLowercase.startsWith("application/x-bzip2") ||
+                    mimeLowercase.startsWith("application/x-compressed-tar") ||
+                    mimeLowercase.endsWith("+zip") ||
+                    mimeLowercase.endsWith("+tar") ||
+                    mimeLowercase.endsWith("+xz") ||
+                    mimeLowercase.endsWith("+bzip2") ||
+                    mimeLowercase.endsWith("+gzip") ||
+                    mimeLowercase.endsWith("+rar") ||
+                    mimeLowercase.endsWith("+7z")
+
         val SortByName = compareBy<FileEntry> { !it.isDirectory }.thenBy { it.name.lowercase() }
         val SortBySize = compareBy<FileEntry> { !it.isDirectory }.thenByDescending { it.size }
         val SortByDate = compareBy<FileEntry> { !it.isDirectory }.thenByDescending { it.modifiedTime }
@@ -100,9 +110,13 @@ sealed interface FileEntry {
          * edit that keeps the byte count identical. The cost is a single extra attribute
          * token in the enumerate string; the benefit is that DirState.setSortKey can re-sort
          * the cached listing without paying for a fresh GIO enumeration.
+         *
+         * `standard::is-symlink` lets GioBackend.list() detect symlinks and
+         * resolve the target's type with one follow-query, so a symlink whose
+         * target is a directory lists as a directory (Nautilus parity).
          */
         fun listingAttributesFor(sortKey: SortKey): String {
-            val base = "standard::name,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified"
+            val base = "standard::name,standard::type,standard::is-hidden,standard::size,standard::content-type,standard::is-symlink,time::modified"
             return when (sortKey) {
                 SortKey.NAME -> base
                 SortKey.SIZE -> base

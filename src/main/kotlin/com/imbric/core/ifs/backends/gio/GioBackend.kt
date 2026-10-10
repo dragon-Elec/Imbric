@@ -154,7 +154,9 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         val isRoot = IfsUri(uri).isRootUri()
         val childUriBase = childUriJoinBase(uri)
         val parentUri = if (isRoot) uri else uri.trimEnd('/')
-        val parentPath = gfile.path?.toString()?.let { if (it == "/") "/" else it.trimEnd('/') }
+        // Floor at "" (not "/") so the mapper's "$parentPath/$name" join
+        // yields "/name" for root children instead of "//name".
+        val parentPath = gfile.path?.toString()?.let { if (it == "/") "" else it.trimEnd('/') }
             ?: GioTypeMappers.localPathFromFileUri(parentUri)
         val parentPathType = GioTypeMappers.determinePathType(parentUri)
         val parentIsRemote = GioTypeMappers.isRemoteUri(parentUri)
@@ -175,13 +177,26 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
                 for (info in batch) {
                     val name = info?.name?.toString() ?: continue
+                    // The enumeration is NOFOLLOW, so a symlink reports
+                    // SYMBOLIC_LINK and never reveals its target's type.
+                    // One follow-query per symlink (queryInfo with NONE flags
+                    // follows the link) resolves the target type; any failure
+                    // (broken link, ELOOP, cancel) → null → file semantics.
+                    val effectiveType: FileType? = if (info.isSymlink) {
+                        try {
+                            gfile.getChild(name).queryInfo("standard::type", FileQueryInfoFlags.NONE, null)?.fileType
+                        } catch (e: Exception) {
+                            null
+                        }
+                    } else null
                     val fileInfo = GioTypeMappers.toListingFile(
                         name = name,
                         parentUri = parentUri,
                         parentPath = parentPath ?: "",
                         gioInfo = info,
                         parentPathType = parentPathType,
-                        parentIsRemote = parentIsRemote
+                        parentIsRemote = parentIsRemote,
+                        effectiveType = effectiveType
                     )
                     // Root parents already end in '/', so the mapper's "$parentUri/$name" join
                     // emits a quadruple slash. Re-join against the trimmed base so the child
@@ -201,7 +216,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         }
 
         timer?.mark("gio_list_done", itemCount = allItems.size)
-        allItems.toList()
+        allItems
     }.getOrThrow()
 
     override suspend fun getMetadata(uri: String): Result<FileInfo> = withVfsErrorHandling(uri) {
@@ -828,12 +843,23 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
                     // Match filename against query (case-insensitive)
                     if (name.lowercase().contains(queryLower)) {
-                        val fileInfo = GioTypeMappers.toImbricFileInfo(child, info)
+                        // Same NOFOLLOW treatment as list(): one follow-query
+                        // per symlink so the emitted row sees the target's
+                        // type. Failures → null → file semantics.
+                        val effectiveType: FileType? = if (info.isSymlink) {
+                            try {
+                                child.queryInfo("standard::type", FileQueryInfoFlags.NONE, null)?.fileType
+                            } catch (e: Exception) {
+                                null
+                            }
+                        } else null
+                        val fileInfo = GioTypeMappers.toImbricFileInfo(child, info, effectiveType = effectiveType)
 
                         // Apply filters
                         val matchesMime = query.mimeFilter == null || fileInfo.mimeType.startsWith(query.mimeFilter)
-                        val matchesDateRange = (query.modifiedAfter == null || (fileInfo.modifiedTime?.toEpochMilliseconds() ?: 0) >= query.modifiedAfter) &&
-                            (query.modifiedBefore == null || (fileInfo.modifiedTime?.toEpochMilliseconds() ?: Long.MAX_VALUE) <= query.modifiedBefore)
+                        val modifiedMillis = fileInfo.modifiedTime?.toEpochMilliseconds()
+                        val matchesDateRange = (query.modifiedAfter == null || (modifiedMillis ?: 0) >= query.modifiedAfter) &&
+                            (query.modifiedBefore == null || (modifiedMillis ?: Long.MAX_VALUE) <= query.modifiedBefore)
                         val matchesSizeRange = (query.minSize == null || fileInfo.size >= query.minSize) &&
                             (query.maxSize == null || fileInfo.size <= query.maxSize)
 
