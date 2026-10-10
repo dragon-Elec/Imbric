@@ -37,10 +37,10 @@ object GioTypeMappers {
             path = childPath,
             pathType = parentPathType,
             isDirectory = isDir,
-            // Directories: skip 3 FFM calls (size, contentType, modificationDateTime)
+            // Directories: skip 3 attribute reads (size, contentType, mtime)
             size = if (isDir) 0L else gioInfo.size,
             mimeType = if (isDir) "inode/directory" else internMime(gioInfo.contentType),
-            modifiedTime = if (isDir) null else gioInfo.modificationDateTime?.let { kotlin.time.Instant.fromEpochSeconds(it.toUnix()) },
+            modifiedTime = if (isDir) null else getTimestamp(gioInfo, "time::modified"),
             isHidden = name.startsWith("."),
             isInTrash = parentUri.startsWith("trash:///"),
             isInRecent = parentUri.startsWith("recent:///"),
@@ -73,18 +73,29 @@ object GioTypeMappers {
     }
 
     /** RFC 3986 percent-encoding: encodes to UTF-8 bytes first, then percent-encodes each byte. */
-    private fun String.percentEncodeForUri(): String = buildString(length * 3) {
-        val bytes = this@percentEncodeForUri.encodeToByteArray() // UTF-8
-        for (b in bytes) {
-            val unsigned = b.toInt() and 0xFF
-            when {
-                unsigned in 'A'.code..'Z'.code || unsigned in 'a'.code..'z'.code
-                    || unsigned in '0'.code..'9'.code
-                    || unsigned == '-'.code || unsigned == '_'.code
-                    || unsigned == '.'.code || unsigned == '~'.code -> append(unsigned.toChar())
-                else -> {
-                    append('%')
-                    append(Integer.toHexString(unsigned).uppercase().padStart(2, '0'))
+    private fun String.percentEncodeForUri(): String {
+        // Fast path: a purely unreserved ASCII name (the common case) needs no encoding.
+        var i = 0
+        while (i < length) {
+            val c = this[i]
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                || c == '-' || c == '_' || c == '.' || c == '~')) break
+            i++
+        }
+        if (i == length) return this
+        return buildString(length * 3) {
+            val bytes = this@percentEncodeForUri.encodeToByteArray() // UTF-8
+            for (b in bytes) {
+                val unsigned = b.toInt() and 0xFF
+                when {
+                    unsigned in 'A'.code..'Z'.code || unsigned in 'a'.code..'z'.code
+                        || unsigned in '0'.code..'9'.code
+                        || unsigned == '-'.code || unsigned == '_'.code
+                        || unsigned == '.'.code || unsigned == '~'.code -> append(unsigned.toChar())
+                    else -> {
+                        append('%')
+                        append(Integer.toHexString(unsigned).uppercase().padStart(2, '0'))
+                    }
                 }
             }
         }
@@ -146,7 +157,7 @@ object GioTypeMappers {
             symlinkTarget = if (gioInfo.isSymlink) gioInfo.symlinkTarget?.toString() else null,
             size = gioInfo.size,
             mimeType = internMime(gioInfo.contentType),
-            modifiedTime = gioInfo.modificationDateTime?.let { Instant.fromEpochSeconds(it.toUnix()) },
+            modifiedTime = getTimestamp(gioInfo, "time::modified"),
             accessedTime = getTimestamp(gioInfo, "time::access"),
             createdTime = getTimestamp(gioInfo, "time::created"),
             isHidden = gioInfo.isHidden,
