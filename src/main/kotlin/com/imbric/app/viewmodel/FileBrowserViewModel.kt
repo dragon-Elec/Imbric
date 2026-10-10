@@ -59,14 +59,49 @@ class FileBrowserViewModel(
             registry.pipelineTimer = value
         }
 
+    /**
+     * URI whose [DirState] this viewer currently holds a pin on, or null if none.
+     * The pin blocks LRU eviction for as long as this pane displays the URI.
+     */
+    @Volatile
+    private var pinnedUri: String? = null
+
+    /**
+     * Returns the [DirState] for [uri], holding a viewer pin on it. When [uri]
+     * differs from the previously pinned URI, the old pin is dropped first
+     * (the viewer navigated away — the instance stays cached for instant return,
+     * but becomes an eviction candidate again).
+     *
+     * The equality guard matters because [dirStateFlow] is seeded with an initial
+     * value that the first upstream emission would otherwise pin a second time.
+     */
+    private fun pinDirState(uri: String): DirState {
+        val previouslyPinned = pinnedUri
+        if (previouslyPinned == uri) return registry.getOrCreate(uri)
+        if (previouslyPinned != null) registry.unpin(previouslyPinned)
+        pinnedUri = uri
+        return registry.pin(uri)
+    }
+
+    /**
+     * Drops this viewer's pin on whatever URI is actually pinned (may lag
+     * [_currentUri] if a navigation emission hasn't been collected yet) and
+     * destroys the DirState if no other viewer holds it. Idempotent.
+     */
+    fun releasePin() {
+        val uri = pinnedUri ?: return
+        pinnedUri = null
+        registry.release(uri)
+    }
+
     private val dirStateFlow = _currentUri.map { uri ->
-        val dirState = registry.getOrCreate(uri)
+        val dirState = pinDirState(uri)
         dirState.onActive()
         dirState
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
-        registry.getOrCreate(initialUri).apply { onActive() }
+        pinDirState(initialUri).apply { onActive() }
     )
 
     /**

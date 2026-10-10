@@ -39,8 +39,17 @@ class PaneContext(
 
     /**
      * Cleans up resources when this pane (tab) is closed.
+     *
+     * Cancels the pane scope first so its collectors stop, then releases this
+     * pane's pin on the directory it was viewing. Without the release the
+     * DirState — its GFile monitor, enrichment workers and full listing —
+     * would stay alive under the window scope until LRU eviction.
      */
     fun destroy() {
         paneScope.cancel("PaneContext $id was closed")
+        // Release the viewer's actual pin, not a snapshot of currentUri: a navigation
+        // emission may not have been collected yet, in which case currentUri names a
+        // URI this pane never pinned (leaking the real one) or never collected.
+        viewModel?.releasePin()
     }
 }
