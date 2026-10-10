@@ -155,6 +155,12 @@ class DirState(
      */
     private val watchJob = AtomicReference<Job?>(null)
     private val refreshJob = AtomicReference<Job?>(null)
+    /**
+     * Idle CPU telemetry loop, when tracing is on. Held so a newer load can cancel a
+     * predecessor's loop deterministically (the epoch check would retire it on its own,
+     * but only at the next tick) and so [destroy] can drop it explicitly.
+     */
+    private val idleCpuJob = AtomicReference<Job?>(null)
     private val isDestroyed = AtomicBoolean(false)
     /** True if [destroy] has been called. The registry uses this to detect stale entries. */
     val isDestroyedState: Boolean get() = isDestroyed.get()
@@ -321,11 +327,41 @@ class DirState(
                     _loadError.value = e
                 }
             } finally {
-                if (epoch == loadEpoch.get()) _isLoading.value = false
+                if (epoch == loadEpoch.get()) {
+                    _isLoading.value = false
+                    // Only the load that still owns the spinner gets to declare this
+                    // instance idle; a superseded load would start a loop that samples
+                    // straight through the load that replaced it.
+                    startIdleCpuSampling(timer, epoch)
+                }
                 timer?.mark("dir_refresh_done", itemCount = _baseDirectory.size)
             }
         }
         refreshJob.getAndSet(newJob)?.cancel()
+    }
+
+    /**
+     * Starts the idle CPU sampler for [timer] if this instance has just gone idle at
+     * [epoch], replacing any loop a previous load left behind.
+     *
+     * [IdleCpuSampler.start] returns null when [timer] is null — the production path, where
+     * the registry never handed us a tracer — so this is a single null check there, on a
+     * path that has already finished its work.
+     *
+     * [isStillIdle] is the epoch comparison: refresh() and onActive() both claim the next
+     * [loadEpoch] before launching, so the loop sees a change the moment a new load starts
+     * and retires itself without a final mark.
+     */
+    private fun startIdleCpuSampling(timer: PipelineTimer?, epoch: Long) {
+        if (timer == null) return
+        if (isDestroyed.get()) return
+        idleCpuJob.getAndSet(null)?.cancel()
+        val sampler = IdleCpuSampler(
+            timer = timer,
+            isDestroyed = { isDestroyed.get() },
+            isStillIdle = { epoch == loadEpoch.get() }
+        )
+        idleCpuJob.set(sampler.start(scope))
     }
 
     private fun startWatching() {
@@ -669,7 +705,10 @@ class DirState(
                     _loadError.value = e
                 }
             } finally {
-                if (epoch == loadEpoch.get()) _isLoading.value = false
+                if (epoch == loadEpoch.get()) {
+                    _isLoading.value = false
+                    startIdleCpuSampling(timer, epoch)
+                }
             }
         }
         refreshJob.getAndSet(newJob)?.cancel()
@@ -695,6 +734,11 @@ class DirState(
             // loading/error state after teardown.
             loadEpoch.incrementAndGet()
             job.cancel()
+            // Cancelled explicitly as well as via the scope: the loop is a child of `scope`,
+            // so `job.cancel()` already covers it, but the explicit cancel makes the
+            // no-mark-after-teardown guarantee local to destroy() and keeps the reference
+            // from outliving the instance.
+            idleCpuJob.getAndSet(null)?.cancel()
             watchJob.getAndSet(null)?.cancel()
             refreshJob.getAndSet(null)?.cancel()
             _baseDirectory = ListingDirectory(0)

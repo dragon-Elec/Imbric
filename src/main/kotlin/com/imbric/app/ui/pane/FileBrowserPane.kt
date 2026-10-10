@@ -16,7 +16,9 @@ import com.imbric.app.ui.components.animations.edgePulse
 import com.imbric.app.ui.LayoutMode
 import com.imbric.app.viewmodel.FileBrowserState
 import com.imbric.core.ifs.backends.gio.support.PipelineTimer
+import com.imbric.core.ifs.directories.IdleCpuSampler
 import com.imbric.core.models.FileEntry
+import kotlinx.coroutines.delay
 
 @Composable
 fun FileBrowserPane(
@@ -37,6 +39,18 @@ fun FileBrowserPane(
             pipelineTimer.report()
             onReportDone()
         }
+    }
+
+    // Telemetry tail: DirState's idle-CPU sampler appends its first marks ~2.5s and ~7.5s
+    // after the load finishes — long after the report above already fired (and onReportDone
+    // nulled the VM's timer). Second report so idle CPU actually prints instead of only
+    // existing on the detached timer object. Keyed on content, not on the timer param:
+    // the param is already null by the second recomposition.
+    LaunchedEffect(state.uri, state.itemsRevision) {
+        val timer = pipelineTimer ?: return@LaunchedEffect
+        if (state.isLoading) return@LaunchedEffect
+        delay(IdleCpuSampler.IDLE_SETTLE_MS + IdleCpuSampler.SAMPLE_INTERVAL_MS + 1_000L)
+        if (!state.isLoading) timer.report()
     }
 
     // Snapshot the pane content as a single value. AnimatedContent's outgoing
