@@ -161,7 +161,10 @@ class StarredManager private constructor(
         }
 
         /**
-         * Destroys the singleton instance. Used for cleanup and testing.
+         * Destroys the singleton instance. **Test-only**: holders that captured the
+         * instance at construction (e.g. [com.imbric.core.ifs.directories.ListingStrategy]
+         * .Starred, TrashManager's default parameters) keep the dead one after a mid-life
+         * clear while new callers get a live one.
          * Next call to [getInstance] will create a fresh instance.
          */
         fun clear() {

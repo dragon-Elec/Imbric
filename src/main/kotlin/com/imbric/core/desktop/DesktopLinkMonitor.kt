@@ -138,6 +138,10 @@ class DesktopLinkMonitor private constructor(
             }
         }
 
+        /**
+         * Destroys the singleton instance. **Test-only**: holders that captured the
+         * instance keep the dead one after a mid-life clear.
+         */
         fun clear() {
             synchronized(this) {
                 instance?.monitor?.cancel()

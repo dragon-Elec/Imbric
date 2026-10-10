@@ -157,6 +157,15 @@ open class GioSearchBackend(private val fallback: BackendContract = GioBackend()
                     }
                 }
                 val exit = process.waitFor()
+                if (!isActive) {
+                    // The child was killed by awaitClose after the collector went away — waitFor
+                    // then reports the kill signal (137/143). Closing with that exception races
+                    // the in-flight cancellation, and losing the race turns a user cancel into
+                    // a "tracker failure": the slow full manual walk runs AFTER the user
+                    // already cancelled. A silent close lets the cancellation win.
+                    close()
+                    return@launch
+                }
                 if (exit != 0) {
                     close(Exception("Tracker search failed with exit code ${process.exitValue()}"))
                 } else {

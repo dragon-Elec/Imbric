@@ -65,12 +65,17 @@ class IdleCpuSampler(
         val target = timer ?: return null
         return scope.launch {
             delay(IDLE_SETTLE_MS)
-            while (true) {
+            var samples = 0
+            while (samples < MAX_SAMPLES) {
                 // Destroyed → stop silently. No longer idle (a new load claimed an epoch)
                 // → stop silently. Either way the last thing this loop does is NOT a mark.
                 if (isDestroyed() || !isStillIdle()) return@launch
                 val load = readProcessCpuLoad()
                 if (load != null) {
+                    // Re-checked immediately before marking: the check above and the mark are
+                    // not atomic, and destroy() does not preempt a running coroutine — one
+                    // post-destroy mark could otherwise slip through.
+                    if (isDestroyed() || !isStillIdle()) return@launch
                     target.mark(
                         IDLE_MARK_STAGE,
                         itemCount = percentOf(load),
@@ -80,6 +85,9 @@ class IdleCpuSampler(
                 }
                 // A negative load means the platform declined to report (see
                 // readProcessCpuLoad) — skip this tick, keep sampling. Nothing to record.
+                // The cap counts ticks, not recorded samples, so an always-silent platform
+                // still stops.
+                samples++
                 delay(SAMPLE_INTERVAL_MS)
             }
         }
@@ -91,6 +99,13 @@ class IdleCpuSampler(
 
         /** Period between samples once the process is settled. */
         const val SAMPLE_INTERVAL_MS = 5_000L
+
+        /**
+         * Hard cap on samples per load. Two samples is all the second pipeline report
+         * prints (settle + one interval); this allows one extra and then stops, so an
+         * idle traced pane cannot mark a detached timer forever.
+         */
+        const val MAX_SAMPLES = 3
 
         /** Mark stage name. Reported as `idle_cpu_pct=<n>[percent]`. */
         const val IDLE_MARK_STAGE = "idle_cpu_pct"

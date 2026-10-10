@@ -362,6 +362,9 @@ class DirState(
             isStillIdle = { epoch == loadEpoch.get() }
         )
         idleCpuJob.set(sampler.start(scope))
+        // destroy() can land between the guard above and this set — re-check so a torn-down
+        // instance never leaves a live Job reference behind.
+        if (isDestroyed.get()) idleCpuJob.getAndSet(null)?.cancel()
     }
 
     private fun startWatching() {

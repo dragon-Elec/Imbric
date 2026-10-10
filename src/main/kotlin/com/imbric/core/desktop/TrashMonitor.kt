@@ -91,7 +91,8 @@ class TrashMonitor private constructor(
         }
 
         /**
-         * Destroys the singleton instance. Used for cleanup and testing.
+         * Destroys the singleton instance. **Test-only**: holders that captured the
+         * instance keep the dead one after a mid-life clear.
          * Next call to [getInstance] will create a fresh instance.
          */
         fun clear() {

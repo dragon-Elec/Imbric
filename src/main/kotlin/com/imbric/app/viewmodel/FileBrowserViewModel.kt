@@ -82,6 +82,12 @@ class FileBrowserViewModel(
      *
      * The equality guard matters because [dirStateFlow] is seeded with an initial
      * value that the first upstream emission would otherwise pin a second time.
+     *
+     * Threading: [pinDirState], [releasePin] and [dirStateFlow] are Main-confined — they
+     * are only ever called from paneScope collectors and PaneContext.destroy. The
+     * read-modify-write on [pinnedUri] relies on that: a concurrent pin/release could
+     * otherwise interleave (nav reads the old URI, close nulls and releases it, nav pins
+     * the new one on a dead pane) and strand a pin. Keep these on Main.
      */
     private fun pinDirState(uri: String): DirState {
         val previouslyPinned = pinnedUri

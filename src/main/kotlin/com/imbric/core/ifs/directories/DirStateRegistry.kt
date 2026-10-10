@@ -219,18 +219,28 @@ class DirStateRegistry(
 
     /**
      * Removes a specific URI from the cache and stops its monitoring.
+     *
+     * The pin refcount is dropped with the entry: leaving it behind makes a later
+     * [getOrCreate] resurrect the URI with a stale count, pinning the fresh instance
+     * forever (isPinned true, never evictable, needing N phantom releases).
      */
     fun remove(uri: String) {
-        synchronized(lock) { cache.remove(uri) }?.destroy()
+        val state = synchronized(lock) {
+            pinCounts.remove(uri)
+            cache.remove(uri)
+        }
+        state?.destroy()
     }
 
     /**
      * Clears all cached entries and stops their monitoring.
+     * Refcounts go with the entries — same stale-pin hazard as [remove].
      */
     fun clear() {
         val snapshot = synchronized(lock) {
             val entries = cache.values.toList()
             cache.clear()
+            pinCounts.clear()
             entries
         }
         snapshot.forEach { it.destroy() }
