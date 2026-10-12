@@ -12,8 +12,11 @@ _DIAG_PATTERN = re.compile(
 )
 
 # Match GLib / GIO C-level native warnings: (com.imbric:12345): GLib-GIO-CRITICAL **: message
+# The trailing timestamp (12:25:14.025) is stripped too — it varies per
+# line and would otherwise defeat dedup. Non-capturing so match.groups()
+# still unpacks exactly (level, msg).
 _GLIB_PATTERN = re.compile(
-    r"^(?:\([^)]+\):\s+)?(GLib(?:-[A-Za-z0-9]+)?-[A-Za-z]+)\s+\*\*:\s+(.*)$"
+    r"^(?:\([^)]+\):\s+)?(GLib(?:-[A-Za-z0-9]+)?-[A-Za-z]+)\s+\*\*:\s+(?:\d+:\d+:\d+(?:\.\d+)?:\s+)?(.*)$"
 )
 
 # Match [PIPELINE] log lines: [PIPELINE] 135ms (ui_click=+0ms -> gio_list_done=+134ms [990] -> ui_rendered=+245ms)

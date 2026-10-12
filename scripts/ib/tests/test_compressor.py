@@ -65,6 +65,26 @@ class TestCompressor(unittest.TestCase):
         self.assertIn("[... 4 internal framework frames skipped ...]", result)
         self.assertIn("[... 1 internal framework frames skipped ...]", result)
 
+    def test_compress_glib_warnings_dedups_timestamped_lines(self):
+        # Real GLib lines carry a PID prefix AND a timestamp. The
+        # timestamp must not leak into the dedup key — every
+        # millisecond-distinct line would otherwise be its own key
+        # and no (Nx) collapse would ever happen.
+        lines = [
+            "(process:149156): GLib-GIO-CRITICAL **: 12:25:14.025: GFileInfo created without standard::is-symlink",
+            "(process:149157): GLib-GIO-CRITICAL **: 12:25:14.101: GFileInfo created without standard::is-symlink",
+            "(process:149158): GLib-GIO-CRITICAL **: 12:25:15.202: GFileInfo created without standard::is-symlink",
+            "(process:149159): GLib-GIO-CRITICAL **: 12:26:01.500: file ../../../gio/gfileinfo.c: line 1676: g_file_info_get_is_symlink: assertion 'G_IS_FILE_INFO (info)' failed",
+            "(process:149160): GLib-GIO-CRITICAL **: 12:26:02.750: file ../../../gio/gfileinfo.c: line 1676: g_file_info_get_is_symlink: assertion 'G_IS_FILE_INFO (info)' failed",
+        ]
+        result = compress_glib_warnings(lines)
+        self.assertIn("⚠️ [GLib-GIO-CRITICAL] (3x) GFileInfo created without standard::is-symlink", result)
+        self.assertIn("⚠️ [GLib-GIO-CRITICAL] (2x) file ../../../gio/gfileinfo.c: line 1676", result)
+        self.assertNotIn("12:25", result)
+        self.assertNotIn("12:26", result)
+        self.assertEqual(result.count("GFileInfo created without standard::is-symlink"), 1)
+        self.assertEqual(result.count("g_file_info_get_is_symlink"), 1)
+
     def test_compress_glib_warnings(self):
         lines = [
             "(com.imbric:12345): GLib-GIO-CRITICAL **: g_file_info_get_attribute_byte_string: assertion 'G_IS_FILE_INFO (info)' failed",

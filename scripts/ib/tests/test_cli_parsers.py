@@ -79,7 +79,7 @@ class TestTestsFlagRepeatable(unittest.TestCase):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 test_cmd.run(argparse.Namespace(
                     tests=["A", "B"], failed=False, rerun=False,
-                    continue_on_fail=False))
+                    continue_on_fail=False, warnings=False))
         self.assertEqual(
             popen.call_args.args[0],
             # --console=plain comes from the shared GRADLE_FLAGS so no command can

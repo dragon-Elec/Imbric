@@ -158,7 +158,7 @@ class TestCommandExitCodes(unittest.TestCase):
              contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
                 test_cmd.run(argparse.Namespace(
-                    tests=None, failed=False, rerun=False, continue_on_fail=False))
+                    tests=None, failed=False, rerun=False, continue_on_fail=False, warnings=False))
             except SystemExit as e:
                 code = e.code
         return out.getvalue(), err.getvalue(), code
@@ -184,7 +184,7 @@ class TestCommandExitCodes(unittest.TestCase):
              contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
                 test_cmd.run(argparse.Namespace(
-                    tests=None, failed=False, rerun=False, continue_on_fail=False))
+                    tests=None, failed=False, rerun=False, continue_on_fail=False, warnings=False))
             except SystemExit as e:
                 code = e.code
         self.assertEqual(code, 130)

@@ -9,6 +9,10 @@ Pins:
 - GLib/GIO native warnings dedupe to one "(Nx)" summary; consecutive
   "at " stack frames compress (framework frames collapse to a skip
   count); [PIPELINE] lines reformat as a timeline.
+- test.py's inline renderer buffers GLib criticals and prints the same
+  deduped summary to stdout — flushed on the next non-GLib line so it
+  lands where the flood occurred, and once at end-of-loop for a
+  trailing flood.
 - Error patterns are anchored: a PASSED test line naming
   testExceptionPath() or a mid-line "error:" must NOT flip in_error.
 - test.py's inline renderer: dots for PASSED lines are separated from the
@@ -120,7 +124,7 @@ class TestDotRendering(unittest.TestCase):
         with mock.patch.object(test_cmd.subprocess, "Popen", return_value=proc):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 test_cmd.run(argparse.Namespace(
-                    tests=None, failed=False, rerun=False, continue_on_fail=False))
+                    tests=None, failed=False, rerun=False, continue_on_fail=False, warnings=False))
         printed = out.getvalue()
         self.assertIn(".", printed)                       # dot for the passed test
         self.assertIn("BUILD SUCCESSFUL in 5s", printed)  # gradle summary passes through
@@ -134,7 +138,7 @@ class TestDotRendering(unittest.TestCase):
         with mock.patch.object(test_cmd.subprocess, "Popen", return_value=proc):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 test_cmd.run(argparse.Namespace(
-                    tests=None, failed=False, rerun=False, continue_on_fail=False))
+                    tests=None, failed=False, rerun=False, continue_on_fail=False, warnings=False))
         self.assertIn("Tests completed successfully", out.getvalue())
 
 
@@ -207,7 +211,7 @@ class TestTestCommandVisibility(unittest.TestCase):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
                 with contextlib.suppress(SystemExit):
                     test_cmd.run(argparse.Namespace(
-                        tests=tests, failed=False, rerun=False, continue_on_fail=False))
+                        tests=tests, failed=False, rerun=False, continue_on_fail=False, warnings=False))
         return out.getvalue()
 
     def test_kotlin_compile_error_is_visible(self):
@@ -241,14 +245,16 @@ class TestTestCommandVisibility(unittest.TestCase):
         self.assertIn("(2 tests)", printed)                 # count in the summary
 
     def test_kotlin_warning_does_not_enter_error_block(self):
-        # `w:` is a warning, not a failure: it must print but must NOT set
-        # in_error, or every line after it floods until the next task line.
+        # `w:` is a warning, not a failure: it is collected into the
+        # warning summary and must NOT set in_error, or every line
+        # after it floods until the next task line.
         printed = self._run_test_cmd([
             "w: file:///p/A.kt:3:1 unused variable\n",
             "FooTest > bar PASSED\n",
             "BUILD SUCCESSFUL in 5s\n",
         ])
-        self.assertIn("unused variable", printed)
+        self.assertIn("[1 compiler warning", printed)  # collected, not flooded
+        self.assertIn(".", printed)                     # test after it still prints
 
 
 class TestGLibDedup(unittest.TestCase):
@@ -283,6 +289,93 @@ class TestGLibDedup(unittest.TestCase):
             f.flush_warnings()
             f.flush_warnings()  # second flush writes nothing
         self.assertEqual(err.getvalue().count("g_set_error"), 1)
+
+
+class TestTestCommandGLibBuffering(unittest.TestCase):
+    """test.py buffers GLib criticals and prints one deduped summary.
+
+    test.py owns its inline renderer (no OutputFilter seam), so it
+    reuses the shared compress_glib_warnings() — a second dedup
+    implementation would drift from filter.py's.
+    """
+
+    def _critical(self, ts, pid="149156"):
+        return (f"(process:{pid}): GLib-GIO-CRITICAL **: {ts}: "
+                "g_file_info_get_is_symlink: "
+                "assertion 'G_IS_FILE_INFO (info)' failed")
+
+    def _run_test_cmd(self, lines, returncode=0, tests=None):
+        proc = FakeProc(lines=lines, returncode=returncode)
+        out = io.StringIO()
+        # run() propagates the child exit code via sys.exit — swallow it
+        # so the assertion is about printed output, not process status.
+        with mock.patch.object(test_cmd.subprocess, "Popen", return_value=proc):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                with contextlib.suppress(SystemExit):
+                    test_cmd.run(argparse.Namespace(
+                        tests=tests, failed=False, rerun=False,
+                        continue_on_fail=False, warnings=False))
+        return out.getvalue()
+
+    def test_glib_criticals_collapse_inline(self):
+        printed = self._run_test_cmd([
+            "FooTest > a PASSED\n",
+            self._critical("12:25:14.025", "149156"),
+            self._critical("12:25:14.101", "149157"),
+            self._critical("12:25:15.202", "149158"),
+            "FooTest > b PASSED\n",
+            "BUILD SUCCESSFUL in 5s\n",
+        ], tests=["FooTest"])
+        self.assertIn("(3x)", printed)
+        self.assertEqual(printed.count("g_file_info_get_is_symlink"), 1)
+        self.assertIn(".", printed)                        # dots present
+        self.assertIn("\nBUILD SUCCESSFUL", printed)        # banner on its own line
+        self.assertNotIn("12:25:14.025", printed)         # timestamp stripped
+
+    def test_glib_summary_lands_where_the_flood_occurred(self):
+        # Flush happens on the next non-GLib line — between the two
+        # test names, NOT all at exit.
+        critical = self._critical("12:25:14.025")
+        printed = self._run_test_cmd([
+            "FooTest > a PASSED\n",
+            critical,
+            critical,
+            "FooTest > b PASSED\n",
+            "BUILD SUCCESSFUL in 5s\n",
+        ], tests=["FooTest"])
+        self.assertIn("(2x)", printed)
+        a_pos = printed.find("FooTest > a PASSED")
+        summary_pos = printed.find("(2x)")
+        b_pos = printed.find("FooTest > b PASSED")
+        self.assertLess(a_pos, summary_pos)   # after test a ...
+        self.assertLess(summary_pos, b_pos)   # ... before test b
+
+    def test_trailing_glib_flood_before_build_flushes(self):
+        # Criticals are the last lines before BUILD: the BUILD line
+        # (non-GLib) triggers the in-loop flush before it prints.
+        critical = self._critical("12:25:14.025")
+        printed = self._run_test_cmd([
+            "FooTest > a PASSED\n",
+            critical,
+            critical,
+            "BUILD SUCCESSFUL in 5s\n",
+        ], tests=["FooTest"])
+        self.assertIn("(2x)", printed)
+        self.assertEqual(printed.count("g_file_info_get_is_symlink"), 1)
+        self.assertIn("\nBUILD SUCCESSFUL", printed)
+
+    def test_glib_flood_at_stream_end_flushes(self):
+        # Child ends mid-flood with no non-GLib line after it: only
+        # the end-of-loop flush can print the summary.
+        critical = self._critical("12:25:14.025")
+        printed = self._run_test_cmd([
+            "FooTest > a PASSED\n",
+            critical,
+            critical,
+        ], tests=["FooTest"])
+        self.assertIn("(2x)", printed)
+        self.assertEqual(printed.count("g_file_info_get_is_symlink"), 1)
+        self.assertIn("Tests completed successfully", printed)
 
 
 class TestStacktraceCompression(unittest.TestCase):

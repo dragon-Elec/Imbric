@@ -6,9 +6,20 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from ..daemon import PROJECT_ROOT, gradle_base_cmd
 from ..filter import OutputFilter
+from ..compressor import _GLIB_PATTERN, compress_glib_warnings
 
 _PASSED = re.compile(r" > .* PASSED")
 _TASK_START = re.compile(r"^> Task ")
+# Compiler warnings are collected into a count, not printed
+# inline — they are compiler noise, not test results.
+_WARNING = re.compile(r"^w: ")
+# Gradle/JVM compile notes and incubating-feature notices carry
+# no diagnostic value.
+_NOTE = re.compile(r"^Note: ")
+_INCUBATING = re.compile(r"^\[Incubating\]")
+# JUnit captures a test's System.out as a STANDARD_OUT block
+# (benchmark reports, debug prints). Noise in a normal run.
+_STANDARD_OUT = re.compile(r" STANDARD_OUT$")
 
 _IMPORTANT = [
     re.compile(r"FAILED"),
@@ -64,6 +75,7 @@ def _get_previously_failed_test_classes() -> list[str]:
 def register(subparsers):
     p = subparsers.add_parser("test", help="Run tests with clean, concise filtering")
     p.add_argument("--tests", action="append", type=str, help="Run specific test class or method; repeatable (e.g. --tests FooTest --tests BarTest)")
+    p.add_argument("-w", "--warnings", action="store_true", help="Display full compiler warnings")
     p.add_argument("--failed", action="store_true", help="Re-run only the test classes that failed in the previous run")
     p.add_argument("--rerun", action="store_true", help="Force test re-execution bypassing Gradle cache")
     p.add_argument("--continue", dest="continue_on_fail", action="store_true", help="Continue running tests even if some fail")
@@ -104,6 +116,10 @@ def run(args):
     # and can bury the failures this filter exists to surface. The mode
     # is inferred from the args, not a flag.
     verbose = bool(args.tests or args.failed)
+    show_warnings = args.warnings
+    warnings: list[str] = []
+    glib_buffer: list[str] = []
+    in_stdout = False
 
     try:
         proc = subprocess.Popen(
@@ -118,10 +134,45 @@ def run(args):
         in_error = False
         dot_count = 0
 
+        def flush_glib():
+            # Reads dot_count (never assigns — it also feeds the
+            # final "(N tests)" total) so the summary newline
+            # mirrors the dot-flush without clobbering the count.
+            if not glib_buffer:
+                return
+            if dot_count > 0:
+                print()
+            print(compress_glib_warnings(glib_buffer), flush=True)
+            glib_buffer.clear()
+
         for line in proc.stdout:
             line = line.rstrip()
             if not line:
                 continue
+
+            # JUnit-captured test stdout: benchmark reports and
+            # debug prints. The captured lines are indented; a
+            # non-indented line ends the block.
+            if in_stdout:
+                if line.startswith((" ", "\t")):
+                    continue
+                in_stdout = False
+            if _STANDARD_OUT.search(line):
+                in_stdout = True
+                continue
+
+            # GLib/GIO native criticals: buffer and collapse to one
+            # deduped summary. Flushed on the NEXT non-GLib line so
+            # the summary lands where the flood occurred (not all at
+            # exit, which would reorder a minute-1 critical after a
+            # minute-2 failure). search (not match) matches filter.py
+            # and tolerates indentation. Lines inside a failure block
+            # buffer instead of printing raw.
+            if _GLIB_PATTERN.search(line):
+                glib_buffer.append(line)
+                continue
+            if glib_buffer:
+                flush_glib()
 
             # BUILD banners: show, but they END error context — matching
             # them via _IMPORTANT used to set in_error=True, which kept
@@ -131,6 +182,16 @@ def run(args):
                     print()
                 print(line, flush=True)
                 in_error = False
+                continue
+
+            # Compiler warnings: collect into a summary instead of
+            # printing every one inline.
+            if _WARNING.match(line):
+                warnings.append(line)
+                continue
+
+            # Gradle/JVM compile notes and incubating notices: noise.
+            if _NOTE.match(line) or _INCUBATING.match(line):
                 continue
 
             # Failure or important line → show full output immediately
@@ -179,6 +240,10 @@ def run(args):
 
         proc.wait()
 
+        # Trailing flood: the child may end mid-GLib-spam with no
+        # non-GLib line after it to trigger the in-loop flush.
+        flush_glib()
+
         elapsed = int(time.time() - start)
         elapsed_str = f"{elapsed}s" if elapsed < 60 else f"{elapsed//60}m {elapsed%60}s"
 
@@ -187,7 +252,18 @@ def run(args):
             print(f"\nTests completed successfully in {elapsed_str}{suffix}")
         else:
             print(f"\nTests failed (exit code {proc.returncode}) in {elapsed_str}")
-            # Propagate: a test wrapper that always exits 0 cannot gate anything
+
+        if warnings:
+            if show_warnings:
+                print(f"\n--- {len(warnings)} Compiler Warning{'s' if len(warnings) != 1 else ''} ---")
+                for w in warnings:
+                    print(w)
+            else:
+                plural = "s" if len(warnings) != 1 else ""
+                print(f"\n[{len(warnings)} compiler warning{plural} (use -w / --warnings to view)]")
+
+        # Propagate: a test wrapper that always exits 0 cannot gate anything
+        if proc.returncode != 0:
             sys.exit(proc.returncode)
 
     except KeyboardInterrupt:
