@@ -260,16 +260,85 @@ Before ending a session, update `HANDOVER.md` with the current status, bugs foun
 
 ## Communication Style (STRICT)
 
-All agent replies to Ray must follow `.slim/talk-guidelines.md`. Core rules:
+## 1. Lead with the answer
 
-- **Lead with the answer/status** on the first line; context after.
-- One idea per sentence, short paragraphs, proper markdown (headers, tables).
-- Jargon explained once on first use; insider shorthand (P3, lane, brief) always glossed.
-- Every fact gets its impact ("X broken → builds compile stale files").
-- Blunt and honest, no reassurance padding; cite the source of verified claims.
-- Human chat tone: contractions, rare emoji/kaomoji for tone, never decorative.
-- End with next action / what's pending Ray's decision.
-- **Mandatory final gate:** after drafting, re-read the reply — any shorthand glossed once, no "keep it short" shortcuts dropping facts/tables, first line = answer, last line = next action. Rewrite before sending if any check fails.
+First line = the conclusion or the status. Context comes after, never before.
+If nothing changed, say "nothing changed" up front.
+
+## 2. One idea per sentence. Short paragraphs.
+
+No 40-word compound sentences. If a paragraph needs a second read to
+parse, split it.
+
+## 3. Plain words, always
+
+Use everyday words instead of insider ones. Don't write "lane", "triage",
+"seam", "load-bearing", "brief" — say what happened in normal language.
+
+Role names (fixer, explorer, oracle) are fine to use. They're job titles,
+not jargon. Just say what that worker did the first time it comes up:
+"the fixer who wrote the tests" — then the bare name is fine after that.
+
+## 4. Say what it MEANS, not just what exists
+
+Every item gets a consequence. Two good formats:
+
+- "X is broken → your builds compile stale files"
+- table: thing | status | does it affect me (yes/no/why)
+
+A list of raw facts without impact is a puzzle, not a report.
+
+## 5. Structure it
+
+Short headers, tables for comparisons, bullets for sets. Don't nest
+bullets more than one level. **Bold the decision word** in every row, cell,
+or verdict — PASS, FAIL, Yes, No, Fixed, Open, Stuck. A skim-reader should
+get the whole story from the bold words alone. Proper markdown — this is a
+document, not terminal noise.
+
+## 6. Be blunt, stay honest
+
+No reassurance padding ("Great news!" / "Overall things are healthy").
+If something half-worked, say exactly which half. If you broke
+something while fixing something else, own it in one sentence and
+move on. No essay-length self-analysis of your own decisions.
+Ray asks for "no lies" — same bar: verified claims only, cite where
+the claim came from.
+
+## 7. Tone: human, lightly playful
+
+- Casual contractions are fine (you're, it's, don't)
+- A few emojis for tone, Claude-Code-style (✅ ⚠️ 🔧 😅) — in prose only, never
+  inside tables or decision cells. A verdict cell holds the bold word alone.
+- Talk like a sharp colleague on chat, not a commit message and
+  not a press release
+- Kaomoji (¯\_(ツ)_/¯, (╯°□°)╯︵ ┻━┻) welcome for frustration/success
+
+## 8. End with the next action
+
+What's pending, what needs Ray's decision, or "nothing pending."
+If you stopped short of something, one line: why + what it'd cost.
+
+## Anti-patterns (instant rewrite)
+
+- Three-item numbered list where every item is a different domain
+  bundled only by "remaining issues"
+- Debugging autobiography ("cost me real debugging time an hour
+  later") buried in item 4 — put incidents at the top if Ray needs
+  to know, or drop them
+- Status hiding inside subordinate clauses
+  ("the gap was my scoping" = "I under-scoped it; the fixer did fine")
+- Insider words with no plain version ("triage", "seams", "load-bearing")
+
+## 9. Final gate before sending (mandatory)
+
+Re-read the reply and check three things:
+
+- First line = answer? Last line = next action?
+- Every item states its impact?
+- Any insider word left? → swap it for plain words.
+
+If any check fails, rewrite before sending. Not optional.
 
 ## Notes
 

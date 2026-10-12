@@ -210,3 +210,27 @@ Step 5: Post-Processing
 ---
 
 *Updated after Session 24. Completed Phase 3 & 4 of the SoA Log-Structured DirState Integration. Wired `DirState` to use `ListingDirectory` and `EnrichedListingView` instead of `HashMap<String, FileEntry>`, reducing GC pressure and object allocation overhead for directory listings.*
+
+---
+
+## Session 25 (2026-10-11) — Regression hunt + P0 fixes, all green
+
+**Trigger:** 41 commits + 11 pushes on 10-10; asked to check for regressions.
+
+**Recon (explorer):** all committed work pushed (`main`=`origin/main`); hot zone = listing/sort/cache + symlink/FFI + transactions. **Review (oracle):** 5 P0s; after proof pass: P0-1 terminal loss real (orchestrator hang proven, undo hang disproven — 60s timeout exists), P0-2/4 + P1-5 already fixed in tree, P0-5 didn't exist (numbering gap). **Build (fixer):** compile + full suite green pre-change.
+
+**Landed (uncommitted, 6 files):**
+- P0-1 `TransactionManager.kt`/`TransferOrchestrator.kt`: `getStatus()` accessor, 5s-bounded fallback emit, 30s wall-clock idle-deadline waiter (synthesize only when status already terminal).
+- P0-2 `DirState.kt`: isDestroyed first-line guards in 6 lock blocks; destroy teardown tryLock-sync + NonCancellable async fallback (pure async proven untestable — NonCancellable orphans skip advanceUntilIdle, proven by probe).
+- P0-3 `DirState.kt`: sortKey private + under-lock, two-level guard, explicit comparator param to rebuildComposite.
+- P0-4 `GioBackend.kt`: guarded close() at 6 sites.
+- P1 `DirState.kt`: async enrichment cut → sync emblem-only; collect materializes FileInfo for non-FileInfo base rows (SoA flattens all backends to ArrayBackedEntry).
+- Tests: deleted image-dimensions + whenEnriched tests, rewrote deepCount→emblem-liveness, emblem test uses settle loops (scheduler interleave needs drains).
+
+**Verify:** `ib compile` OK; `DirStateTest` 26/26 ×3 forced reruns; full `ib test --rerun` green (34s).
+
+**Open:** nothing. AGENTS.md +89 (talk-guidelines inline) predates this session, untouched.
+
+### Live-fire appendix (same session)
+- P0-1 probe `TerminalFallbackFireTest` (KEPT as regression test): wedged subscriber + 70 empty commits overfill the 128 buffer; asserts getStatus==COMPLETED and zero parked emitter children (5s fallback bound). Green in 1s.
+- P0-4 probe (temporary, deleted): 20× cancel-mid-copyRecursive (600 files). No PENDING/GError in any run. Found pre-existing wart (not from this change, A/B proven via stash): copy's `:257 catch (e: Exception)` translates cooperative cancellation into `VfsError.Cancelled`, and a producer that outlives its consumer by ms surfaces it as an uncaught late failure. Guards match proven `:210` pattern; suite green; positive PENDING-kill not observed in 40 cancel iterations.
