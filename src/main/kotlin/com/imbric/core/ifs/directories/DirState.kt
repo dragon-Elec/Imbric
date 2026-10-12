@@ -40,14 +40,11 @@ class DirState(
     var pipelineTimer: PipelineTimer? = null
 ) {
     /**
-     * Serializes writes to _baseDirectory, _deltas, _itemsList and fileCache across
-     * refresh/onActive/handleEventBatch/enrichItem. It also
-     * guards the read paths that walk the installed listing (refresh's dedup
-     * pass, onActive's change compare, containsFile): sortBy mutates
-     * _baseDirectory in place under this lock, so an unsynchronized reader
-     * can observe a half-applied permutation.
-     * Not reentrant — never call a suspending helper that takes it again from inside a
-     * `withLock` block.
+     * Serializes writes to _baseDirectory, _deltas, _itemsList and fileCache.
+     * Also guards readers that walk the installed listing (refresh dedup,
+     * onActive compare, containsFile): sortBy mutates _baseDirectory in place,
+     * so an unlocked reader can see a half-applied permutation.
+     * Not reentrant — never take it again from inside a `withLock` block.
      */
     private val stateMutex = Mutex()
     /** Child job tied to this DirState's lifecycle. Cancelled on [destroy]. */
@@ -148,12 +145,9 @@ class DirState(
 
     private val enrichedUris = Collections.synchronizedSet(mutableSetOf<String>())
     /**
-     * Held in AtomicReferences rather than plain vars: [startWatching]/[refresh]/[onActive]
-     * install these from the Listing dispatcher while [stop]/[destroy] clear them from the
-     * UI thread. With a plain var the cancel-then-assign pair is a read-modify-write that two
-     * threads can interleave, orphaning a watcher Job whose `awaitClose` (and the
-     * GIO `monitor.cancel()` behind it) then never runs. getAndSet makes the swap-and-cancel
-     * atomic at every install site.
+     * Atomic swaps: install (Listing dispatcher) races clear (UI thread), and a
+     * torn cancel-then-assign orphans a watcher whose `awaitClose`/GIO
+     * `monitor.cancel()` then never runs. getAndSet makes every handoff atomic.
      */
     private val watchJob = AtomicReference<Job?>(null)
     private val refreshJob = AtomicReference<Job?>(null)
@@ -239,20 +233,12 @@ class DirState(
                 val allItems = strategy.list(backend, uri, sortKey)
 
                 val dir = ListingDirectory(allItems.size + 16)
-                // Unchanged-row dedup: fileCache is lazily populated (only rows
-                // actually read are materialized), so it can no longer answer this
-                // check. The previous listing is still installed at this point
-                // (_baseDirectory is swapped inside the lock below), so the old row
-                // is read straight from its URI index — O(1) — and the transient
-                // wrapper is discarded once the comparison is done instead of being
-                // retained in the cache.
-                //
-                // The old-row reads happen under stateMutex: sortBy mutates the
-                // installed listing in place (sortWith → applyPermutation +
-                // buildUriIndex) under the same lock, so an unlocked findIndex/get
-                // could observe a half-applied permutation. Same shape as
-                // enrichVisibleItems: collect the decisions inside the lock, then
-                // apply them to the local directory outside it.
+                // Unchanged-row dedup against the still-installed listing (swapped
+                // below): read the old row straight from its URI index — O(1) — and
+                // discard the transient wrapper instead of caching it. Under lock:
+                // sortBy mutates the installed listing in place under the same mutex.
+                // Decisions collected here, applied to `dir` outside (as in
+                // enrichVisibleItems) — the mutex is not reentrant.
                 val deduped = stateMutex.withLock {
                     if (isDestroyed.get()) return@withLock emptyList<FileEntry>()
                     val decisions = ArrayList<FileEntry>(allItems.size)
@@ -284,17 +270,12 @@ class DirState(
                     _baseDirectory = dir
                     _deltas.value = DeltaState()
 
-                    // Trace marks only — they no longer bracket an emission point; the emission
-                    // this used to time now happens at the trailing rebuildComposite().
                     timer?.mark("first_chunk_rendered", itemCount = dir.size)
                     timer?.mark("dir_list_done", itemCount = dir.size)
 
-                    // Drop wrappers bound to the replaced listing: they would
-                    // resolve indices against the old parallel arrays and keep
-                    // that directory reachable. The cache is NOT repopulated —
-                    // rows materialize on demand via getOrPut (see
-                    // enrichVisibleItems), so only rows actually read ever
-                    // become objects.
+                    // Drop wrappers bound to the replaced listing: they would resolve
+                    // indices against the old parallel arrays. Rows materialize on demand
+                    // via getOrPut (see enrichVisibleItems), so only rows read become objects.
                     fileCache.clear()
 
                     rebuildComposite(FileEntry.comparatorFor(sortKey))

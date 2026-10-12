@@ -1,26 +1,19 @@
 package com.imbric.core.models
 
 /**
- * Immutable composite view that merges an [ListingDirectory] snapshot with a delta layer.
+ * Immutable composite of a [ListingDirectory] snapshot + delta layer (additions,
+ * deletions, enrichments), computed once in the constructor. A new instance per
+ * rebuild gives StateFlow a fresh identity that always emits (see [equals]).
  *
- * - **additions**: new/modified files from file events (not in the base snapshot)
- * - **deletions**: URIs of files that have been removed
- * - **enrichments**: files enriched with metadata (emblems, dimensions, etc.)
+ * **Aliasing caveat:** the base is held by reference and read live by [get]; when
+ * [com.imbric.core.ifs.directories.DirState.sortBy] re-sorts it in place, reads are
+ * transiently reordered until the rebuilt view publishes microseconds later. The
+ * view's own mapping stays immutable.
  *
- * All state is computed once in the constructor. The view is fully immutable and thread-safe.
- * A new instance is created on every delta change, giving [kotlinx.coroutines.flow.MutableStateFlow]
- * a fresh object reference that always triggers emission.
- *
- * **Aliasing caveat:** the [ListingDirectory] base is held by reference and read live by [get]
- * (whole-row reads only, so never torn). When [com.imbric.core.ifs.directories.DirState.sortBy]
- * re-sorts the base in place, this view's reads are transiently reordered until DirState publishes
- * the rebuilt view microseconds later. The view's own state (mapping, deltas) stays immutable.
- *
- * **Zero-delta fast path:** when additions, deletions AND enrichments are all empty there is
- * nothing to merge, so rows are re-viewed through the base's own lazy [ListingDirectory.asList]
- * delegate — the same zero-overhead view a static directory read uses. No mapping array is
- * built and no base row is walked. Every rebuild still creates a new instance, so one rebuild
- * still produces exactly one view and the caller's revision/emission behavior is unchanged.
+ * **Zero-delta fast path:** with all three delta collections empty, rows come from
+ * the base's lazy [ListingDirectory.asList] delegate — no mapping array, no row
+ * walked. A fresh instance is still created per rebuild, so revision behavior is
+ * unchanged.
  */
 class EnrichedListingView(
     private val base: ListingDirectory,
@@ -32,11 +25,6 @@ class EnrichedListingView(
 
     private val additionsList: List<FileInfo>
 
-    /**
-     * Zero-delta delegate: the base listing's lazy view. Assigned only when
-     * additions, deletions AND enrichments are all empty — rows then come
-     * straight from the cached base, with no mapping array built at all.
-     */
     private val passthrough: List<FileEntry>?
 
     /** Base-index → view-index mapping; null while [passthrough] is active. */
@@ -45,16 +33,12 @@ class EnrichedListingView(
     init {
         additionsList = additions.values.sortedWith(comparator)
 
-        // Fast path: zero deltas of any kind — delegate to the base listing.
-        // A fresh instance is still created on every rebuild, so identity-based
-        // StateFlow emission and the caller's revision bump behave as today.
         if (additions.isEmpty() && deletions.isEmpty() && enrichments.isEmpty()) {
             passthrough = base.asList()
             mapping = null
         } else {
             passthrough = null
 
-            // Fast path: no additions/deletions, only enrichment overlays.
             if (additions.isEmpty() && deletions.isEmpty()) {
                 mapping = IntArray(base.size) { it }
             } else {
@@ -83,7 +67,6 @@ class EnrichedListingView(
                     }
                 }
 
-                // Drain remaining base entries
                 while (baseIdx < base.size) {
                     val baseUri = base.getUri(baseIdx)
                     if (baseUri !in deletions && baseUri !in additions) {
@@ -92,7 +75,6 @@ class EnrichedListingView(
                     baseIdx++
                 }
 
-                // Drain remaining additions
                 while (addIdx < additionsList.size) {
                     result.add(-(addIdx + 1))
                     addIdx++
@@ -107,8 +89,7 @@ class EnrichedListingView(
         get() {
             val direct = passthrough
             if (direct != null) return direct.size
-            // passthrough and mapping are assigned as a pair in init,
-            // so mapping is non-null whenever passthrough is null.
+            // Pair invariant: mapping is non-null whenever passthrough is null.
             val mapped = requireNotNull(mapping) { "passthrough is null, so mapping must be non-null" }
             return mapped.size
         }
@@ -117,8 +98,7 @@ class EnrichedListingView(
         val direct = passthrough
         if (direct != null) return direct[index]
 
-        // passthrough and mapping are assigned as a pair in init,
-        // so mapping is non-null whenever passthrough is null.
+        // Pair invariant: mapping is non-null whenever passthrough is null.
         val encoded = requireNotNull(mapping) { "passthrough is null, so mapping must be non-null" }[index]
         return if (encoded >= 0) {
             val uri = base.getUri(encoded)

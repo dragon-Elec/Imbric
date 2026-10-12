@@ -195,18 +195,14 @@ class TransactionManager(
     }
 
     /**
-     * Terminal events must not be lossy. Progress events stay best-effort `tryEmit`, but a
-     * dropped `Finished` parks every waiter forever (the orchestrator's collector.join(),
-     * undo/redo's `.first()`) — status reachability is worthless if delivery isn't. The
-     * SharedFlow is replay-0 with a 128-slot buffer shared across ALL transactions, so a
-     * stalled subscriber can make `tryEmit` fail with false, which the old code ignored.
-     * A suspending `emit` waits up to 5s for the subscribers instead of dropping. Fast path first:
-     * when the buffer has room the terminal lands synchronously with no coroutine at all;
-     * the suspending fallback covers the stalled-subscriber case. If the manager scope is
-     * itself cancelled (teardown racing a finisher), the launch no-ops and the event is
-     * lost — accepted: buffer-full plus a dead scope means no waiter is left to collect.
-     * A subscriber stalled beyond the 5s cap also loses the event; the orchestrator's
-     * terminal wait carries its own wall-clock failsafe for exactly that case.
+     * Terminal events must not be lossy: a dropped `Finished` parks the
+     * orchestrator's collector.join() and undo/redo's `.first()` forever.
+     * The SharedFlow is replay-0 with a 128-slot buffer shared across ALL
+     * transactions, so a stalled subscriber can make `tryEmit` fail — the old
+     * code ignored the false. Fast path lands synchronously when the buffer
+     * has room; otherwise a 5s-capped suspending emit covers the stalled case.
+     * Accepted losses (buffer-full + dead scope, or stall beyond 5s) are covered
+     * by the orchestrator's wall-clock failsafe below.
      */
     private fun emitTerminal(event: TransactionEvent) {
         if (_events.tryEmit(event)) return

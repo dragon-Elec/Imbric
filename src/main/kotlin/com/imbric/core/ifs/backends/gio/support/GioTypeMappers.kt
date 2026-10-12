@@ -162,10 +162,6 @@ object GioTypeMappers {
         val pathType = parentPathType ?: determinePathType(if (parentUri != null) parentUri else uri)
         val isRemote = parentIsRemote ?: isRemoteUri(if (parentUri != null) parentUri else uri)
 
-        // effectiveType overrides the NOFOLLOW-reported type for symlinks
-        // whose target the caller resolved with a follow-query (search walk);
-        // null keeps gioInfo.fileType (getMetadata already queries with NONE,
-        // which follows links, so its type is the target's own).
         val isDir = (effectiveType ?: gioInfo.fileType) == org.gnome.gio.FileType.DIRECTORY
 
         val nativeId = getNativeId(gioInfo)
@@ -174,30 +170,18 @@ object GioTypeMappers {
         // mode and owner are fetched once here and reused below (no extra FFM calls).
         val unixMode = gioInfo.getAttributeUint32("unix::mode")
         val ownerName = gioInfo.getAttributeAsString("owner::user")
-        // Owner-match rule: derive the booleans from the mode's OWNER bits only when
-        // the file is owned by the current user AND mode > 0. mode == 0 means the
-        // attribute is absent (e.g. non-unix filesystems), where deriving would wrongly
-        // yield all-false. The fallback exists because effective access depends on
-        // ownership AND group membership (and ACLs); we only have the owner name, not
-        // the current user's group list, so files owned by others must keep GIO's
-        // access::can-* queries, which apply full ACL/group semantics.
+        // Owner-match: derive R/X from the mode's OWNER bits only when the file is
+        // owned by us AND mode > 0 (0 = attribute absent, e.g. non-unix fs, not "no
+        // perms"). Group/ACL membership is unknown here, so non-owned files keep GIO's
+        // access::can-* queries. Write always reads access::can-write: ACLs, group
+        // grants and read-only mounts override owner bits, and it gates
+        // XferArbiter.canOverwrite + the readonly emblem, where a lie is user-visible.
         val deriveFromOwnerBits = unixMode > 0 && ownerName != null && ownerName == CURRENT_USER_NAME
-        // Owner bits: read = 0o400 (0x100), write = 0o200 (0x80), execute = 0o100 (0x40).
-        // For the owning user, R/X effective access equals the owner permission bits
-        // (the group and other triples never apply to the owner). Write is the
-        // exception: POSIX ACLs, group grants and read-only mounts can allow or
-        // deny write regardless of the owner bits, so isWritable always reads
-        // access::can-write — it gates XferArbiter.canOverwrite (correctness) and
-        // the emblem-readonly marker, where an owner-bit lie is user-visible.
         val isReadable = if (deriveFromOwnerBits) (unixMode and 0x100) != 0 else gioInfo.getAttributeBoolean("access::can-read")
         val isWritable = gioInfo.getAttributeBoolean("access::can-write")
         val isExecutable = if (deriveFromOwnerBits) (unixMode and 0x40) != 0 else gioInfo.getAttributeBoolean("access::can-execute")
 
         return FileInfo(
-            // Shared sentinel id — FileInfo.id is not a unique key (FileEntry does not
-            // declare it, no code reads it, and the listing path already shares one
-            // sentinel across all rows). Avoids a contended Uuid.random() crypto draw
-            // per metadata row.
             id = SENTINEL_UUID,
             nativeId = nativeId,
             name = name,
@@ -224,12 +208,10 @@ object GioTypeMappers {
             thumbnailPath = gioInfo.getAttributeByteString("standard::thumbnail-path"),
             backendId = backendId,
 
-            // Location Flags — reuse parent context
             isInTrash = (parentUri ?: uri).startsWith("trash:///"),
             isInRecent = (parentUri ?: uri).startsWith("recent:///"),
             isRemote = isRemote,
 
-            // Mount Capabilities
             canMount = gioInfo.getAttributeBoolean("access::can-mount"),
             canUnmount = gioInfo.getAttributeBoolean("access::can-unmount"),
             canEject = gioInfo.getAttributeBoolean("access::can-eject"),

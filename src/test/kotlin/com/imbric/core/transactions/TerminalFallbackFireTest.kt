@@ -18,11 +18,11 @@ import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 /**
- * TEMPORARY live-fire probe for the P0-1 fix (deleted after verification).
- * Wedges the terminal-event subscriber forever, overfills the 128-slot buffer
- * with 70 empty commits, and asserts: (1) status truth still resolves via
- * getStatus, (2) the suspending-fallback emits complete (bounded 5s) instead
- * of parking forever — i.e. no lingerers on the manager scope.
+ * Live-fire regression test for the P0-1 terminal-event fix: wedges the terminal
+ * subscriber forever, overfills the 128-slot buffer with 70 empty commits, and
+ * asserts (1) status truth still resolves via getStatus and (2) the suspending
+ * fallback completes (bounded 5s) instead of parking forever — no lingerers on
+ * the manager scope.
  */
 class TerminalFallbackFireTest {
 

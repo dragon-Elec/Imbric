@@ -103,24 +103,13 @@ sealed interface FileEntry {
         val SortByDate = compareBy<FileEntry> { !it.isDirectory }.thenByDescending { it.modifiedTime }
 
         /**
-         * Returns the GIO attributes needed for listing, based on the sort key.
-         *
-         * `time::modified` is part of the shared base and is therefore fetched for EVERY
-         * sort key, not just [SortKey.MODIFIED]: [SortByDate] compares [FileEntry.modifiedTime]
-         * directly, so a listing produced under NAME/SIZE/TYPE could never be re-sorted by
-         * date locally, and `onActive`'s change fingerprint needs mtime to detect an in-place
-         * edit that keeps the byte count identical. The cost is a single extra attribute
-         * token in the enumerate string; the benefit is that DirState.setSortKey can re-sort
-         * the cached listing without paying for a fresh GIO enumeration.
-         *
-         * `time::modified-nsec` rides along so the mapper can build a sub-second
-         * [kotlin.time.Instant]: DirState's dedup pass compares modifiedTime to
-         * detect a same-second rewrite of the same size, which whole-second
-         * truncation would swallow.
-         *
-         * `standard::is-symlink` lets GioBackend.list() detect symlinks and
-         * resolve the target's type with one follow-query, so a symlink whose
-         * target is a directory lists as a directory (Nautilus parity).
+         * GIO attributes for listing, by sort key. `time::modified` is in the shared
+         * base for EVERY key: re-sort is local (no fresh enumeration), and onActive's
+         * fingerprint needs mtime to catch a same-size in-place edit.
+         * `time::modified-nsec` rides along so the mapper builds a sub-second Instant —
+         * whole-second truncation would hide a same-second, same-size rewrite from dedup.
+         * `standard::is-symlink` lets list() resolve link-to-dirs with one follow-query
+         * (Nautilus parity: a linked dir lists as a dir).
          */
         fun listingAttributesFor(sortKey: SortKey): String {
             val base = "standard::name,standard::type,standard::is-hidden,standard::size,standard::content-type,standard::is-symlink,time::modified,time::modified-nsec"
@@ -144,16 +133,11 @@ sealed interface FileEntry {
         private const val GLOB_CACHE_MAX = 64
 
         /**
-         * LRU cache of compiled globs keyed by pattern string.
-         *
-         * Synchronized because [compileGlob] is reachable from any thread:
-         * DirState.matchPattern runs on StateFlow collectors (UI or IO
-         * dispatchers) and FileEntry.matches is a public interface method.
-         * All map access — including access-order touches — goes through the
-         * synchronized wrapper, which access-order LinkedHashMaps require.
-         * The whole get-or-compile-put runs under the cache monitor, so two
-         * threads racing on the same pattern share one compile and receive
-         * the identical (===) instance instead of each compiling privately.
+         * Bounded (64) LRU of compiled globs — patterns are user-typed, so the cache
+         * must not grow. Reachable from any thread (UI or IO collectors; public
+         * [matches]), and access-order touches require the synchronized wrapper.
+         * Get-or-compile-put runs under the cache monitor so racers share one compile
+         * and observe the identical (===) instance.
          */
         private val globCache: MutableMap<String, Regex> =
             Collections.synchronizedMap(
@@ -168,11 +152,6 @@ sealed interface FileEntry {
 
         fun compileGlob(pattern: String): Regex {
             if (pattern.isEmpty() || pattern == "*") return WILDCARD_GLOB
-            // Get-or-compile-put as one atomic step under the cache
-            // monitor: the check-then-put pair is a double-compile
-            // race otherwise (two threads compile the same pattern,
-            // one cache entry wins, both callers keep different
-            // instances).
             synchronized(globCache) {
                 globCache[pattern]?.let { return it }
                 val regexStr = buildString(pattern.length * 2) {

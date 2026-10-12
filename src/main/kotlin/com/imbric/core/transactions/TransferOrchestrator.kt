@@ -95,20 +95,16 @@ class TransferOrchestrator(
         transactionManager.commitTransaction(tid, jitResolver, policy)
         
         // Wait for the transaction's terminal event. The collector is armed before commit
-        // (UNDISPATCHED), so a synchronous Finished cannot be dropped: TransactionManager
-        // guarantees (a) every dispatched op reaches a terminal status and (b) terminal events
-        // are delivered through a suspending emit, not a lossy tryEmit — together that is what
-        // makes this wait bounded. Last-resort failsafe for a terminal event that is still
-        // never delivered (the park this guards against): the wait is sliced into ~1s join
-        // polls and bounded by WALL-CLOCK idleness — after IDLE_TIMEOUT_MS with no
-        // Progress/FileProgress observed, the transaction's own status is checked and a
-        // Finished is synthesized only if that status is already terminal. A RUNNING/PENDING
-        // (or evicted/unknown) transaction just re-arms the idle clock and keeps waiting —
-        // long silent phases are legitimate, and a terminal is never synthesized for a live
-        // transaction. No coroutine-time bound is used for the decision: under runTest's
-        // virtual scheduler the flow runs on the test dispatcher while real workers run on real
-        // threads, so a coroutine-time bound fires spuriously (and a finite wall-clock bound is
-        // arbitrary against legitimately-long network transfers).
+        // (UNDISPATCHED), so a synchronous Finished cannot be dropped — that plus
+        // TransactionManager's suspending-emit delivery is what makes this wait bounded.
+        //
+        // Last-resort failsafe for a terminal event still never delivered: poll the
+        // collector in ~1s join slices, and after IDLE_TIMEOUT_MS with no
+        // Progress/FileProgress, synthesize Finished only if getStatus() is already
+        // terminal. Live (RUNNING/PENDING) or evicted (null) re-arms and keeps waiting —
+        // a terminal is never synthesized for a live transaction. Wall-clock, not
+        // coroutine time: under runTest workers run on real threads, so a virtual-time
+        // bound fires spuriously, and any finite bound is arbitrary vs. network transfers.
         val joinSliceMs = 1_000L
         val idleTimeoutMs = 30_000L
         try {
@@ -129,7 +125,6 @@ class TransferOrchestrator(
                         collector.cancel()
                         break
                     }
-                    // Still live (RUNNING/PENDING) or evicted (null): re-arm and keep waiting.
                     lastProgressWallMs.set(System.currentTimeMillis())
                 }
             }
