@@ -98,6 +98,13 @@ def run(args):
     start = time.time()
     proc = None
 
+    # Targeted runs (--tests/--failed) print each test name so you can
+    # confirm exactly what ran. A full suite prints compact progress
+    # instead: hundreds of passing names overflow the terminal scrollback
+    # and can bury the failures this filter exists to surface. The mode
+    # is inferred from the args, not a flag.
+    verbose = bool(args.tests or args.failed)
+
     try:
         proc = subprocess.Popen(
             gradle_cmd,
@@ -134,10 +141,14 @@ def run(args):
                 in_error = True
                 continue
 
-            # Passed test → dot + name for shape and grep-ability. The newline
-            # flush before the summary still works because each dot line ends here.
+            # Passed test. Targeted: dot + name for grep-ability. Full suite:
+            # a bare dot — the name would flood scrollback. The newline flush
+            # before the summary still works because each dot line ends here.
             if _PASSED.search(line):
-                print(f". {line.strip()}", flush=True)
+                if verbose:
+                    print(f". {line.strip()}", flush=True)
+                else:
+                    print(".", end="", flush=True)
                 dot_count += 1
                 continue
 
@@ -172,7 +183,8 @@ def run(args):
         elapsed_str = f"{elapsed}s" if elapsed < 60 else f"{elapsed//60}m {elapsed%60}s"
 
         if proc.returncode == 0:
-            print(f"\nTests completed successfully in {elapsed_str}")
+            suffix = f" ({dot_count} tests)" if dot_count else ""
+            print(f"\nTests completed successfully in {elapsed_str}{suffix}")
         else:
             print(f"\nTests failed (exit code {proc.returncode}) in {elapsed_str}")
             # Propagate: a test wrapper that always exits 0 cannot gate anything

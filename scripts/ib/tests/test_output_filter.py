@@ -124,8 +124,9 @@ class TestDotRendering(unittest.TestCase):
         printed = out.getvalue()
         self.assertIn(".", printed)                       # dot for the passed test
         self.assertIn("BUILD SUCCESSFUL in 5s", printed)  # gradle summary passes through
-        self.assertIn(". FooTest > bar PASSED\n", printed)  # dot carries the test name
         self.assertNotIn(".BUILD SUCCESSFUL", printed)    # ...never glued
+        # Full suite (no --tests) suppresses the name — compact dots only.
+        self.assertNotIn("FooTest > bar PASSED", printed)
 
     def test_passing_proc_reports_success(self):
         proc = FakeProc(lines=["BUILD SUCCESSFUL in 5s\n"], returncode=0)
@@ -197,7 +198,7 @@ class TestTestCommandVisibility(unittest.TestCase):
        verifiable from one run instead of guessing whether it was discovered.
     """
 
-    def _run_test_cmd(self, lines, returncode=0):
+    def _run_test_cmd(self, lines, returncode=0, tests=None):
         proc = FakeProc(lines=lines, returncode=returncode)
         out = io.StringIO()
         # run() propagates the child exit code via sys.exit — swallow it so the
@@ -206,7 +207,7 @@ class TestTestCommandVisibility(unittest.TestCase):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
                 with contextlib.suppress(SystemExit):
                     test_cmd.run(argparse.Namespace(
-                        tests=None, failed=False, rerun=False, continue_on_fail=False))
+                        tests=tests, failed=False, rerun=False, continue_on_fail=False))
         return out.getvalue()
 
     def test_kotlin_compile_error_is_visible(self):
@@ -218,11 +219,26 @@ class TestTestCommandVisibility(unittest.TestCase):
         self.assertIn("e: file:///p/Test.kt:2:5 Unresolved reference: foo", printed)
 
     def test_passing_test_shows_name(self):
+        # Targeted runs (--tests) print each name so you can
+        # confirm exactly what ran.
         printed = self._run_test_cmd([
             "FooTest > doesTheThing() PASSED\n",
             "BUILD SUCCESSFUL in 5s\n",
-        ])
+        ], tests=["FooTest"])
         self.assertIn("FooTest > doesTheThing() PASSED", printed)
+
+    def test_full_suite_compact_progress(self):
+        # Full suite (no --tests) prints compact dots, not names —
+        # hundreds of passing names overflow scrollback and bury failures.
+        printed = self._run_test_cmd([
+            "FooTest > a() PASSED\n",
+            "BarTest > b() PASSED\n",
+            "BUILD SUCCESSFUL in 5s\n",
+        ])
+        self.assertNotIn("FooTest > a() PASSED", printed)  # names suppressed
+        self.assertNotIn("BarTest > b() PASSED", printed)
+        self.assertIn(".", printed)                         # compact dots remain
+        self.assertIn("(2 tests)", printed)                 # count in the summary
 
     def test_kotlin_warning_does_not_enter_error_block(self):
         # `w:` is a warning, not a failure: it must print but must NOT set
