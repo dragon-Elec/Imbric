@@ -817,9 +817,13 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         val queryLower = query.text.lowercase()
         val buffer = mutableListOf<FileEntry>()
 
-        // Canonical targets already matched — a linked tree reachable by two
-        // routes (diamond) would otherwise double-emit the same file.
-        val matchedTargets = HashSet<String>()
+        // Real filesystem locations already walked. A diamond (two links to the
+        // same tree) reaches one target by several paths, so the URI can't tell
+        // them apart — and GIO's target-uri is only set for trash:// and
+        // recent://, never for local files. Canonicalizing the directory means
+        // the duplicate is never walked at all, which dedups the results and
+        // avoids re-enumerating the same tree.
+        val visitedDirs = HashSet<String>()
 
         // (directory, depth, symlink hops spent to reach it)
         val stack = ArrayDeque<Triple<File, Int, Int>>()
@@ -828,6 +832,13 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         while (stack.isNotEmpty()) {
             val (dir, depth, linksFollowed) = stack.removeLast()
             if (depth > query.maxDepth) continue
+
+            val canonical = try {
+                // Fully qualified: `File` here is org.gnome.gio.File, and its
+                // getPath() returns a Filename wrapper, not a String.
+                java.io.File(dir.path?.toString() ?: "").canonicalPath
+            } catch (e: Exception) { null }
+            if (canonical != null && !visitedDirs.add(canonical)) continue
 
             val enumerator = try {
                 dir.enumerateChildren(queryAttributes, FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null)
@@ -887,14 +898,10 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                             (query.maxSize == null || fileInfo.size <= query.maxSize)
 
                         if (matchesMime && matchesDateRange && matchesSizeRange) {
-                            // Dedup by target URI: a diamond (two routes to the same
-                            // linked tree) can match the same file twice.
-                            if (matchedTargets.add(fileInfo.uri)) {
-                                buffer.add(fileInfo)
-                                if (buffer.size >= 50) {
-                                    emit(buffer.toList())
-                                    buffer.clear()
-                                }
+                            buffer.add(fileInfo)
+                            if (buffer.size >= 50) {
+                                emit(buffer.toList())
+                                buffer.clear()
                             }
                         }
                     }

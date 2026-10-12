@@ -2,8 +2,13 @@
 package com.imbric.core.ifs.backends.gio
 
 import com.imbric.core.models.FileJob
+import com.imbric.core.models.VfsError
 import com.imbric.core.models.VfsQuery
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.io.TempDir
@@ -152,5 +157,57 @@ class GioSearchLinkIntegrationTest {
                 "children of a link keep the link path: ${inner.uri}"
             )
         }
+    }
+
+    @Test
+    fun `search does not double-emit a diamond target`(@TempDir tempDir: Path) = runTest {
+        val sub = File(tempDir.toFile(), "sub").also { it.mkdir() }
+        File(sub, "needle.txt").writeText("x")
+        // Two routes to the same target: the walk reaches needle.txt
+        // twice, but the result-side dedup must emit it once.
+        Files.createSymbolicLink(tempDir.resolve("linkA"), sub.toPath())
+        Files.createSymbolicLink(tempDir.resolve("linkB"), sub.toPath())
+        val root = "file://${tempDir.toAbsolutePath()}"
+
+        val results = backend.search(VfsQuery(text = "needle", rootUri = root)).toList().flatten()
+        val hits = results.filter { it.name == "needle.txt" }
+        assertEquals(1, hits.size, "diamond must emit the target once, got: ${hits.map { it.uri }}")
+    }
+
+    @Test
+    fun `cancelling a copy mid-transfer leaks no uncaught VfsError Cancelled`(@TempDir tempDir: Path) = runTest {
+        // The copy() flow runs its GIO call on a coroutine. Cancelling the
+        // consumer mid-transfer used to let the producer's CancellationException
+        // be translated into VfsError.Cancelled — which is not a
+        // CancellationException, so coroutine machinery could not swallow it and
+        // it escaped to an uncaught handler. translateError now rethrows it.
+        val src = File(tempDir.toFile(), "big.bin")
+        java.io.RandomAccessFile(src, "rw").use { it.setLength(48L * 1024 * 1024) }
+        val root = "file://${tempDir.toAbsolutePath()}"
+
+        val escaped = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
+        val handler = Thread.currentThread().uncaughtExceptionHandler
+        Thread.currentThread().setUncaughtExceptionHandler { _, e -> escaped.add(e) }
+
+        val job = launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                backend.copy(
+                    FileJob(opType = "copy", source = "$root/big.bin", dest = "$root/big-copy.bin", overwrite = true)
+                ).collect { /* progress */ }
+            } catch (e: Throwable) {
+                escaped.add(e)
+            }
+        }
+        delay(400)
+        job.cancelAndJoin()
+        delay(2000) // let any leaked producer finish and escape
+        Thread.currentThread().setUncaughtExceptionHandler(handler)
+
+        val leaked = escaped.filter { it !is kotlinx.coroutines.CancellationException }
+        println("COPY_CANCEL escaped=[${leaked.joinToString { "${it::class.simpleName}: ${it.message}" }}]")
+        assertTrue(
+            leaked.none { it is VfsError.Cancelled },
+            "VfsError.Cancelled escaped the cancelled producer: ${leaked.filter { it is VfsError.Cancelled }}"
+        )
     }
 }
