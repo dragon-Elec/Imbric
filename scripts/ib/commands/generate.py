@@ -7,7 +7,7 @@ def register(subparsers):
     p = subparsers.add_parser("generate", help="Generate GNOME bindings")
 
 def run(args):
-    DaemonManager.stop_daemon()
+    DaemonManager.stop_daemon(quiet=True)
     
     print("Generating bindings...")
     script = PROJECT_ROOT / "scripts" / "generate_bindings.sh"

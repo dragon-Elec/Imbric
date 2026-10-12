@@ -7,7 +7,13 @@ def register(subparsers):
     p.add_argument("--verbose", "-v", action="store_true", help="Show detailed memory breakdown")
 
 def _get_memory_breakdown(pid: int) -> dict:
-    """Get detailed memory breakdown from /proc/pid/smaps_rollup."""
+    """Get detailed memory breakdown from /proc/pid/smaps_rollup.
+
+    PSS/shared/private/swap only exist in smaps_rollup. When it is
+    unreadable they stay 0 (rendered as "?") — VmSize from
+    /proc/pid/status is virtual address space (often ~40GB for a
+    JVM), never a substitute for PSS.
+    """
     breakdown = {
         "rss": 0,
         "pss": 0,
@@ -30,32 +36,38 @@ def _get_memory_breakdown(pid: int) -> dict:
                     breakdown["swap"] = int(line.split()[1])
     except (FileNotFoundError, ValueError, IndexError):
         pass
-    
-    # Fallback to /proc/pid/status if smaps_rollup not available
+
+    # Fallback to /proc/pid/status if smaps_rollup not available:
+    # resident size only. There is no PSS equivalent in status.
     if breakdown["rss"] == 0:
         try:
             with open(f"/proc/{pid}/status") as f:
                 for line in f:
                     if line.startswith("VmRSS:"):
                         breakdown["rss"] = int(line.split()[1])
-                    elif line.startswith("VmSize:"):
-                        breakdown["pss"] = int(line.split()[1])
         except (FileNotFoundError, ValueError, IndexError):
             pass
-    
+
     return breakdown
 
 def _format_bytes(kb: int) -> str:
-    """Format kilobytes to human readable."""
+    """Format kilobytes to human readable.
+
+    0 means "unavailable" (smaps_rollup unreadable), not a
+    measured zero, so it renders as "?".
+    """
+    if kb <= 0:
+        return "?"
     if kb > 1024 * 1024:
         return f"{kb / 1024 / 1024:.1f}GB"
     elif kb > 1024:
         return f"{kb / 1024:.0f}MB"
     return f"{kb}KB"
 
-def _format_process(proc: ProcessInfo, verbose: bool = False) -> str:
+def _format_process(proc: ProcessInfo, verbose: bool = False, breakdown: dict | None = None) -> str:
     """Format a process for display."""
-    breakdown = _get_memory_breakdown(proc.pid)
+    if breakdown is None:
+        breakdown = _get_memory_breakdown(proc.pid)
     rss = _format_bytes(breakdown["rss"])
     pss = _format_bytes(breakdown["pss"])
     shared = _format_bytes(breakdown["shared"])
@@ -85,8 +97,10 @@ def run(args):
         else:
             print(f"  {'PID':>6}  {'MEM':>6}  COMMAND")
         for p in procs:
-            print(_format_process(p, args.verbose))
+            # One read per process: the same breakdown feeds both the
+            # row and the totals (two reads here doubled the /proc cost).
             breakdown = _get_memory_breakdown(p.pid)
+            print(_format_process(p, args.verbose, breakdown))
             total_rss += breakdown["rss"]
             total_pss += breakdown["pss"]
             total_procs += 1

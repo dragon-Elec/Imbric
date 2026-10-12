@@ -15,16 +15,27 @@ _IMPORTANT = [
     # Kotlin compiler errors are `e: file://...` — matching only `error:` (Gradle's
     # own wording) hid every Kotlin compile failure from the filtered output.
     re.compile(r"^\s*e: "),
-    re.compile(r"Exception"),
-    re.compile(r"BUILD SUCCESSFUL"),
-    re.compile(r"BUILD FAILED"),
+    # Anchored (same fix as filter.py): bare `Exception` matched any line
+    # containing the word — a passing test named testExceptionPath() took
+    # this branch instead of the _PASSED dot branch and set in_error.
+    re.compile(r"^\s*(?:Caused by:\s*)?[\w.$]*(?:Exception|Error)\b"),
+    # BUILD SUCCESSFUL/FAILED handled by the dedicated branch in run()
+    # (they END error context instead of starting it).
     re.compile(r"^> Task :test(?!Classes)"),
 ]
 
 _GRADLE_NOISE = OutputFilter.NOISE_PATTERNS
 
 def _get_previously_failed_test_classes() -> list[str]:
-    """Scans build/test-results/test/ for XML test reports with failures."""
+    """Scans build/test-results/test/ for XML test reports with failures.
+
+    Reflects the last executed test-task results: Gradle does not
+    guarantee a single coherent previous run (filtered or crashed
+    runs leave partial results behind), so --failed is a
+    best-effort hint, not a promise. Benchmark reports
+    (TEST-*Benchmark.xml) share this directory and are excluded —
+    they are not unit tests to re-run.
+    """
     test_results_dir = PROJECT_ROOT / "build" / "test-results" / "test"
     if not test_results_dir.exists():
         return []
@@ -40,6 +51,11 @@ def _get_previously_failed_test_classes() -> list[str]:
                     if classname:
                         # Extract simple classname if package-prefixed
                         simple_name = classname.split(".")[-1]
+                        # Benchmarks write into the same results dir;
+                        # endswith, not substring — a BenchmarkHelperTest
+                        # is a real test and must still re-run.
+                        if simple_name.endswith("Benchmark"):
+                            continue
                         failed_classes.add(simple_name)
         except Exception:
             continue
@@ -98,6 +114,16 @@ def run(args):
         for line in proc.stdout:
             line = line.rstrip()
             if not line:
+                continue
+
+            # BUILD banners: show, but they END error context — matching
+            # them via _IMPORTANT used to set in_error=True, which kept
+            # swallowing lines after a successful build.
+            if "BUILD SUCCESSFUL" in line or "BUILD FAILED" in line:
+                if dot_count > 0:
+                    print()
+                print(line, flush=True)
+                in_error = False
                 continue
 
             # Failure or important line → show full output immediately

@@ -9,7 +9,7 @@ def register(subparsers):
     p.add_argument("--bindings", action="store_true", help="Only delete generated bindings")
 
 def run(args):
-    DaemonManager.stop_daemon()
+    DaemonManager.stop_daemon(quiet=True)
     
     if args.bindings and args.deep:
         print("note: --deep ignored because --bindings", file=sys.stderr)

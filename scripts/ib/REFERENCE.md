@@ -3,7 +3,7 @@
 ## Entry
 
 ```bash
-python scripts/ib.py <command> [args]
+python3 scripts/ib.py <command> [args]
 ```
 
 All Gradle invocations use `./gradlew` with `--console=plain` for parseable output.
@@ -24,8 +24,9 @@ Output is filtered: noise suppressed, errors expanded, progress shown as dots.
 
 Daemon PID: `.gradle/imbric-daemon.pid`
 Daemon log: `.gradle/imbric-daemon.log`
-Auto-restart on crash (max 3 attempts, 5s delay).
-`ib kill` targets: gradlew, GradleDaemon, KotlinCompileDaemon, com.imbric, compose.devtools.
+Auto-restart on crash (max 3 attempts; any exit counts in continuous mode; backoff 5s/15s). Start failure exits 1.
+Daemon SIGTERM handler terminates the Gradle child before exit (no orphans).
+`ib kill` targets: gradlew, GradleDaemon, KotlinCompileDaemon, com.imbric, compose.devtools — immediate SIGKILL (no grace period); returned PIDs are deduped.
 `ib status` shows process count + VmRSS memory per process.
 
 ### Run (foreground)
@@ -61,9 +62,9 @@ Cleans orphaned app processes before start. Ctrl+C triggers graceful terminate +
 | `ib clean --deep` | Also remove `.gradle/caches` |
 | `ib clean --bindings` | Only remove `build/native-gen` |
 | `ib doctor` | Check JDK 25, JAVA_HOME, Gradle 9.6.1, GIR files, bindings |
-| `ib exec <cmd...>` | Run any command with ib's output filter |
+| `ib exec <cmd...>` | Run any command (raw output passthrough, no filtering) |
 | `ib audit [file]` | Validate Kotlin public API against context docs |
-| `ib history` | (stub — not implemented) |
+| `ib history` | (stub — not implemented, exits 0) |
 
 ### Process Management
 
@@ -88,22 +89,25 @@ Cleans orphaned app processes before start. Ctrl+C triggers graceful terminate +
 | `ib project --deps` | Show dependency tree |
 | `ib project --tasks` | Show available Gradle tasks |
 | `ib lint` | Run code quality checks |
-| `ib lint --fix` | Auto-fix issues where possible |
+| `ib lint --fix` | (unsupported — prints a note; lint has no auto-fixer) |
 | `ib lint --strict` | Fail on warnings |
 
 ## OutputFilter
 
-Shared by `dev`, `hot`, `run`, `exec`, `compile`, `bench`, `lint`. Behavior:
+Shared by `dev`, `hot`, `run`, `compile`, `bench`, `lint` (NOT `exec` — arbitrary commands pass through raw). Behavior:
 - Task progress → `.` on stderr
 - Noise (config cache, UP-TO-DATE, downloads) → suppressed
-- Errors/exceptions → full block shown
+- Errors/exceptions → full block shown; stack frames compressed (framework frames collapsed to a skip count)
+- GLib/GIO native warnings → deduplicated with occurrence counts
+- `[PIPELINE]` lines → formatted timeline
 - Warnings → collected, summary at end
-- BUILD SUCCESSFUL/FAILED → passes through; each command prints its own single summary line with elapsed time
+- BUILD SUCCESSFUL/FAILED → swallowed; each command prints its own single summary line with elapsed time
+- Error patterns are line-start anchored: a passing test named `testExceptionPath()` or a mid-line `error:` does not flip error mode
 
 ## ProcessManager
 
-Pattern-matches via `pgrep -a -f`. Self-excludes current PID.
-Kill order: SIGTERM first, SIGKILL survivors after 1s.
+Pattern-matches via `pgrep -a -f`. Self-excludes current PID; never signals pid ≤ 1.
+`ib kill` = immediate SIGKILL. `ib processes --kill` (no `--force`) = SIGTERM first, SIGKILL survivors after 1s. Returned PID lists are deduped (first-seen order).
 Memory: reads `/proc/{pid}/status` VmRSS.
 
 ## Examples

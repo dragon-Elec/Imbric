@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 from ..process import ProcessManager, ProcessInfo
 
 def register(subparsers):
@@ -63,6 +64,9 @@ def _format_process(proc: ProcessInfo, verbose: bool = False) -> str:
     return f"  {proc.pid:>6}  {mem:>6}  {cpu:>6}  {threads:>3}  {state:<2}  {cmd}"
 
 def run(args):
+    if args.force and not args.kill:
+        print("note: --force ignored without --kill", file=sys.stderr)
+
     print("=== Running Processes ===")
     print()
     

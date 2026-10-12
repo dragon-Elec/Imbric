@@ -22,12 +22,26 @@ LOG_FILE = GRADLE_DIR / "imbric-daemon.log"
 # line that names the failing task. That block already carries the cause.
 GRADLE_FLAGS = ["--console=plain"]
 
+# Seconds to wait between restart attempts. Continuous mode is
+# supposed to run forever, so a gradle that exits right away is
+# probably a hard failure — back off instead of hot-looping.
+RESTART_BACKOFF = [5, 15, 45]
+
+# How long the parent waits for the grandchild to write the
+# PID file before declaring the daemon failed to start.
+START_TIMEOUT = 5.0
+START_POLL_INTERVAL = 0.1
+
 
 def gradle_base_cmd(*tasks: str) -> list[str]:
     """Build a Gradle argv from task names plus the shared flags."""
     return ["./gradlew", *tasks, *GRADLE_FLAGS]
 
 class DaemonManager:
+    # Active Gradle child of the daemon loop, so the SIGTERM
+    # handler can kill it instead of orphaning it.
+    _proc: subprocess.Popen | None = None
+
     @staticmethod
     def read_pid() -> int | None:
         try:
@@ -65,10 +79,14 @@ class DaemonManager:
         GRADLE_DIR.mkdir(parents=True, exist_ok=True)
         LOG_FILE.write_text("")
 
-        pid = os.fork()
+        try:
+            pid = os.fork()
+        except OSError as e:
+            print(f"Failed to fork daemon process: {e}", file=sys.stderr)
+            sys.exit(1)
+
         if pid > 0:
-            time.sleep(0.5)
-            daemon_pid = cls.read_pid()
+            daemon_pid = cls._wait_for_daemon_pid()
             if daemon_pid:
                 mode = "hot-reload" if hot else "continuous"
                 print(f"Daemon started (PID {daemon_pid}) [{mode}]")
@@ -77,6 +95,7 @@ class DaemonManager:
             else:
                 print("Daemon failed to start. Check log:")
                 print(f"  cat {LOG_FILE}")
+                sys.exit(1)
             return
 
         os.setsid()
@@ -84,6 +103,22 @@ class DaemonManager:
             os._exit(0)
 
         cls._run_daemon(hot=hot)
+
+    @classmethod
+    def _wait_for_daemon_pid(cls) -> int | None:
+        """Poll the PID file until the grandchild writes it.
+
+        A fixed sleep races a loaded machine: the grandchild may
+        not have written the file yet, and a healthy start would
+        be reported as a failure.
+        """
+        attempts = max(1, int(START_TIMEOUT / START_POLL_INTERVAL))
+        for _ in range(attempts):
+            pid = cls.read_pid()
+            if pid:
+                return pid
+            time.sleep(START_POLL_INTERVAL)
+        return None
 
     @classmethod
     def _run_daemon(cls, hot=False):
@@ -98,15 +133,12 @@ class DaemonManager:
         os.dup2(dev_null, 0)
         os.close(dev_null)
 
-        try:
-            import ctypes
-            libc = ctypes.CDLL("libc.so.6")
-            libc.prctl(15, b"imbric-daemon", 0, 0, 0)
-        except Exception:
-            pass
-
         def handle_sigterm(signum, frame):
+            # Minimal and safe: kill the Gradle child, clear the
+            # PID file, exit. Anything more risks deadlock in
+            # handler context.
             cls._log("Daemon received SIGTERM, shutting down...")
+            cls._terminate_child()
             cls.remove_pid()
             sys.exit(0)
 
@@ -137,36 +169,78 @@ class DaemonManager:
                     text=True,
                     bufsize=1,
                 )
+                cls._proc = proc
+                try:
+                    filt = OutputFilter(mode="run")
+                    for line in proc.stdout:
+                        filtered = filt.filter_line(line)
+                        if filtered is not None:
+                            print(filtered, flush=True)
 
-                filt = OutputFilter(mode="run")
-                for line in proc.stdout:
-                    filtered = filt.filter_line(line)
-                    if filtered is not None:
-                        print(filtered, flush=True)
+                    filt.flush_warnings()
+                    proc.wait()
+                finally:
+                    # Any exit path (signal, exception, normal
+                    # end) must not leave the Gradle child running.
+                    cls._terminate_child()
 
-                filt.flush_warnings()
-                proc.wait()
-
-                if proc.returncode == 0:
+                if cls._is_clean_stop(proc.returncode, hot):
                     cls._log("Gradle exited normally.")
-                    if hot:
-                        cls._log("Hot-reload task exited cleanly. Daemon stopping.")
-                        cls.remove_pid()
-                        return
-                    crash_count = 0
+                    cls._log("Hot-reload task exited cleanly. Daemon stopping.")
+                    cls.remove_pid()
+                    return
+
+                crash_count += 1
+                if proc.returncode == 0:
+                    cls._log(
+                        "Gradle exited normally, but continuous "
+                        "mode should run indefinitely.")
                 else:
-                    crash_count += 1
                     cls._log(f"Gradle exited with code {proc.returncode}.")
             except Exception as e:
                 crash_count += 1
                 cls._log(f"Gradle error: {e}.")
 
             if crash_count < max_crashes:
-                cls._log("Restarting in 5 seconds...")
-                time.sleep(5)
+                delay = RESTART_BACKOFF[min(crash_count - 1, len(RESTART_BACKOFF) - 1)]
+                cls._log(f"Restarting in {delay} seconds...")
+                time.sleep(delay)
 
         cls._log("Too many crashes. Daemon giving up.")
         cls.remove_pid()
+
+    @classmethod
+    def _terminate_child(cls, timeout: float = 3.0) -> None:
+        """Terminate the active Gradle child, escalating to SIGKILL.
+
+        Safe to call from the signal handler and from the read
+        loop's finally: clears _proc first, so a second call
+        (handler + finally) is a no-op.
+        """
+        proc = cls._proc
+        if proc is None:
+            return
+        cls._proc = None
+        if proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=timeout)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        proc.kill()
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            cls._log(f"Gradle child {proc.pid} did not die after SIGKILL.")
+
+    @staticmethod
+    def _is_clean_stop(returncode: int, hot: bool) -> bool:
+        """Hot mode treats exit 0 as an intentional stop. Continuous mode
+        is supposed to run indefinitely, so any exit (even 0) is a failed
+        attempt that counts toward the crash limit."""
+        return hot and returncode == 0
 
     @staticmethod
     def _log(msg: str):
@@ -174,24 +248,34 @@ class DaemonManager:
         print(f"[{ts}] {msg}", flush=True)
 
     @classmethod
-    def stop_daemon(cls):
+    def stop_daemon(cls, quiet: bool = False):
+        """Stop the running daemon.
+
+        quiet=True suppresses every print: clean/generate call this
+        on every invocation and should not chat about it.
+        """
         pid = cls.read_pid()
         if not pid:
-            print("No daemon running.")
+            if not quiet:
+                print("No daemon running.")
             return
 
-        print(f"Stopping daemon (PID {pid})...")
+        if not quiet:
+            print(f"Stopping daemon (PID {pid})...")
         ProcessManager.kill_pid(pid, signal.SIGTERM)
 
         for _ in range(10):
             if not ProcessManager.is_alive(pid):
-                print("Daemon stopped.")
+                if not quiet:
+                    print("Daemon stopped.")
                 cls.remove_pid()
                 return
             time.sleep(0.5)
 
-        print("Daemon didn't stop gracefully, force killing...")
+        if not quiet:
+            print("Daemon didn't stop gracefully, force killing...")
         ProcessManager.kill_pid(pid, signal.SIGKILL)
         time.sleep(1)
         cls.remove_pid()
-        print("Daemon force-killed.")
+        if not quiet:
+            print("Daemon force-killed.")

@@ -1,7 +1,13 @@
 import re
 import sys
 import time
-from .compressor import compress_warnings
+from .compressor import (
+    _GLIB_PATTERN,
+    compress_glib_warnings,
+    compress_stacktrace,
+    compress_warnings,
+    format_pipeline_timer,
+)
 
 class OutputFilter:
     NOISE_PATTERNS = [
@@ -22,8 +28,14 @@ class OutputFilter:
         re.compile(r"^FAILURE:"),
         re.compile(r"^\* What went wrong:"),
         re.compile(r"^e: file://"),
-        re.compile(r"error:", re.IGNORECASE),
-        re.compile(r"Exception"),
+        # Anchored: a mid-line "error:" (including inside `w:` warning
+        # lines) must not flip into error mode.
+        re.compile(r"^\s*error:", re.IGNORECASE),
+        # Only exception-shaped lines at line start. The old bare
+        # `Exception` token matched ANY line containing the word — a
+        # passing test named testExceptionPath() flipped in_error and
+        # flooded every following line until the next task line.
+        re.compile(r"^\s*(?:Caused by:\s*)?[\w.$]*(?:Exception|Error)\b"),
         re.compile(r"^\* Try:"),
     ]
 
@@ -38,11 +50,34 @@ class OutputFilter:
         self.in_error = False
         self.dot_count = 0
         self.warnings: list[str] = []
+        self._glib_buffer: list[str] = []
+        self._stack_buffer: list[str] = []
         self.start_time = time.time()
         self.last_task = ""
 
     def filter_line(self, line: str) -> str | None:
         line = line.rstrip()
+
+        # GLib/GIO native warnings: buffer (dedup) instead of streaming
+        # every critical — a single GIO scan can emit hundreds of
+        # identical lines. Flushed by the next non-GLib line or by
+        # flush_warnings().
+        if _GLIB_PATTERN.search(line):
+            self._flush_stack()
+            self._glib_buffer.append(line)
+            return None
+
+        # Stack trace frames: buffer consecutive "at " lines so framework
+        # frames can be collapsed into a skip count on flush. JVM frames
+        # are indented, so match after lstrip (same as compress_stacktrace).
+        if line.lstrip().startswith("at "):
+            self._flush_glib()
+            self._stack_buffer.append(line)
+            return None
+
+        self._flush_glib()
+        self._flush_stack()
+
         if not line:
             return None
 
@@ -91,13 +126,13 @@ class OutputFilter:
             sys.stderr.flush()
             return None
 
-        if line.startswith("SLF4J") or line.startswith("[BOOT]"):
+        if line.startswith("SLF4J"):
             self._flush_dots()
             return line
 
         if line.startswith("[PIPELINE]"):
             self._flush_dots()
-            return line
+            return format_pipeline_timer(line)
 
         if not line.startswith("> ") and not line.startswith("* "):
             return line
@@ -110,6 +145,24 @@ class OutputFilter:
             sys.stderr.flush()
             self.dot_count = 0
 
+    def _flush_glib(self):
+        """Write the deduped GLib/GIO native warning summary."""
+        if not self._glib_buffer:
+            return
+        self._flush_dots()
+        sys.stderr.write(f"\n{compress_glib_warnings(self._glib_buffer)}\n")
+        sys.stderr.flush()
+        self._glib_buffer.clear()
+
+    def _flush_stack(self):
+        """Write the compressed stack trace (framework frames collapsed)."""
+        if not self._stack_buffer:
+            return
+        self._flush_dots()
+        sys.stderr.write(f"\n{compress_stacktrace(self._stack_buffer)}\n")
+        sys.stderr.flush()
+        self._stack_buffer.clear()
+
     def _elapsed(self) -> str:
         secs = int(time.time() - self.start_time)
         if secs < 60:
@@ -117,6 +170,8 @@ class OutputFilter:
         return f"{secs // 60}m {secs % 60}s"
 
     def flush_warnings(self):
+        self._flush_glib()
+        self._flush_stack()
         if self.warnings:
             count = len(self.warnings)
             if not self.show_warnings:
@@ -130,4 +185,6 @@ class OutputFilter:
         self.in_error = False
         self.dot_count = 0
         self.warnings.clear()
+        self._glib_buffer.clear()
+        self._stack_buffer.clear()
         self.start_time = time.time()

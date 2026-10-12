@@ -25,10 +25,6 @@ def cmd_hot(args):
 def cmd_stop(args):
     DaemonManager.stop_daemon()
 
-def cmd_status(args):
-    from .commands.status import run as status_run
-    status_run(args)
-
 def cmd_log(args):
     from .daemon import LOG_FILE
     import subprocess
@@ -92,9 +88,8 @@ def main():
         print(f"Unknown command: {args.command}")
         parser.print_help()
         sys.exit(1)
-    try:
-        mod = importlib.import_module(f".commands.{module_name}", __package__)
-        mod.run(args)
-    except Exception as e:
-        print(f"Error: '{args.command}' command not available: {e}")
-        sys.exit(1)
+    # No try/except here on purpose: a crash inside a command is a bug
+    # in that command, not a missing one. Let it propagate with its
+    # full traceback (an uncaught exception exits 1 anyway).
+    mod = importlib.import_module(f".commands.{module_name}", __package__)
+    mod.run(args)

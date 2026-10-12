@@ -63,7 +63,7 @@ cd /home/ray/Desktop/files/wrk/Imbric/imbric-kt
 ./gradlew compileKotlin         # fast compiler check
 ```
 
-- **Gradle properties:** `org.gradle.java.home=/usr/lib/jvm/java-25-openjdk-amd64`
+- **Gradle properties:** `org.gradle.java.home=/opt/jbr-25` (JBR 25 for DCEVM hot-reload; `ib doctor` validates this path)
 - **LSP:** JetBrains `intellij-server` with `--stdio` flag (configured in OpenCode settings)
 - **Workspace root must be the project dir** for LSP indexing to work
 
@@ -169,7 +169,7 @@ The java-gi generator crashes with a `NullPointerException` in `DocGenerator` wh
 1. **Async Safety Patch:** Automatically detects `_async` functions and forces their callbacks to use `Scope.ASYNC` (Global Arena), preventing fatal `SIGSEGV` crashes (like the one in `moveAsync`) caused by incorrect `scope="call"` annotations in GNOME's GIR files.
 2. **Override Priority Patch:** Allows CLI-provided `.gir` files to correctly override the generator's internal bundled `gir-files.zip`.
 
-The `generate_bindings.sh` script builds and uses this local, patched generator instead of the official release to ensure our async file operations are memory-safe.
+The `generate_bindings.sh` script uses this local, patched generator instead of the official release to ensure our async file operations are memory-safe. The generator binary (`ref/java-gi_patched/generator/build/install/java-gi/bin/java-gi`) must be prebuilt — the script invokes it directly and does NOT build it; `ib doctor` fails when it is missing.
 
 **Known generator bugs (java-gi 0.15.0):**
 

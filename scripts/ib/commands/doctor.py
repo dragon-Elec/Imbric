@@ -1,11 +1,39 @@
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from ..daemon import PROJECT_ROOT
 
+# generate_bindings.sh hardcodes the system GIR dir as its fallback when
+# the submodule copy is absent — mirror that here so doctor checks the
+# same two locations the script actually uses.
+SYSTEM_GIR_DIR = Path("/usr/share/gir-1.0")
+
+# External tools generate_bindings.sh shells out to: wget fetches the
+# foundation sources jar, unzip extracts it. Coreutils (cp, find, mkdir,
+# rm, sed) are assumed present on any Linux box.
+GENERATE_TOOLS = ("wget", "unzip")
+
 def register(subparsers):
     p = subparsers.add_parser("doctor", help="Environment health check")
+
+def gradle_java_home(props_text: str) -> str | None:
+    """Parse org.gradle.java.home out of gradle.properties content.
+
+    gradle.properties is `key=value` lines with `#`/`!` comments — the
+    same file Gradle itself reads, so this is the JDK Gradle will
+    actually use. Returns None when the key is absent or empty.
+    """
+    for raw in props_text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("!"):
+            continue
+        key, sep, value = line.partition("=")
+        if key.strip() == "org.gradle.java.home":
+            value = value.strip()
+            return value or None
+    return None
 
 def run(args):
     print("=== Imbric Doctor ===")
@@ -20,17 +48,44 @@ def run(args):
         if not ok:
             failures += 1
 
-    # Check Java
+    def info(msg: str):
+        # Informational only: printed, never counted as a failure.
+        print("ℹ " + msg)
+
+    # Check the JDK Gradle actually uses. gradle.properties pins
+    # org.gradle.java.home; the default `java` on PATH and the JAVA_HOME
+    # env var are NOT used by Gradle, so treating them as requirements
+    # false-fails healthy machines where JAVA_HOME is simply unset.
+    try:
+        props_text = (PROJECT_ROOT / "gradle.properties").read_text()
+    except Exception:
+        props_text = ""
+    pinned_home = gradle_java_home(props_text)
+    if pinned_home:
+        jdk_dir = Path(pinned_home)
+        try:
+            res = subprocess.run([str(jdk_dir / "bin" / "java"), "-version"], capture_output=True, text=True)
+            out = res.stdout + res.stderr
+            check(jdk_dir.is_dir() and "25" in out,
+                  f"JDK 25 at org.gradle.java.home ({pinned_home})",
+                  f"org.gradle.java.home ({pinned_home}) is not a JDK 25 install")
+        except Exception:
+            check(False, "", f"org.gradle.java.home ({pinned_home}) is not a JDK 25 install")
+    else:
+        check(False, "", "org.gradle.java.home missing in gradle.properties")
+
+    # Default java on PATH: Gradle ignores it — info only.
     try:
         res = subprocess.run(["java", "-version"], capture_output=True, text=True)
         out = res.stdout + res.stderr
-        check("25" in out, "JDK 25 found", "JDK 25 missing or not default")
+        info("default java: JDK 25 found" if "25" in out
+             else "default java: JDK 25 not found (Gradle ignores the default java)")
     except Exception:
-        check(False, "", "Java not found")
+        info("default java: not found (Gradle ignores the default java)")
 
-    # Check JAVA_HOME
-    jh = os.environ.get("JAVA_HOME")
-    check(bool(jh) and "25" in jh, "JAVA_HOME looks correct", "JAVA_HOME missing or wrong version")
+    # JAVA_HOME: Gradle ignores it when org.gradle.java.home is set — info only.
+    env_jh = os.environ.get("JAVA_HOME")
+    info(f"JAVA_HOME: {env_jh or '<unset>'} (Gradle ignores JAVA_HOME when org.gradle.java.home is set)")
 
     # Check Gradle
     try:
@@ -44,9 +99,35 @@ def run(args):
     except Exception:
         check(False, "", "gradlew failed")
 
-    # Check GIR
-    gir_dir = PROJECT_ROOT / "ref" / "java-gi_patched" / "ext" / "gir-files" / "linux"
-    check(gir_dir.exists() and (gir_dir / "GLib-2.0.gir").exists(), "GIR files found", "GIR files missing")
+    # Check GIR — generate_bindings.sh prefers the submodule GIR files
+    # and falls back to the system dir, so either location is fine.
+    # Only both missing is a failure.
+    ref_gir_dir = PROJECT_ROOT / "ref" / "java-gi_patched" / "ext" / "gir-files" / "linux"
+    if (ref_gir_dir / "GLib-2.0.gir").exists():
+        gir_dir = ref_gir_dir
+    elif (SYSTEM_GIR_DIR / "GLib-2.0.gir").exists():
+        gir_dir = SYSTEM_GIR_DIR
+    else:
+        gir_dir = None
+    check(gir_dir is not None,
+          f"GIR files found ({gir_dir})",
+          "GIR files missing (need GLib-2.0.gir in ref/java-gi_patched/ext/gir-files/linux or /usr/share/gir-1.0)")
+
+    # Check generate prerequisites: the external tools generate_bindings.sh
+    # shells out to. Missing them means `ib generate` cannot run.
+    for tool in GENERATE_TOOLS:
+        check(shutil.which(tool) is not None,
+              f"{tool} found",
+              f"{tool} missing — required by scripts/generate_bindings.sh (install it to run 'ib generate')")
+
+    # Patched generator binary. generate_bindings.sh invokes it directly
+    # (under set -e) and does NOT build it when missing, so a missing
+    # binary means `ib generate` cannot run.
+    patched_gen_bin = (PROJECT_ROOT / "ref" / "java-gi_patched" / "generator"
+                       / "build" / "install" / "java-gi" / "bin" / "java-gi")
+    check(patched_gen_bin.exists(),
+          "Patched java-gi generator found",
+          f"Patched java-gi generator missing ({patched_gen_bin}) — build ref/java-gi_patched before 'ib generate'")
 
     # Check bindings
     gen_dir = PROJECT_ROOT / "build" / "native-gen" / "bindings"

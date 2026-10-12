@@ -34,20 +34,14 @@ def _get_uptime(pid: int) -> str:
         return "?"
 
 def _get_memory_details(pid: int) -> dict:
-    """Get detailed memory info from /proc/pid/status."""
-    details = {"rss": "?", "vms": "?", "shared": "?"}
+    """Get RSS from /proc/pid/status."""
+    details = {"rss": "?"}
     try:
         with open(f"/proc/{pid}/status") as f:
             for line in f:
                 if line.startswith("VmRSS:"):
                     kb = int(line.split()[1])
                     details["rss"] = f"{kb / 1024:.0f}MB" if kb > 1024 else f"{kb}KB"
-                elif line.startswith("VmSize:"):
-                    kb = int(line.split()[1])
-                    details["vms"] = f"{kb / 1024:.0f}MB" if kb > 1024 else f"{kb}KB"
-                elif line.startswith("VmStk:"):
-                    kb = int(line.split()[1])
-                    details["shared"] = f"{kb / 1024:.0f}MB" if kb > 1024 else f"{kb}KB"
     except (FileNotFoundError, ValueError, IndexError):
         pass
     return details
@@ -78,7 +72,6 @@ def run(args):
     
     # Process status
     status = ProcessManager.get_status()
-    total_mem = 0
     total_procs = 0
     
     for category, procs in status.items():

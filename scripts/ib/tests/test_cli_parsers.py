@@ -8,8 +8,11 @@ Pins:
     compile  --full    + --tests   -> "--tests ignored because --full"
     bench    --tests   + --all     -> "--all ignored because --tests"
     clean    --bindings+ --deep    -> "--deep ignored because --bindings"
-- doctor's Gradle wrapper version check, with subprocess.run stubbed
-  (no real gradlew invocation).
+- doctor's checks, with subprocess.run stubbed (no real java or
+  gradlew invocation): the Gradle wrapper version, the
+  org.gradle.java.home pin parsed from a fake gradle.properties in
+  a temp sandbox, the either/or GIR locations (Path.exists mocked),
+  and the generate prerequisites (shutil.which stubbed).
 
 Everything that touches the OS (gradle, daemon, filesystem) is stubbed at the
 module boundary; clean's destructive shutil.rmtree is fully mocked and its
@@ -144,50 +147,227 @@ class TestConflictingFlagPrecedence(unittest.TestCase):
             self.assertIn("Cleaned bindings.", out.getvalue())
 
 
+def _doctor_sandbox(props_template):
+    """Temp PROJECT_ROOT populated with everything doctor reads.
+
+    {root} inside the properties template is replaced with the sandbox
+    path, so tests can point org.gradle.java.home at the fake JDK dir.
+    """
+    tmp = tempfile.TemporaryDirectory()
+    root = Path(tmp.name)
+    (root / "gradle.properties").write_text(props_template.format(root=root))
+    wrapper = root / "gradle" / "wrapper"
+    wrapper.mkdir(parents=True)
+    (wrapper / "gradle-wrapper.properties").write_text(
+        "distributionUrl=https://services.gradle.org/distributions/gradle-9.6.1-bin.zip\n")
+    # Fake pinned JDK: subprocess.run is stubbed, so only the
+    # directory itself has to exist for the is_dir() check.
+    (root / "jbr-25" / "bin").mkdir(parents=True)
+    bindings = root / "build" / "native-gen" / "bindings"
+    bindings.mkdir(parents=True)
+    (bindings / "Gio.java").write_text("")
+    gir = root / "ref" / "java-gi_patched" / "ext" / "gir-files" / "linux"
+    gir.mkdir(parents=True)
+    (gir / "GLib-2.0.gir").write_text("")
+    gen_bin = (root / "ref" / "java-gi_patched" / "generator"
+               / "build" / "install" / "java-gi" / "bin")
+    gen_bin.mkdir(parents=True)
+    (gen_bin / "java-gi").write_text("#!/bin/sh\n")
+    return tmp, root
+
+
+def _run_doctor(props_template, gradle_stdout="Gradle 9.6.1\nBuild time: 2026-01-01\n",
+                default_java='openjdk version "25.0.1"',
+                pinned_java='openjdk version "25.0.1"',
+                env=None, gir_ref=True, gir_system=True,
+                missing_tools=(), with_generator=True):
+    """Run doctor against a sandbox with every OS touch stubbed.
+
+    subprocess.run (default java, the pinned JDK, gradlew),
+    shutil.which and the two GIR Path.exists calls are all faked —
+    no real java or gradle ever runs. Returns (stdout, exit_code).
+    """
+    tmp, root = _doctor_sandbox(props_template)
+    if not with_generator:
+        (root / "ref" / "java-gi_patched" / "generator"
+         / "build" / "install" / "java-gi" / "bin" / "java-gi").unlink()
+
+    def fake_run(cmd, *a, **kw):
+        if cmd and cmd[-1] == "-version":
+            # The default `java` and the org.gradle.java.home binary
+            # both end in "-version"; tell them apart by the program.
+            out = default_java if cmd[0] == "java" else pinned_java
+            return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout=gradle_stdout, stderr="")
+
+    real_exists = Path.exists
+
+    def fake_exists(self):
+        s = str(self)
+        if s.endswith("gir-files/linux/GLib-2.0.gir"):
+            return gir_ref
+        if s == "/usr/share/gir-1.0/GLib-2.0.gir":
+            return gir_system
+        return real_exists(self)
+
+    def fake_which(tool, *a, **kw):
+        return None if tool in missing_tools else f"/usr/bin/{tool}"
+
+    out, err = io.StringIO(), io.StringIO()
+    code = None
+    with mock.patch.object(doctor, "PROJECT_ROOT", root), \
+         mock.patch.object(doctor.subprocess, "run", side_effect=fake_run), \
+         mock.patch.object(doctor.shutil, "which", side_effect=fake_which), \
+         mock.patch.object(doctor.Path, "exists", new=fake_exists), \
+         mock.patch.dict(os.environ, env or {}, clear=True), \
+         contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            doctor.run(_parse(["doctor"]))
+        except SystemExit as e:
+            code = e.code
+    tmp.cleanup()
+    return out.getvalue(), code
+
+
+class TestDoctorGradlePropertiesParsing(unittest.TestCase):
+    def test_parses_simple_assignment(self):
+        self.assertEqual(
+            doctor.gradle_java_home("org.gradle.java.home=/opt/jbr-25\n"),
+            "/opt/jbr-25")
+
+    def test_ignores_comment_lines(self):
+        props = ("# org.gradle.java.home=/wrong\n"
+                 "! org.gradle.java.home=/also-wrong\n"
+                 "org.gradle.java.home=/opt/jbr-25\n")
+        self.assertEqual(doctor.gradle_java_home(props), "/opt/jbr-25")
+
+    def test_ignores_other_keys(self):
+        props = ("org.gradle.parallel=true\n"
+                 "org.gradle.caching=true\n"
+                 "org.gradle.java.home=/opt/jbr-25\n")
+        self.assertEqual(doctor.gradle_java_home(props), "/opt/jbr-25")
+
+    def test_missing_key_returns_none(self):
+        self.assertIsNone(doctor.gradle_java_home("org.gradle.parallel=true\n"))
+
+    def test_empty_value_returns_none(self):
+        self.assertIsNone(doctor.gradle_java_home("org.gradle.java.home=\n"))
+
+
+class TestDoctorJdkChecks(unittest.TestCase):
+    def test_valid_pinned_jdk_passes(self):
+        out, code = _run_doctor("org.gradle.java.home={root}/jbr-25\n")
+        self.assertIn("✓ JDK 25 at org.gradle.java.home", out)
+        self.assertIn("jbr-25", out)
+        self.assertIsNone(code)  # every check passed -> exit 0
+
+    def test_missing_pinned_jdk_fails(self):
+        out, code = _run_doctor("org.gradle.parallel=true\n")
+        self.assertIn("✗ org.gradle.java.home missing in gradle.properties", out)
+        self.assertEqual(code, 1)
+
+    def test_commented_out_pinned_jdk_fails(self):
+        # A commented-out pin means Gradle has no pinned JDK at all.
+        out, code = _run_doctor("# org.gradle.java.home={root}/jbr-25\n")
+        self.assertIn("✗ org.gradle.java.home missing in gradle.properties", out)
+        self.assertEqual(code, 1)
+
+    def test_wrong_pinned_jdk_version_fails(self):
+        out, code = _run_doctor(
+            "org.gradle.java.home={root}/jbr-25\n",
+            pinned_java='openjdk version "21.0.1"')
+        self.assertIn("✗ org.gradle.java.home (", out)
+        self.assertIn("is not a JDK 25 install", out)
+        self.assertEqual(code, 1)
+
+    def test_missing_pinned_jdk_dir_fails(self):
+        out, code = _run_doctor("org.gradle.java.home={root}/no-such-jdk\n")
+        self.assertIn("is not a JDK 25 install", out)
+        self.assertEqual(code, 1)
+
+    def test_unset_java_home_is_not_a_failure(self):
+        # JAVA_HOME unset is the healthy case: gradle.properties pins the JDK.
+        out, code = _run_doctor("org.gradle.java.home={root}/jbr-25\n", env={})
+        self.assertIn("ℹ JAVA_HOME: <unset>", out)
+        self.assertIsNone(code)
+
+    def test_default_java_version_is_info_only(self):
+        # Gradle ignores the default java — a wrong one must not fail doctor.
+        out, code = _run_doctor(
+            "org.gradle.java.home={root}/jbr-25\n",
+            default_java='openjdk version "17.0.1"')
+        self.assertIn("ℹ default java: JDK 25 not found", out)
+        self.assertIsNone(code)
+
+
+class TestDoctorGirEitherOr(unittest.TestCase):
+    def test_ref_gir_preferred(self):
+        out, code = _run_doctor("org.gradle.java.home={root}/jbr-25\n",
+                                gir_ref=True, gir_system=True)
+        self.assertIn("✓ GIR files found", out)
+        self.assertIn("ref/java-gi_patched/ext/gir-files/linux", out)
+        self.assertIsNone(code)
+
+    def test_system_gir_fallback(self):
+        out, code = _run_doctor("org.gradle.java.home={root}/jbr-25\n",
+                                gir_ref=False, gir_system=True)
+        self.assertIn("✓ GIR files found (/usr/share/gir-1.0)", out)
+        self.assertIsNone(code)
+
+    def test_both_gir_locations_missing_fails(self):
+        out, code = _run_doctor("org.gradle.java.home={root}/jbr-25\n",
+                                gir_ref=False, gir_system=False)
+        self.assertIn("✗ GIR files missing", out)
+        self.assertEqual(code, 1)
+
+
+class TestDoctorGeneratePrereqs(unittest.TestCase):
+    def test_wget_and_unzip_present(self):
+        out, code = _run_doctor("org.gradle.java.home={root}/jbr-25\n")
+        self.assertIn("✓ wget found", out)
+        self.assertIn("✓ unzip found", out)
+        self.assertIsNone(code)
+
+    def test_missing_wget_fails(self):
+        out, code = _run_doctor("org.gradle.java.home={root}/jbr-25\n",
+                                missing_tools=("wget",))
+        self.assertIn("✗ wget missing", out)
+        self.assertIn("'ib generate'", out)
+        self.assertEqual(code, 1)
+
+    def test_missing_unzip_fails(self):
+        out, code = _run_doctor("org.gradle.java.home={root}/jbr-25\n",
+                                missing_tools=("unzip",))
+        self.assertIn("✗ unzip missing", out)
+        self.assertEqual(code, 1)
+
+    def test_missing_generator_binary_fails(self):
+        # generate_bindings.sh invokes the patched generator directly
+        # (it does not build it), so a missing binary breaks 'ib generate'.
+        out, code = _run_doctor("org.gradle.java.home={root}/jbr-25\n",
+                                with_generator=False)
+        self.assertIn("✗ Patched java-gi generator missing", out)
+        self.assertEqual(code, 1)
+
+
 class TestDoctorGradleVersionCheck(unittest.TestCase):
-    def _run_doctor(self, gradle_stdout, env_ok=True):
-        """Run doctor with subprocess.run stubbed; return (stdout, exit_code).
-
-        doctor exits non-zero when any check fails, so a test that leaves the real
-        JAVA_HOME in place now (correctly) exits 1. Both the output and the code
-        are returned so tests can assert either.
-        """
-        def fake_run(cmd, *a, **kw):
-            if cmd and cmd[0] == "java":
-                return subprocess.CompletedProcess(
-                    cmd, 0, stdout='openjdk version "25.0.1"', stderr="")
-            return subprocess.CompletedProcess(cmd, 0, stdout=gradle_stdout, stderr="")
-
-        env = {"JAVA_HOME": "/usr/lib/jvm/java-25-openjdk-amd64"} if env_ok else {}
-        out, err = io.StringIO(), io.StringIO()
-        code = None
-        with mock.patch.object(doctor.subprocess, "run", side_effect=fake_run):
-            with mock.patch.dict(os.environ, env, clear=True):
-                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                    try:
-                        doctor.run(_parse(["doctor"]))
-                    except SystemExit as e:
-                        code = e.code
-        return out.getvalue(), code
-
     def test_matching_version_reports_ok(self):
-        out, code = self._run_doctor("Gradle 9.6.1\nBuild time: 2026-01-01\n")
+        out, code = _run_doctor("org.gradle.java.home={root}/jbr-25\n",
+                                gradle_stdout="Gradle 9.6.1\nBuild time: 2026-01-01\n")
         self.assertIn("✓ Gradle 9.6.1 wrapper OK", out)
         self.assertIsNone(code)  # every check passed -> exit 0
 
     def test_wrong_version_reports_issue(self):
-        out, _ = self._run_doctor("Gradle 8.1.1\n")
+        out, _ = _run_doctor("org.gradle.java.home={root}/jbr-25\n",
+                             gradle_stdout="Gradle 8.1.1\n")
         self.assertIn("✗ Gradle wrapper issue", out)
 
     def test_failing_check_exits_nonzero(self):
         """A health check that always exits 0 cannot gate `ib doctor && deploy`."""
-        out, code = self._run_doctor("Gradle 9.6.1\n", env_ok=False)
-        self.assertIn("✗ JAVA_HOME", out)
+        out, code = _run_doctor("org.gradle.parallel=true\n")
+        self.assertIn("✗ org.gradle.java.home missing", out)
         self.assertEqual(code, 1)
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestPluginIsolation(unittest.TestCase):
@@ -234,3 +414,7 @@ class TestCommandDispatch(unittest.TestCase):
         from scripts.ib.cli import COMMAND_MODULES
         resolved = dict(COMMAND_MODULES).get("exec")
         self.assertEqual(resolved, "exec_cmd")
+
+
+if __name__ == "__main__":
+    unittest.main()

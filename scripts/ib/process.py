@@ -86,7 +86,10 @@ class ProcessManager:
 
         for pattern in patterns:
             for proc in cls.find_processes(pattern):
-                if proc.pid == os.getpid():
+                # pid 1 must never be signaled: pgrep -f matches
+                # full command lines, so an unrelated process could
+                # theoretically carry one of these pattern strings.
+                if proc.pid <= 1 or proc.pid == os.getpid():
                     continue
                 if cls.kill_pid(proc.pid, sig):
                     killed.append(str(proc.pid))
@@ -97,7 +100,7 @@ class ProcessManager:
                 survivors = []
                 for pattern in patterns:
                     for proc in cls.find_processes(pattern):
-                        if proc.pid == os.getpid():
+                        if proc.pid <= 1 or proc.pid == os.getpid():
                             continue
                         if cls.kill_pid(proc.pid, signal.SIGKILL):
                             survivors.append(str(proc.pid))
@@ -105,7 +108,18 @@ class ProcessManager:
                     killed.extend(survivors)
                     time.sleep(1)
 
-        return killed
+        # A process that survives SIGTERM is found again by the
+        # survivor pass, so its PID lands in both lists (and several
+        # patterns can match the same process). Dedupe, keeping
+        # first-seen order, so "Killed N process(es)" counts
+        # processes, not signals.
+        seen = set()
+        unique = []
+        for pid in killed:
+            if pid not in seen:
+                seen.add(pid)
+                unique.append(pid)
+        return unique
 
     @classmethod
     def get_status(cls) -> dict[str, list[ProcessInfo]]:
