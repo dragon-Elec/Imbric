@@ -69,9 +69,18 @@ fun FileBrowserPane(
         AnimatedContent(
             targetState = content,
             transitionSpec = {
-                // A subtle, professional crossfade with a very slight scale (98%) to register the navigation
-                (fadeIn(animationSpec = tween(150)) + scaleIn(initialScale = 0.98f, animationSpec = tween(150))) togetherWith
-                (fadeOut(animationSpec = tween(150)) + scaleOut(targetScale = 0.98f, animationSpec = tween(150)))
+                if (initialState.uri == targetState.uri) {
+                    // Same folder — an enrichment flush, a re-sort, or a
+                    // load completing: the items changed but the folder did
+                    // not. Swap instantly; a crossfade here would flash the
+                    // whole pane on every emission.
+                    ContentTransform(EnterTransition.None, ExitTransition.None, sizeTransform = null)
+                } else {
+                    // Navigation: a subtle, professional crossfade with a
+                    // very slight scale (98%) to register the folder switch.
+                    (fadeIn(animationSpec = tween(150)) + scaleIn(initialScale = 0.98f, animationSpec = tween(150))) togetherWith
+                    (fadeOut(animationSpec = tween(150)) + scaleOut(targetScale = 0.98f, animationSpec = tween(150)))
+                }
             },
             label = "DirectoryTransition"
         ) { snapshot ->
@@ -108,15 +117,16 @@ fun FileBrowserPane(
  * so the outgoing crossfade keeps rendering the folder the user navigated away from
  * instead of the incoming one (stale-capture fix).
  *
- * Equality is deliberately NARROWER than the full content:
- * - uri / isLoading / has-content decide the transition (the only times a crossfade
- *   should play: folder switched, spinner↔content flipped);
- * - [revision] rides along so the edgePulse trigger stays snapshot-scoped — the
- *   outgoing pane pulses on ITS OWN folder's emissions, not the incoming ones — but is
- *   EXCLUDED from equality. As a data-class field it replayed the 150ms crossfade on
- *   every enrichment flush and re-sort (revision bumps per emission); excluded, the
- *   content lambda still recomposes (it reads snapshot.revision) and the pulse fires,
- *   without a new transition.
+ * Identity has two jobs, and they must not be conflated:
+ * - [equals] MUST return false on every emission (hence `revision` is part of it).
+ *   AnimatedContent's Transition only adopts a new targetState when equals is
+ *   false — a narrower equals freezes the Transition on the first snapshot and
+ *   enrichment/re-sorts never re-render (the bug fa82334 introduced).
+ * - The crossfade itself is gated in [transitionSpec] on `initialState.uri ==
+ *   targetState.uri`, NOT on equals: same-folder changes swap instantly via a
+ *   no-op ContentTransform, so only navigation plays the 150ms crossfade.
+ * [revision] rides along so the edgePulse trigger stays snapshot-scoped — the
+ * outgoing pane pulses on ITS OWN folder's emissions, not the incoming ones.
  */
 private class PaneContent(
     val uri: String,
@@ -131,10 +141,15 @@ private class PaneContent(
     override fun equals(other: Any?): Boolean = other is PaneContent &&
         uri == other.uri &&
         isLoading == other.isLoading &&
-        hasContent == other.hasContent
+        hasContent == other.hasContent &&
+        // revision MUST be part of identity: AnimatedContent only learns
+        // about a new targetState when equals returns false. Excluding it
+        // (the old behaviour) froze the Transition on the first snapshot,
+        // so enrichment flushes and re-sorts never re-rendered.
+        revision == other.revision
 
     override fun hashCode(): Int =
-        (uri.hashCode() * 31 + isLoading.hashCode()) * 31 + hasContent.hashCode()
+        ((uri.hashCode() * 31 + isLoading.hashCode()) * 31 + hasContent.hashCode()) * 31 + revision
 }
 
 @Composable
