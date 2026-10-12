@@ -817,6 +817,10 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         val queryLower = query.text.lowercase()
         val buffer = mutableListOf<FileEntry>()
 
+        // Canonical targets already matched — a linked tree reachable by two
+        // routes (diamond) would otherwise double-emit the same file.
+        val matchedTargets = HashSet<String>()
+
         // (directory, depth, symlink hops spent to reach it)
         val stack = ArrayDeque<Triple<File, Int, Int>>()
         stack.add(Triple(rootFile, 0, 0))
@@ -883,10 +887,14 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                             (query.maxSize == null || fileInfo.size <= query.maxSize)
 
                         if (matchesMime && matchesDateRange && matchesSizeRange) {
-                            buffer.add(fileInfo)
-                            if (buffer.size >= 50) {
-                                emit(buffer.toList())
-                                buffer.clear()
+                            // Dedup by target URI: a diamond (two routes to the same
+                            // linked tree) can match the same file twice.
+                            if (matchedTargets.add(fileInfo.uri)) {
+                                buffer.add(fileInfo)
+                                if (buffer.size >= 50) {
+                                    emit(buffer.toList())
+                                    buffer.clear()
+                                }
                             }
                         }
                     }
@@ -1122,7 +1130,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 25 -> VfsError.WouldRecurse(uri)
                 else -> VfsError.IoError(uri, e.message ?: "Unknown error", e)
             }
-            e is java.util.concurrent.CancellationException -> VfsError.Cancelled(uri)
+            e is java.util.concurrent.CancellationException -> throw e
             else -> VfsError.IoError(uri, e.message ?: "Unknown error", e)
         }
     }

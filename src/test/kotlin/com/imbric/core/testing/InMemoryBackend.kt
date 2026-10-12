@@ -31,6 +31,10 @@ open class InMemoryBackend(
     override suspend fun canPerform(action: FileAction, uri: String): Boolean = true
 
     // URI -> FileInfo map
+    // TrashManager.trashFiles runs N ops in parallel on Dispatchers.IO, so every
+    // mutation goes through the monitor — an unsynchronized HashMap can silently
+    // lose an entry when two trash() calls structurally mutate it at once.
+    private val fsLock = Any()
     val fs = mutableMapOf<String, FileInfo>()
     val trashFs = mutableMapOf<String, FileInfo>() // For simulating trash
     val failingUris = mutableSetOf<String>()
@@ -151,19 +155,19 @@ open class InMemoryBackend(
         emit(TransferProgress(jobId, srcUri, destUri, null, 1, 1, 0, 0))
     }
 
-    override suspend fun trash(job: FileJob, recoverTrashUri: Boolean): Result<String> {
+    override suspend fun trash(job: FileJob, recoverTrashUri: Boolean): Result<String> = synchronized(fsLock) {
         val file = fs[job.source] ?: return Result.failure(VfsError.NotFound(job.source))
         val trashUri = "trash://${file.name}"
         trashFs[job.source] = file
-        delete(job)
-        return Result.success(if (recoverTrashUri) trashUri else "")
+        fs.remove(job.source.removeSuffix("/"))
+        Result.success(if (recoverTrashUri) trashUri else "")
     }
 
-    override suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String> {
+    override suspend fun restoreFromTrash(trashPath: String, originalPath: String): Result<String> = synchronized(fsLock) {
         val destUri = originalPath.removeSuffix("/")
         val key = trashFs.keys.find { it == destUri } ?: return Result.failure(Exception("Item not found in trash"))
         val info = trashFs.remove(key)
-        return if (info != null) {
+        if (info != null) {
             fs[destUri] = info.copy(uri = destUri, path = destUri)
             Result.success(destUri)
         } else {
@@ -171,9 +175,9 @@ open class InMemoryBackend(
         }
     }
 
-    override suspend fun delete(job: FileJob): Result<Unit> {
+    override suspend fun delete(job: FileJob): Result<Unit> = synchronized(fsLock) {
         val srcUri = job.source.removeSuffix("/")
-        return if (fs.remove(srcUri) != null) Result.success(Unit) else Result.failure(Exception("Source not found"))
+        if (fs.remove(srcUri) != null) Result.success(Unit) else Result.failure(Exception("Source not found"))
     }
 
     override suspend fun listTrash(): Result<List<TrashItem>> {
