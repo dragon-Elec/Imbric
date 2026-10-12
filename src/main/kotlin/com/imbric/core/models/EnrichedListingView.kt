@@ -103,7 +103,15 @@ class EnrichedListingView(
         }
     }
 
-    override val size: Int get() = passthrough?.size ?: mapping!!.size
+    override val size: Int
+        get() {
+            val direct = passthrough
+            if (direct != null) return direct.size
+            // passthrough and mapping are assigned as a pair in init,
+            // so mapping is non-null whenever passthrough is null.
+            val mapped = requireNotNull(mapping) { "passthrough is null, so mapping must be non-null" }
+            return mapped.size
+        }
 
     override fun get(index: Int): FileEntry {
         val direct = passthrough
@@ -111,7 +119,7 @@ class EnrichedListingView(
 
         // passthrough and mapping are assigned as a pair in init,
         // so mapping is non-null whenever passthrough is null.
-        val encoded = mapping!![index]
+        val encoded = requireNotNull(mapping) { "passthrough is null, so mapping must be non-null" }[index]
         return if (encoded >= 0) {
             val uri = base.getUri(encoded)
             enrichments[uri] ?: base.get(encoded)
@@ -125,13 +133,6 @@ class EnrichedListingView(
     // Identity equality — each instance is unique, forces StateFlow emission
     override fun equals(other: Any?): Boolean = this === other
     override fun hashCode(): Int = System.identityHashCode(this)
-
-    /** Check if a URI exists in the composite view. */
-    fun containsUri(uri: String): Boolean {
-        if (uri in deletions) return false
-        if (uri in additions) return true
-        return base.containsUri(uri)
-    }
 
     private class IntArrayList(initialCapacity: Int) {
         private var data = IntArray(initialCapacity)

@@ -33,7 +33,7 @@ Role: Coordinates initial batch loading, active signal monitoring, and async dee
 API:
   - DirState:
     - val uri: String
-    - val items: StateFlow<List<FileInfo>>
+    - val items: StateFlow<List<FileEntry>>
     - val isLoading: StateFlow<Boolean>
     - val loadError: StateFlow<Exception?>
     - val directoryType: DirectoryType
@@ -44,11 +44,10 @@ API:
     - fun onActive()
     - fun stop()
     - fun destroy()
-    - fun containsFile(uri: String): Boolean
-    - fun getFileByName(name: String): FileInfo?
-    - fun matchPattern(pattern: String): List<FileInfo>
-    - fun whenReady(predicate: (List<FileInfo>) -> Boolean): Flow<List<FileInfo>>
-    - fun whenEnriched(uri: String): Flow<FileInfo>
+    - suspend fun containsFile(uri: String): Boolean
+    - fun getFileByName(name: String): FileEntry?
+    - fun matchPattern(pattern: String): List<FileEntry>
+    - fun whenReady(predicate: (List<FileEntry>) -> Boolean): Flow<List<FileEntry>>
 
 !Caveat: Suspend lambdas capture a strong reference to DirState, meaning weak-cached instances will leak unless destroy() is explicitly called to cancel the supervisor job.
 

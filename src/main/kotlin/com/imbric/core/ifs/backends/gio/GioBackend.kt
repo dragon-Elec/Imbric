@@ -102,10 +102,7 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
         return vfs.supportedUriSchemes?.contains(scheme) == true
     }
 
-    private val queryAttributes = "standard::name,standard::display-name,standard::type,standard::is-hidden,standard::size,standard::content-type,standard::is-symlink,standard::symlink-target,time::modified,time::access,time::created,access::can-read,access::can-write,access::can-execute,unix::mode,owner::user,owner::group,standard::icon,standard::symbolic-icon,standard::thumbnail-path,metadata::emblems"
-
-    /** Minimal attributes for directory listing — only what toListingFile() actually reads. */
-    private val listingQueryAttributes = "standard::name,standard::type,standard::size,standard::content-type,time::modified"
+    private val queryAttributes = "standard::name,standard::display-name,standard::type,standard::is-hidden,standard::size,standard::content-type,standard::is-symlink,standard::symlink-target,time::modified,time::modified-nsec,time::access,time::created,access::can-read,access::can-write,access::can-execute,unix::mode,owner::user,owner::group,standard::icon,standard::symbolic-icon,standard::thumbnail-path,metadata::emblems"
 
     private fun resolveUniqueTarget(uri: String): String {
         var current = uri
@@ -357,7 +354,11 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                     kotlinx.coroutines.yield()
                 }
             } finally {
-                enumerator.close(null)
+                // close() can throw (G_IO_ERROR_PENDING when the enumerator is cancelled mid-drain).
+                // An exception here would REPLACE the in-flight CancellationException, turning a
+                // clean cancel into a hard failure — so the teardown is deliberately fail-soft:
+                // the drain result is what matters, not the close.
+                try { enumerator.close(null) } catch (e: Exception) { }
             }
         } else {
             val flags = if (job.overwrite) setOf(FileCopyFlags.OVERWRITE, FileCopyFlags.ALL_METADATA) else setOf(FileCopyFlags.ALL_METADATA)
@@ -391,7 +392,11 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                     kotlinx.coroutines.yield()
                 }
             } finally {
-                enumerator.close(null)
+                // close() can throw (G_IO_ERROR_PENDING when the enumerator is cancelled mid-drain).
+                // An exception here would REPLACE the in-flight CancellationException, turning a
+                // clean cancel into a hard failure — so the teardown is deliberately fail-soft:
+                // the drain result is what matters, not the close.
+                try { enumerator.close(null) } catch (e: Exception) { }
             }
         }
         
@@ -465,7 +470,11 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                 info = enumerator.nextFile(null)
             }
         } finally {
-            enumerator.close(null)
+            // close() can throw (G_IO_ERROR_PENDING when the enumerator is cancelled mid-drain).
+            // An exception here would REPLACE the in-flight CancellationException, turning a
+            // clean cancel into a hard failure — so the teardown is deliberately fail-soft:
+            // the drain result is what matters, not the close.
+            try { enumerator.close(null) } catch (e: Exception) { }
         }
         items.sortedByDescending { it.deletionDate }
     }
@@ -487,7 +496,11 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                     info = enumerator.nextFile(null)
                 }
             } finally {
-                enumerator.close(null)
+                // close() can throw (G_IO_ERROR_PENDING when the enumerator is cancelled mid-drain).
+                // An exception here would REPLACE the in-flight CancellationException, turning a
+                // clean cancel into a hard failure — so the teardown is deliberately fail-soft:
+                // the drain result is what matters, not the close.
+                try { enumerator.close(null) } catch (e: Exception) { }
             }
 
             for (child in children) {
@@ -804,16 +817,32 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
 
     override fun exists(uri: String): Boolean = File.forUri(uri).queryExists(null)
 
+    /**
+     * Max symlink hops a single search path may follow.
+     *
+     * Search recurses into symlinks (a NOFOLLOW enumeration reports
+     * SYMBOLIC_LINK for links, so a link-to-dir needs the isSymlink
+     * check to be walked), but links can cycle (a→b→a). Every stack
+     * push either descends into a real directory — which cannot cycle
+     * — or spends one hop, so capping hops per path bounds the walk
+     * and guarantees termination. 32 covers legitimate link chains
+     * with room to spare.
+     */
+    private companion object {
+        private const val SEARCH_SYMLINK_HOP_CAP = 32
+    }
+
     override fun search(query: com.imbric.core.models.VfsQuery): Flow<List<FileEntry>> = flow {
         val rootFile = File.forUri(query.rootUri)
         val queryLower = query.text.lowercase()
         val buffer = mutableListOf<FileEntry>()
 
-        val stack = ArrayDeque<Pair<File, Int>>()
-        stack.add(rootFile to 0)
+        // (directory, depth, symlink hops spent to reach it)
+        val stack = ArrayDeque<Triple<File, Int, Int>>()
+        stack.add(Triple(rootFile, 0, 0))
 
         while (stack.isNotEmpty()) {
-            val (dir, depth) = stack.removeLast()
+            val (dir, depth, linksFollowed) = stack.removeLast()
             if (depth > query.maxDepth) continue
 
             val enumerator = try {
@@ -836,9 +865,27 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                         continue
                     }
 
-                    // Recurse into subdirectories
-                    if (info.fileType == FileType.DIRECTORY && query.recursive) {
-                        stack.add(child to depth + 1)
+                    // Recurse into subdirectories and symlinks: a NOFOLLOW
+                    // enumeration reports SYMBOLIC_LINK for links, so a
+                    // link-to-dir would never be walked without the
+                    // isSymlink check, hiding linked trees from search.
+                    // A link whose target is a file (or a broken link)
+                    // fails the enumeration — the fail-soft catch above
+                    // skips it, which covers file-links.
+                    if ((info.fileType == FileType.DIRECTORY || info.isSymlink) && query.recursive) {
+                        // Hop cap: a symlink path that has already spent
+                        // its hops stops here — this is what bounds
+                        // cyclic link chains (a→b→a) and terminates
+                        // the walk.
+                        if (!info.isSymlink || linksFollowed < SEARCH_SYMLINK_HOP_CAP) {
+                            stack.add(
+                                Triple(
+                                    child,
+                                    depth + 1,
+                                    if (info.isSymlink) linksFollowed + 1 else linksFollowed
+                                )
+                            )
+                        }
                     }
 
                     // Match filename against query (case-insensitive)
@@ -876,7 +923,11 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                     kotlinx.coroutines.yield() // allow cancellation
                 }
             } finally {
-                enumerator.close(null)
+                // close() can throw (G_IO_ERROR_PENDING when the enumerator is cancelled mid-drain).
+                // An exception here would REPLACE the in-flight CancellationException, turning a
+                // clean cancel into a hard failure — so the teardown is deliberately fail-soft:
+                // the drain result is what matters, not the close.
+                try { enumerator.close(null) } catch (e: Exception) { }
             }
         }
         if (buffer.isNotEmpty()) {
@@ -899,7 +950,11 @@ class GioBackend(private val latencyProfiler: LatencyProfiler = PassiveLatencyPr
                     finalBuffer
                 }
             } finally {
-                stream.close(null)
+                // close() can throw (G_IO_ERROR_PENDING when the stream is cancelled mid-read).
+                // An exception here would REPLACE the in-flight CancellationException, turning a
+                // clean cancel into a hard failure — so the teardown is deliberately fail-soft:
+                // the read result is what matters, not the close.
+                try { stream.close(null) } catch (e: Exception) { }
             }
         }
     }

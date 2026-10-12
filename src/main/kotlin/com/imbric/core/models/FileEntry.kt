@@ -113,12 +113,17 @@ sealed interface FileEntry {
          * token in the enumerate string; the benefit is that DirState.setSortKey can re-sort
          * the cached listing without paying for a fresh GIO enumeration.
          *
+         * `time::modified-nsec` rides along so the mapper can build a sub-second
+         * [kotlin.time.Instant]: DirState's dedup pass compares modifiedTime to
+         * detect a same-second rewrite of the same size, which whole-second
+         * truncation would swallow.
+         *
          * `standard::is-symlink` lets GioBackend.list() detect symlinks and
          * resolve the target's type with one follow-query, so a symlink whose
          * target is a directory lists as a directory (Nautilus parity).
          */
         fun listingAttributesFor(sortKey: SortKey): String {
-            val base = "standard::name,standard::type,standard::is-hidden,standard::size,standard::content-type,standard::is-symlink,time::modified"
+            val base = "standard::name,standard::type,standard::is-hidden,standard::size,standard::content-type,standard::is-symlink,time::modified,time::modified-nsec"
             return when (sortKey) {
                 SortKey.NAME -> base
                 SortKey.SIZE -> base
@@ -146,8 +151,9 @@ sealed interface FileEntry {
          * dispatchers) and FileEntry.matches is a public interface method.
          * All map access — including access-order touches — goes through the
          * synchronized wrapper, which access-order LinkedHashMaps require.
-         * A benign race (two threads compiling the same pattern at once)
-         * only wastes one compile; both produce equivalent Regexes.
+         * The whole get-or-compile-put runs under the cache monitor, so two
+         * threads racing on the same pattern share one compile and receive
+         * the identical (===) instance instead of each compiling privately.
          */
         private val globCache: MutableMap<String, Regex> =
             Collections.synchronizedMap(
@@ -162,23 +168,30 @@ sealed interface FileEntry {
 
         fun compileGlob(pattern: String): Regex {
             if (pattern.isEmpty() || pattern == "*") return WILDCARD_GLOB
-            globCache[pattern]?.let { return it }
-            val regexStr = buildString(pattern.length * 2) {
-                for (c in pattern) {
-                    when (c) {
-                        '*' -> append(".*")
-                        '?' -> append('.')
-                        '.', '(', ')', '[', ']', '{', '}', '+', '^', '$', '|', '\\' -> {
-                            append('\\')
-                            append(c)
+            // Get-or-compile-put as one atomic step under the cache
+            // monitor: the check-then-put pair is a double-compile
+            // race otherwise (two threads compile the same pattern,
+            // one cache entry wins, both callers keep different
+            // instances).
+            synchronized(globCache) {
+                globCache[pattern]?.let { return it }
+                val regexStr = buildString(pattern.length * 2) {
+                    for (c in pattern) {
+                        when (c) {
+                            '*' -> append(".*")
+                            '?' -> append('.')
+                            '.', '(', ')', '[', ']', '{', '}', '+', '^', '$', '|', '\\' -> {
+                                append('\\')
+                                append(c)
+                            }
+                            else -> append(c)
                         }
-                        else -> append(c)
                     }
                 }
+                val regex = Regex(regexStr, RegexOption.IGNORE_CASE)
+                globCache[pattern] = regex
+                return regex
             }
-            val regex = Regex(regexStr, RegexOption.IGNORE_CASE)
-            globCache[pattern] = regex
-            return regex
         }
     }
 }

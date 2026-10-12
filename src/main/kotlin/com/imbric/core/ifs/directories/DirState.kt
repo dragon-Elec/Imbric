@@ -9,12 +9,11 @@ import com.imbric.core.ifs.backends.gio.support.PipelineTimer
 
 import com.imbric.core.models.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.delay
 import kotlin.coroutines.EmptyCoroutineContext
 import java.util.Collections
@@ -25,7 +24,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Live state of an opened directory.
- * Combines initial listing with real-time monitoring and asynchronous enrichment.
+ * Combines initial listing with real-time monitoring and emblem enrichment.
  *
  * Owns its own [SupervisorJob] so that cancelling [destroy] releases all coroutine
  * references to `this`, allowing the instance to be garbage-collected even when
@@ -42,18 +41,15 @@ class DirState(
 ) {
     /**
      * Serializes writes to _baseDirectory, _deltas, _itemsList and fileCache across
-     * refresh/onActive/handleEventBatch/flushEnrichmentBatch/enrichItem. It also
+     * refresh/onActive/handleEventBatch/enrichItem. It also
      * guards the read paths that walk the installed listing (refresh's dedup
      * pass, onActive's change compare, containsFile): sortBy mutates
      * _baseDirectory in place under this lock, so an unsynchronized reader
      * can observe a half-applied permutation.
      * Not reentrant — never call a suspending helper that takes it again from inside a
-     * `withLock` block (see [enrichItemLocked]).
+     * `withLock` block.
      */
     private val stateMutex = Mutex()
-    private val enrichmentSemaphore = Semaphore(4)
-    private val enrichmentChannel = Channel<FileInfo>(Channel.UNLIMITED)
-    private val enrichmentResults = Channel<FileInfo>(Channel.UNLIMITED)
     /** Child job tied to this DirState's lifecycle. Cancelled on [destroy]. */
     private val job = SupervisorJob(parentScope.coroutineContext[Job])
     private val scope = CoroutineScope(parentScope.coroutineContext + job)
@@ -94,7 +90,7 @@ class DirState(
      * publish a composite without being counted.
      *
      * Called from inside [stateMutex.withLock] blocks (refresh/onActive/handleEventBatch/
-     * enrichItem/flushEnrichmentBatch) and from setSortKey's lock block — the reads of
+     * enrichItem) and from sortBy's lock block — the reads of
      * `_baseDirectory`/`_deltas` that produced [composite] happened under the same lock, so
      * no extra locking belongs here and this stays a plain non-suspend function.
      */
@@ -107,15 +103,17 @@ class DirState(
     /**
      * Builds a fresh [EnrichedListingView] from the current base + deltas and publishes it
      * via [publish]. Callers must hold [stateMutex] (the rebuild path is the one place
-     * where base, deltas and comparator are read as a consistent triple).
+     * where base, deltas and comparator are read as a consistent triple). The comparator
+     * is passed in rather than read from [sortKey] so the caller controls exactly which
+     * ordering the published view advertises.
      */
-    private fun rebuildComposite() {
+    private fun rebuildComposite(comparator: Comparator<FileEntry>) {
         val base = _baseDirectory
         val deltas = _deltas.value
         // Create a NEW immutable view on every rebuild — identity equality forces StateFlow emission
         val composite = EnrichedListingView(
             base = base,
-            comparator = FileEntry.comparatorFor(sortKey),
+            comparator = comparator,
             additions = deltas.additions,
             deletions = deltas.deletions,
             enrichments = deltas.enrichments
@@ -169,37 +167,42 @@ class DirState(
     /** True if [destroy] has been called. The registry uses this to detect stale entries. */
     val isDestroyedState: Boolean get() = isDestroyed.get()
 
-    /** The current sort key. UI sets this, DirState adapts attribute fetching. */
-    var sortKey: SortKey = SortKey.NAME
+    /** The current sort key. Set through [sortBy]; DirState adapts attribute fetching. Volatile: read on the UI thread in [sortBy]'s guard, written under [stateMutex] on IO. */
+    @Volatile
+    private var sortKey: SortKey = SortKey.NAME
 
     /**
-     * Changes the sort key and re-sorts the already-loaded listing.
+     * Changes the sort key and re-sorts the loaded listing — no re-list,
+     * [FileEntry.listingAttributesFor] already fetches the columns every key needs.
      *
-     * No re-listing is performed: [FileEntry.listingAttributesFor] now fetches
-     * `time::modified` for every sort key, so [FileEntry.comparatorFor] can order the local
-     * struct-of-arrays listing correctly for any key. A re-list would pay a full GIO
-     * enumeration (plus enrichment re-queueing) purely to change row order.
-     *
-     * The re-sort mutates [_baseDirectory] and the following [rebuildComposite] reads the
-     * deltas and comparator, so both run inside one [stateMutex] block — same discipline as
-     * [refresh]/[onActive], and an in-flight refresh cannot interleave between them.
-     *
-     * Non-suspend (UI entry point, like [enrichVisibleItems]): [stateMutex] is not
-     * reentrant and cannot be taken from a non-suspending context, so the work is handed to
-     * this DirState's own scope.
-     *
-     * Named `sortBy` rather than `setSortKey` because a property setter with that exact
-     * signature would clash on the JVM.
+     * Non-suspend (UI entry point): [stateMutex] is not reentrant, so the sort +
+     * [rebuildComposite] run in this instance's own scope under one lock.
      */
     fun sortBy(key: SortKey) {
         if (isDestroyed.get()) return
+        // TYPE's comparator falls back to SortByName, so TYPE and NAME can share one
+        // comparator — the identity check inside the lock skips the physical sort while
+        // still publishing the rebuilt view.
         if (key == sortKey && _baseDirectory.size > 0) return
-        sortKey = key
-        if (_baseDirectory.size == 0) return
+        // Empty listing: just record the key; the next refresh/onActive installs
+        // rows already sorted by it.
+        if (_baseDirectory.size == 0) {
+            scope.launch(ioDispatcher) {
+                stateMutex.withLock {
+                    if (isDestroyed.get()) return@withLock
+                    sortKey = key
+                }
+            }
+            return
+        }
         scope.launch(ioDispatcher) {
             stateMutex.withLock {
-                _baseDirectory.sortWith(FileEntry.comparatorFor(key))
-                rebuildComposite()
+                if (isDestroyed.get()) return@withLock
+                val oldC = FileEntry.comparatorFor(sortKey)
+                sortKey = key
+                val newC = FileEntry.comparatorFor(key)
+                if (newC !== oldC) _baseDirectory.sortWith(newC)
+                rebuildComposite(newC)
             }
         }
     }
@@ -208,59 +211,6 @@ class DirState(
 
     init {
         refresh() // refresh() calls startWatching() internally
-        startEnrichmentWorkers()
-        startEnrichmentBatcher()
-    }
-
-    private fun startEnrichmentWorkers() {
-        repeat(4) {
-            scope.launch(ioDispatcher) {
-                for (info in enrichmentChannel) {
-                    val enriched = enrichmentSemaphore.withPermit {
-                        try {
-                            val res = backend.enrichMetadata(info)
-                            res.copy(attributes = res.attributes + ("std::enriched" to true))
-                        } catch (_: CancellationException) {
-                            throw CancellationException()
-                        } catch (_: Exception) {
-                            info.copy(attributes = info.attributes + ("std::enriched" to true))
-                        }
-                    }
-                    enrichmentResults.send(enriched)
-                }
-            }
-        }
-    }
-
-    private fun startEnrichmentBatcher() {
-        scope.launch(ioDispatcher) {
-            while (isActive) {
-                // Suspend until at least one enriched result arrives
-                val first = enrichmentResults.receive()
-                val batch = mutableListOf<FileInfo>(first)
-                // Drain any additional results already buffered
-                while (true) {
-                    val extra = enrichmentResults.tryReceive().getOrNull() ?: break
-                    batch.add(extra)
-                    if (batch.size >= 50) break
-                }
-                flushEnrichmentBatch(batch)
-            }
-        }
-    }
-
-    private suspend fun flushEnrichmentBatch(batch: List<FileEntry>) {
-        val enrichedBatch = batch.filterIsInstance<FileInfo>()
-        // Nothing to merge once the non-FileInfo rows are dropped: return
-        // before touching _deltas so no composite is published for an empty
-        // batch (no emission, no pulse replay).
-        if (enrichedBatch.isEmpty()) return
-        stateMutex.withLock {
-            val current = _deltas.value
-            val newEnrichments = current.enrichments + enrichedBatch.associateBy { it.uri }
-            _deltas.value = current.copy(enrichments = newEnrichments)
-            rebuildComposite()
-        }
     }
 
     /**
@@ -289,7 +239,6 @@ class DirState(
                 val allItems = strategy.list(backend, uri, sortKey)
 
                 val dir = ListingDirectory(allItems.size + 16)
-                val enrichable = mutableListOf<FileInfo>()
                 // Unchanged-row dedup: fileCache is lazily populated (only rows
                 // actually read are materialized), so it can no longer answer this
                 // check. The previous listing is still installed at this point
@@ -305,6 +254,7 @@ class DirState(
                 // enrichVisibleItems: collect the decisions inside the lock, then
                 // apply them to the local directory outside it.
                 val deduped = stateMutex.withLock {
+                    if (isDestroyed.get()) return@withLock emptyList<FileEntry>()
                     val decisions = ArrayList<FileEntry>(allItems.size)
                     for (item in allItems) {
                         val oldIndex = _baseDirectory.findIndex(item.uri)
@@ -321,17 +271,16 @@ class DirState(
                 }
                 for (itemToStore in deduped) {
                     dir.add(itemToStore)
-                    // Track FileInfo items for enrichment (before SoA flattens them)
-                    if (itemToStore is FileInfo) enrichable.add(itemToStore)
                 }
                 dir.sortWith(FileEntry.comparatorFor(sortKey))
 
                 // Clear deltas. The listing is NOT emitted here: the single emission for this
-                // refresh is the rebuildComposite() at the end of the lock block below, which
-                // carries the enrichments queued by the enrichItemLocked loop. Publishing an
+                // refresh is the rebuildComposite() at the end of the lock block below,
+                // which carries the current delta state. Publishing an
                 // empty-delta composite first (the old behaviour) made every refresh emit twice
                 // — the second emission being the one the UI actually cared about.
                 stateMutex.withLock {
+                    if (isDestroyed.get()) return@withLock
                     _baseDirectory = dir
                     _deltas.value = DeltaState()
 
@@ -348,12 +297,7 @@ class DirState(
                     // become objects.
                     fileCache.clear()
 
-                    // Enrichment AFTER listing — already inside stateMutex, so use the
-                    // locked variant and rebuild once after the loop
-                    for (info in enrichable) {
-                        enrichItemLocked(info)
-                    }
-                    rebuildComposite()
+                    rebuildComposite(FileEntry.comparatorFor(sortKey))
                 }
             } catch (e: Exception) {
                 // Fail-soft: a superseded job must not publish its error over a newer load.
@@ -363,9 +307,7 @@ class DirState(
             } finally {
                 if (epoch == loadEpoch.get()) {
                     _isLoading.value = false
-                    // Only the load that still owns the spinner gets to declare this
-                    // instance idle; a superseded load would start a loop that samples
-                    // straight through the load that replaced it.
+                    // Only the load that still owns the spinner may declare the instance idle.
                     startIdleCpuSampling(timer, epoch)
                 }
                 timer?.mark("dir_refresh_done", itemCount = _baseDirectory.size)
@@ -377,14 +319,8 @@ class DirState(
     /**
      * Starts the idle CPU sampler for [timer] if this instance has just gone idle at
      * [epoch], replacing any loop a previous load left behind.
-     *
-     * [IdleCpuSampler.start] returns null when [timer] is null — the production path, where
-     * the registry never handed us a tracer — so this is a single null check there, on a
-     * path that has already finished its work.
-     *
-     * [isStillIdle] is the epoch comparison: refresh() and onActive() both claim the next
-     * [loadEpoch] before launching, so the loop sees a change the moment a new load starts
-     * and retires itself without a final mark.
+     * [isStillIdle] is the epoch comparison: refresh/onActive claim the next
+     * [loadEpoch] before launching, so the loop retires itself when a new load starts.
      */
     private fun startIdleCpuSampling(timer: PipelineTimer?, epoch: Long) {
         if (timer == null) return
@@ -479,6 +415,7 @@ class DirState(
 
         // Update delta layer atomically — synchronize with refresh/onActive
         stateMutex.withLock {
+            if (isDestroyed.get()) return@withLock
             val current = _deltas.value
             val nextAdditions = current.additions.toMutableMap()
             val nextDeletions = current.deletions.toMutableSet()
@@ -499,7 +436,7 @@ class DirState(
                 additions = nextAdditions,
                 deletions = nextDeletions
             )
-            rebuildComposite()
+            rebuildComposite(FileEntry.comparatorFor(sortKey))
         }
 
         fetchedInfos.forEach { enrichItem(it) }
@@ -517,12 +454,13 @@ class DirState(
     }
 
     /**
-     * Records emblems into the enrichment delta and queues the item for the async
-     * enrichment workers.
+     * Applies emblems to [info] and records the result in the enrichment delta.
+     * Synchronous and emblem-only: the async metadata pipeline is gone, so this
+     * is the entire enrichment path for event-driven and viewport-driven items.
      *
      * The read-modify-write of [_deltas] runs under [stateMutex]: it races with
-     * flushEnrichmentBatch, handleEventBatch and the refresh/onActive rebases, which
-     * would otherwise silently drop another writer's additions/deletions.
+     * handleEventBatch and the refresh/onActive rebases, which would otherwise
+     * silently drop another writer's additions/deletions.
      */
     private suspend fun enrichItem(info: FileInfo, rebuild: Boolean = true) {
         if (!enrichedUris.add(info.uri)) return
@@ -531,25 +469,9 @@ class DirState(
             stateMutex.withLock {
                 val current = _deltas.value
                 _deltas.value = current.copy(enrichments = current.enrichments + (enriched.uri to enriched))
-                if (rebuild) rebuildComposite()
+                if (rebuild) rebuildComposite(FileEntry.comparatorFor(sortKey))
             }
         }
-        enrichmentChannel.trySend(enriched ?: info)
-    }
-
-    /**
-     * [enrichItem] for callers that already hold [stateMutex] — the mutex is not
-     * reentrant, so it must not be taken again here. Never rebuilds: the caller
-     * rebuilds once after its loop.
-     */
-    private fun enrichItemLocked(info: FileInfo) {
-        if (!enrichedUris.add(info.uri)) return
-        val enriched = applyEmblems(info)
-        if (enriched != null) {
-            val current = _deltas.value
-            _deltas.value = current.copy(enrichments = current.enrichments + (enriched.uri to enriched))
-        }
-        enrichmentChannel.trySend(enriched ?: info)
     }
 
     /**
@@ -582,10 +504,22 @@ class DirState(
                     // to the current listing) only when actually read.
                     val idx = _baseDirectory.findIndex(uri)
                     if (idx == -1) return@forEach
-                    val cached = fileCache.getOrPut(uri) { _baseDirectory.get(idx) }
-                    if (cached is FileInfo && !cached.isDirectory) {
-                        collected.add(cached)
-                    }
+                    val entry = fileCache.getOrPut(uri) { _baseDirectory.get(idx) }
+                    if (entry.isDirectory) return@forEach
+                    // Base rows are ArrayBackedEntry/ListingFile post-flatten on all
+                    // backends. FileEntry carries isSymlink, so the overlay is exact
+                    // for links; isWritable/attributes are FileInfo-only, so synthesized
+                    // rows default writable + empty attributes (never lie about readonly).
+                    val info = entry as? FileInfo ?: FileInfo(
+                        name = entry.name, path = entry.path, uri = entry.uri,
+                        pathType = entry.pathType, isDirectory = false,
+                        isSymlink = entry.isSymlink, size = entry.size,
+                        mimeType = entry.mimeType, modifiedTime = entry.modifiedTime,
+                        isHidden = entry.isHidden, iconName = entry.iconName,
+                        isInTrash = entry.isInTrash, isInRecent = entry.isInRecent,
+                        isRemote = entry.isRemote,
+                    )
+                    collected.add(info)
                 }
                 collected
             }
@@ -607,6 +541,10 @@ class DirState(
      * so the whole check runs inside the lock. The [StateFlow] reads are
      * atomic on their own, but they stay inside for a single consistent
      * answer against the base directory.
+     *
+     * Never call this from inside a [stateMutex.withLock] block: the
+     * mutex is non-reentrant, so a nested [containsFile] would deadlock
+     * the caller against itself.
      */
     suspend fun containsFile(uri: String): Boolean = stateMutex.withLock {
         val deltas = _deltas.value
@@ -645,38 +583,6 @@ class DirState(
     fun whenReady(predicate: (List<FileEntry>) -> Boolean): Flow<List<FileEntry>> =
         _itemsList.filter { list -> !_isLoading.value && predicate(list) }.take(1)
 
-    /**
-     * Emits the FileInfo for a specific URI once its enrichment is complete
-     * (i.e., it has been processed by the enrichment pipeline — emblems assigned,
-     * deep count done, etc.).
-     *
-     * Checks for the presence of `std::emblems` or `std::deep-count` to distinguish
-     * between basic GIO metadata and fully enriched data.
-     *
-     * Example:
-     * ```
-     * dirState.whenEnriched("file:///home/user/photo.jpg").collect { info ->
-     *     println("Dimensions: ${info.attributes["std::dimensions"]}")
-     * }
-     * ```
-     */
-    fun whenEnriched(uri: String): Flow<FileEntry> =
-        _itemsList.mapNotNull { _ ->
-            // O(1) per emission — replaces the find-first walk over the whole
-            // composite, which re-ran on every enrichment batch emission.
-            // The composed entry for a URI is enrichments[uri] when present
-            // (enrichments shadow base rows and additions alike, see
-            // EnrichedListingView.get), otherwise additions[uri]; a base row
-            // is an ArrayBackedEntry — not a FileInfo, never std::enriched.
-            // Deleted URIs are absent from the composite, so they must not emit.
-            val deltas = _deltas.value
-            val candidate: FileInfo? = when {
-                uri in deltas.deletions -> null
-                else -> deltas.enrichments[uri] ?: deltas.additions[uri]
-            }
-            candidate?.takeIf { it.attributes.containsKey("std::enriched") }
-        }.take(1)
-
     // --- Lifecycle ---
 
     /**
@@ -708,10 +614,8 @@ class DirState(
 
                 // Build new ListingDirectory
                 val dir = ListingDirectory(fetched.size + 16)
-                val enrichable = mutableListOf<FileInfo>()
                 fetched.forEach {
                     dir.add(it)
-                    if (it is FileInfo) enrichable.add(it)
                 }
                 dir.sortWith(FileEntry.comparatorFor(sortKey))
 
@@ -725,6 +629,7 @@ class DirState(
                 // collected here; the adoption swap below stays in its own lock block
                 // — the mutex is not reentrant.
                 val changed = stateMutex.withLock {
+                    if (isDestroyed.get()) return@withLock false
                     val current = _baseDirectory
                     var changed = dir.size != current.size
                     if (!changed) {
@@ -747,6 +652,7 @@ class DirState(
                     // Same single-emission rule as refresh(): no empty-delta composite is
                     // published on adoption; the trailing rebuildComposite() is the emission.
                     stateMutex.withLock {
+                        if (isDestroyed.get()) return@withLock
                         _baseDirectory = dir
                         _deltas.value = DeltaState()
 
@@ -757,10 +663,7 @@ class DirState(
                         // (see enrichVisibleItems).
                         fileCache.clear()
 
-                        for (info in enrichable) {
-                            enrichItemLocked(info)
-                        }
-                        rebuildComposite()
+                        rebuildComposite(FileEntry.comparatorFor(sortKey))
                     }
                 }
                 timer?.mark("dir_revalidate_done", detail = uri, itemCount = dir.size)
@@ -787,6 +690,27 @@ class DirState(
         watchJob.getAndSet(null)?.cancel()
     }
 
+    /** Clears listing/delta/cache and publishes the empty view. Caller must hold [stateMutex]. */
+    private fun clearLocked() {
+        if (!isDestroyed.get()) return
+        _baseDirectory = ListingDirectory(0)
+        _deltas.value = DeltaState()
+        fileCache.clear()
+        publish(emptyView)
+    }
+
+    /**
+     * Empty composite published by [destroy] to clear the item list. Routed through
+     * [publish] so the emission counter counts the teardown like any other emission.
+     */
+    private val emptyView = EnrichedListingView(
+        base = ListingDirectory(0),
+        comparator = FileEntry.comparatorFor(SortKey.NAME),
+        additions = emptyMap(),
+        deletions = emptySet(),
+        enrichments = emptyMap()
+    )
+
     /**
      * Fully destroys this DirState: stops monitoring, clears all data, and marks it as destroyed.
      * After calling destroy(), this instance should not be reused.
@@ -805,25 +729,24 @@ class DirState(
             idleCpuJob.getAndSet(null)?.cancel()
             watchJob.getAndSet(null)?.cancel()
             refreshJob.getAndSet(null)?.cancel()
-            _baseDirectory = ListingDirectory(0)
-            _compositeView = null
-            _deltas.value = DeltaState()
-            // Not a composite, so not routed through publish(): the listing is being cleared,
-            // not rebuilt. The revision is still bumped so observers of [revision] see the
-            // teardown rather than a stale listing sitting at the previous count.
-            _itemsList.value = emptyList()
-            _revision.value = emissionRevision.incrementAndGet()
             _isLoading.value = false
             _loadError.value = null
             enrichedUris.clear()
-            // Each cached ListingEntry is an ArrayBackedEntry bound to the ListingDirectory
-            // that produced it, so the cache keeps every column of that directory's
-            // struct-of-arrays alive. Drop it with the rest of the state.
-            fileCache.clear()
-            // Close the enrichment pipes so the workers' `for (info in ...)` loop and the
-            // batcher's receive() terminate instead of sitting on a job that is already dead.
-            enrichmentChannel.close()
-            enrichmentResults.close()
+            // Teardown races the locked writers: take stateMutex and route through
+            // publish(). Fallback launches on parentScope — job.cancel() above killed
+            // scope, so a launch into it never runs. NonCancellable covers teardown
+            // racing a registry/window shutdown; the block is memory-only.
+            if (stateMutex.tryLock()) {
+                try {
+                    clearLocked()
+                } finally {
+                    stateMutex.unlock()
+                }
+            } else {
+                parentScope.launch(NonCancellable) {
+                    stateMutex.withLock { clearLocked() }
+                }
+            }
         }
     }
 }

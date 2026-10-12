@@ -5,6 +5,7 @@ import com.imbric.core.models.*
 import kotlin.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertTrue
+import kotlin.test.assertFalse
 import kotlin.test.assertEquals
 
 class XferArbiterTest {
@@ -67,6 +68,17 @@ class XferArbiterTest {
         val identicalDest = srcInfo.copy(path = "/dest/file.txt", uri = "file:///dest/file.txt")
         result = XferArbiter.decide(srcInfo, identicalDest, policy)
         assertTrue(result is ConflictAction.Skip)
+    }
+
+    @Test
+    fun testCanOverwriteFalseBranch() {
+        // canOverwrite gates on the destination's isWritable, which the
+        // GIO backend derives from access::can-write. A read-only
+        // destination must never be overwriteable, whatever the size.
+        val readOnlyDest = destInfo.copy(isWritable = false)
+        assertFalse(XferArbiter.canOverwrite(srcInfo, readOnlyDest))
+        // Sanity: writable destination with non-empty source still overwrites.
+        assertTrue(XferArbiter.canOverwrite(srcInfo, destInfo))
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.imbric.core.ifs.directories
 
 import com.imbric.core.models.*
+import com.imbric.core.ifs.FileEvent
 import com.imbric.core.testing.InMemoryBackend
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -40,64 +41,6 @@ class DirStateTest {
         
         assertEquals(120, dirState.items.value.size)
         assertFalse(dirState.isLoading.value)
-    }
-
-    @Test
-    fun `test image enrichment with valid header`() = runTest {
-        val backend = object : InMemoryBackend() {
-            override suspend fun readHeader(uri: String, size: Long): Result<ByteArray> {
-                // Minimal valid GIF89a header (1x1)
-                val gifHeader = byteArrayOf(
-                    0x47.toByte(), 0x49.toByte(), 0x46.toByte(), 0x38.toByte(), 0x39.toByte(), 0x61.toByte(), // GIF89a
-                    0x01.toByte(), 0x00.toByte(), // width 1
-                    0x01.toByte(), 0x00.toByte(), // height 1
-                    0x80.toByte(), // GCT follows, 2 colors
-                    0x00.toByte(), // background color index
-                    0x00.toByte()  // pixel aspect ratio
-                )
-                return Result.success(gifHeader)
-            }
-
-            override suspend fun enrichMetadata(info: FileInfo): FileInfo {
-                // Simulate the 64KB trick: parse GIF header bytes for dimensions
-                return if (!info.isDirectory && info.name.endsWith(".gif")) {
-                    val bytesResult = readHeader(info.uri, 65536)
-                    bytesResult.map { bytes ->
-                        val width = ((bytes[7].toInt() and 0xFF) shl 8) or (bytes[6].toInt() and 0xFF)
-                        val height = ((bytes[9].toInt() and 0xFF) shl 8) or (bytes[8].toInt() and 0xFF)
-                        info.copy(
-                            attributes = info.attributes + mapOf(
-                                "std::dimensions" to "${width}x${height}",
-                                "std::aspect-ratio" to (width.toDouble() / height)
-                            )
-                        )
-                    }.getOrDefault(info)
-                } else {
-                    info
-                }
-            }
-        }
-        
-        val root = "memory://test"
-        val uri = "$root/image.gif"
-        backend.fs[uri] = FileInfo(
-            name = "image.gif", 
-            path = uri, 
-            uri = uri, 
-            isDirectory = false, 
-            mimeType = "image/gif"
-        )
-        
-        val testDispatcher = UnconfinedTestDispatcher(testScheduler)
-        val dirState = DirState(root, backend, backgroundScope, testDispatcher)
-        
-        // Wait for listing and enrichment
-        advanceUntilIdle()
-        
-        val item = dirState.items.value.first { it.uri == uri } as com.imbric.core.models.FileInfo
-        assertEquals("1x1", item.attributes["std::dimensions"])
-        assertEquals(1.0, item.attributes["std::aspect-ratio"])
-        dirState.destroy()
     }
 
     // --- Phase 1: DirectoryType tests ---
@@ -277,6 +220,7 @@ class DirStateTest {
         assertEquals(1, dirState.items.value.size)
 
         dirState.destroy()
+        advanceUntilIdle()
 
         // Data should be cleared after destroy
         assertEquals(0, dirState.items.value.size)
@@ -298,6 +242,7 @@ class DirStateTest {
         dirState.destroy()
         dirState.destroy()
         dirState.destroy()
+        advanceUntilIdle()
 
         assertEquals(0, dirState.items.value.size)
     }
@@ -499,43 +444,102 @@ class DirStateTest {
         assertEquals(1, result.size)
     }
 
-    @Test
-    fun `test whenEnriched emits when attributes populated`() = runTest {
-        val backend = InMemoryBackend()
-        backend.createFolder("memory://", "dir")
-        backend.createFile("memory://dir", "a.txt")
-
-        val testDispatcher = UnconfinedTestDispatcher(testScheduler)
-        val dirState = DirState("memory://dir", backend, backgroundScope, testDispatcher)
-        advanceUntilIdle()
-
-        // whenEnriched should emit once the enrichment pipeline sets std::enriched
-        val result = dirState.whenEnriched("memory://dir/a.txt").first() as com.imbric.core.models.FileInfo
-        assertTrue(result.attributes.containsKey("std::enriched"))
-        dirState.destroy()
-    }
-
-    // --- Phase 4: deepCount integration test ---
+    // --- Phase 4: emblem enrichment integration test ---
 
     @Test
-    fun `test deepCount integration in enrichment`() = runTest {
+    fun `test emblem enrichment applies symlink emblem`() = runTest {
         val backend = InMemoryBackend()
         backend.createFolder("memory://", "parent")
-        backend.createFile("memory://parent", "file1.txt")
-        backend.createFile("memory://parent", "file2.txt")
-        backend.createFolder("memory://parent", "child")
-        backend.createFile("memory://parent/child", "file3.txt")
+        // Symlink child — the emblem source for the sync enrichment path.
+        // Inserted directly into fs because InMemoryBackend has no
+        // createSymlink helper; the symlink fields are plain constructor
+        // params on FileInfo.
+        val childUri = "memory://parent/link.txt"
+        backend.fs[childUri] = FileInfo(
+            path = childUri,
+            uri = childUri,
+            name = "link.txt",
+            isDirectory = false,
+            isSymlink = true,
+            symlinkTarget = "/some/target"
+        )
 
         val testDispatcher = UnconfinedTestDispatcher(testScheduler)
         val dirState = DirState("memory://parent", backend, backgroundScope, testDispatcher)
         advanceUntilIdle()
-        // Allow enrichment coroutines (launched on DirState.scope) to complete
-        delay(1000)
-        advanceUntilIdle()
 
-        // items are children of the listed directory, not the directory itself
-        val childDir = dirState.items.value.find { it.name == "child" }!! as com.imbric.core.models.FileInfo
-        assertTrue(childDir.attributes.containsKey("std::enriched"), "Child should be marked as enriched")
+        // Enrichment is viewport-driven and async (scope.launch): settle the
+        // scheduler until the row is listed, like the UI (which only reports
+        // visible, already-listed items). Enriching before install completes
+        // silently skips (no retry), so this wait is load-bearing.
+        run {
+            repeat(20) {
+                advanceUntilIdle()
+                testScheduler.runCurrent()
+                if (dirState.items.value.any { it.uri == childUri }) return@run
+            }
+        }
+        assertTrue(dirState.items.value.any { it.uri == childUri }, "link row must be listed before enriching")
+        dirState.enrichVisibleItems(listOf(childUri))
+        run {
+            repeat(20) {
+                advanceUntilIdle()
+                testScheduler.runCurrent()
+                val row = dirState.items.value.find { it.uri == childUri }
+                if (row is com.imbric.core.models.FileInfo && row.attributes.containsKey("std::emblems")) return@run
+            }
+        }
+
+        val child = dirState.items.value.find { it.uri == childUri }!! as com.imbric.core.models.FileInfo
+        val emblems = child.attributes["std::emblems"] as? List<*>
+        assertTrue(
+            emblems != null && emblems.contains("emblem-symbolic-link"),
+            "Symlink child should carry emblem-symbolic-link, got: ${child.attributes["std::emblems"]}"
+        )
         dirState.destroy()
+    }
+
+    @Test
+    fun `test emblem enrichment applies readonly emblem`() = runBlocking {
+        // Read-only emblem, built through the FileInfo path (never list()):
+        // the row is stored with isWritable=false — what the GIO backend
+        // now derives from access::can-write — and reaches the emblem
+        // layer via the event-driven fetch (getMetadata returns the
+        // stored FileInfo intact). Viewport enrichment of base rows
+        // goes through the SoA flatten, which does not carry isWritable,
+        // so the event path is the one that must show the emblem.
+        // Real coroutines (not TestScope): the 200ms storm-catcher
+        // debounce needs a real clock, like FakeFilesystem-based tests.
+        val backend = InMemoryBackend()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            backend.createFolder("memory://", "parent")
+            val childUri = "memory://parent/ro.txt"
+            backend.fs[childUri] = FileInfo(
+                path = childUri,
+                uri = childUri,
+                name = "ro.txt",
+                isDirectory = false,
+                isWritable = false
+            )
+
+            val dirState = DirState("memory://parent", backend, scope, Dispatchers.Default)
+            dirState.isLoading.first { !it }
+            delay(50) // let the watcher coroutines start collecting
+
+            backend.emitFileEvent(FileEvent.Modified(childUri))
+            delay(400) // 200ms debounce + metadata fetch + emblem enrichment
+
+            val child = dirState.items.value.find { it.uri == childUri } as? com.imbric.core.models.FileInfo
+            require(child != null) { "read-only row must be listed via the additions delta" }
+            val emblems = child.attributes["std::emblems"] as? List<*>
+            assertTrue(
+                emblems != null && emblems.contains("emblem-readonly"),
+                "Non-writable child should carry emblem-readonly, got: ${child.attributes["std::emblems"]}"
+            )
+            dirState.destroy()
+        } finally {
+            scope.cancel()
+        }
     }
 }

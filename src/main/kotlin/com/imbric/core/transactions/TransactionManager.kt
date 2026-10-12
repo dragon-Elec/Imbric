@@ -200,15 +200,17 @@ class TransactionManager(
      * undo/redo's `.first()`) — status reachability is worthless if delivery isn't. The
      * SharedFlow is replay-0 with a 128-slot buffer shared across ALL transactions, so a
      * stalled subscriber can make `tryEmit` fail with false, which the old code ignored.
-     * A suspending `emit` waits for the subscribers instead of dropping. Fast path first:
+     * A suspending `emit` waits up to 5s for the subscribers instead of dropping. Fast path first:
      * when the buffer has room the terminal lands synchronously with no coroutine at all;
      * the suspending fallback covers the stalled-subscriber case. If the manager scope is
      * itself cancelled (teardown racing a finisher), the launch no-ops and the event is
      * lost — accepted: buffer-full plus a dead scope means no waiter is left to collect.
+     * A subscriber stalled beyond the 5s cap also loses the event; the orchestrator's
+     * terminal wait carries its own wall-clock failsafe for exactly that case.
      */
     private fun emitTerminal(event: TransactionEvent) {
         if (_events.tryEmit(event)) return
-        scope.launch { _events.emit(event) }
+        scope.launch { withTimeoutOrNull(5_000) { _events.emit(event) } }
     }
 
     private fun updateOperationStatus(
@@ -326,6 +328,13 @@ class TransactionManager(
         val tx = transactions[tid] ?: return null
         return synchronized(tx) { tx.findOperation(jobId) }
     }
+
+    /**
+     * Current status of a tracked transaction, or null if the id is unknown or evicted.
+     * Reads [Transaction.status] directly — it is @Volatile, so the single-field read the
+     * terminal-wait failsafe needs requires no monitor.
+     */
+    fun getStatus(tid: Uuid): TransactionStatus? = transactions[tid]?.status
 
      // --- Capabilities ---
     fun getTransferCapabilities(sources: List<String>, dest: String): Map<String, Int> {

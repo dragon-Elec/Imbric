@@ -325,7 +325,7 @@ open class InMemoryBackend(
                 val matchesMinSize = query.minSize == null || info.size >= query.minSize
                 val matchesMaxSize = query.maxSize == null || info.size <= query.maxSize
                 val matchesModifiedAfter = query.modifiedAfter == null || (info.modifiedTime?.toEpochMilliseconds() ?: 0L) >= query.modifiedAfter
-                val matchesModifiedBefore = query.modifiedBefore == null || (info.modifiedTime?.toEpochMilliseconds() ?: 0L) <= query.modifiedBefore
+                val matchesModifiedBefore = query.modifiedBefore == null || (info.modifiedTime?.toEpochMilliseconds() ?: Long.MAX_VALUE) <= query.modifiedBefore
                 if (!matchesMinSize || !matchesMaxSize || !matchesModifiedAfter || !matchesModifiedBefore) continue
                 all.add(info)
             }

@@ -51,7 +51,12 @@ object GioTypeMappers {
             path = childPath,
             pathType = parentPathType,
             isDirectory = isDir,
-            // Directories: skip 3 attribute reads (size, contentType, mtime)
+            // Directories: skip 3 attribute reads (size, contentType, mtime).
+            // Directories also keep a null mtime deliberately: GIO watch
+            // events already cover directories (a child add fires CREATED
+            // on the parent), and a real dir mtime would churn on every
+            // child change — re-firing DirState's dedup fingerprint per
+            // child add for no new information.
             size = if (isDir) 0L else gioInfo.size,
             mimeType = if (isDir) "inode/directory" else internMime(gioInfo.contentType),
             modifiedTime = if (isDir) null else getTimestamp(gioInfo, "time::modified"),
@@ -178,9 +183,14 @@ object GioTypeMappers {
         // access::can-* queries, which apply full ACL/group semantics.
         val deriveFromOwnerBits = unixMode > 0 && ownerName != null && ownerName == CURRENT_USER_NAME
         // Owner bits: read = 0o400 (0x100), write = 0o200 (0x80), execute = 0o100 (0x40).
-        // For the owning user, effective access equals the owner permission bits.
+        // For the owning user, R/X effective access equals the owner permission bits
+        // (the group and other triples never apply to the owner). Write is the
+        // exception: POSIX ACLs, group grants and read-only mounts can allow or
+        // deny write regardless of the owner bits, so isWritable always reads
+        // access::can-write — it gates XferArbiter.canOverwrite (correctness) and
+        // the emblem-readonly marker, where an owner-bit lie is user-visible.
         val isReadable = if (deriveFromOwnerBits) (unixMode and 0x100) != 0 else gioInfo.getAttributeBoolean("access::can-read")
-        val isWritable = if (deriveFromOwnerBits) (unixMode and 0x80) != 0 else gioInfo.getAttributeBoolean("access::can-write")
+        val isWritable = gioInfo.getAttributeBoolean("access::can-write")
         val isExecutable = if (deriveFromOwnerBits) (unixMode and 0x40) != 0 else gioInfo.getAttributeBoolean("access::can-execute")
 
         return FileInfo(
@@ -309,8 +319,40 @@ object GioTypeMappers {
             ?: gioInfo.getAttributeAsString("standard::name")
     }
 
+    /**
+     * Reads a GIO time attribute as an [Instant] at millisecond precision.
+     *
+     * Every `time::*` attribute has a `*-nsec` companion (e.g. `time::modified`
+     * and `time::modified-nsec`) carrying the nanosecond remainder; pairing
+     * them here — the single choke point every mtime/atime/ctime read goes
+     * through — makes a same-second, same-size rewrite observable, because
+     * DirState's dedup pass and the conflict fingerprint compare modifiedTime
+     * directly. Whole-second truncation would swallow such an edit.
+     *
+     * The paired value is truncated to milliseconds, not carried at full
+     * nanosecond precision: [ListingDirectory] stores epoch millis and reads
+     * rows back through [Instant.fromEpochMilliseconds], and the dedup pass
+     * compares [Instant] equality. [Instant] keeps nanosecondsOfSecond, so a
+     * sub-millisecond value would never equal its own cached read-back —
+     * every refresh would treat every unchanged row as changed and the dedup
+     * pass could never reuse the cached row. Millis is the finest precision
+     * the listing layer can round-trip.
+     *
+     * [org.gnome.gio.FileInfo.hasAttribute] is the presence check: a queried
+     * attribute the filesystem left unset is absent (→ null), while a
+     * present-but-zero value is a real 1970 epoch-0 timestamp. The old
+     * `takeIf { it > 0 }` gate conflated the two and mapped epoch-0 to null.
+     * Namespaces without an nsec companion (e.g. `recent::modified`) simply
+     * have no `*-nsec` attribute, so they keep whole-second precision.
+     */
     private fun getTimestamp(gioInfo: org.gnome.gio.FileInfo, attribute: String): Instant? {
-        return gioInfo.getAttributeUint64(attribute).takeIf { it > 0 }?.let { Instant.fromEpochSeconds(it) }
+        if (!gioInfo.hasAttribute(attribute)) return null
+        val seconds = gioInfo.getAttributeUint64(attribute)
+        val nsecAttribute = "$attribute-nsec"
+        val nanos = if (gioInfo.hasAttribute(nsecAttribute)) {
+            gioInfo.getAttributeUint32(nsecAttribute).toLong()
+        } else 0L
+        return Instant.fromEpochMilliseconds(seconds * 1000 + nanos / 1_000_000)
     }
 
     private fun getTrashTime(gioInfo: org.gnome.gio.FileInfo): Instant? {

@@ -190,9 +190,11 @@ fun FileRow(
 
     // humanReadableSize formats on every access (log10/pow/String.format);
     // compute it once per row. Key on the values the text depends on (uri +
-    // size): ArrayBackedEntry.equals is URI-only, so keying on the item alone
-    // keeps stale text after a refresh changes the file's size.
-    val sizeText = remember(item.uri, item.size) { item.humanReadableSize }
+    // size + isDirectory): ArrayBackedEntry.equals is URI-only, so keying on
+    // the item alone keeps stale text after a refresh changes the file's
+    // size, and isDirectory keeps a file↔dir flip from reusing the old
+    // ""-vs-size text. FileGridCell has no parallel remember to widen.
+    val sizeText = remember(item.uri, item.size, item.isDirectory) { item.humanReadableSize }
 
     Box(
         modifier = modifier
