@@ -6,7 +6,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from ..daemon import PROJECT_ROOT, gradle_base_cmd
 from ..filter import OutputFilter
-from ..compressor import _GLIB_PATTERN, compress_glib_warnings
+from ..compressor import _GLIB_PATTERN, compress_glib_warnings, compress_stacktrace
+from ..dedup import DedupEngine
 
 _PASSED = re.compile(r" > .* PASSED")
 _TASK_START = re.compile(r"^> Task ")
@@ -119,6 +120,17 @@ def run(args):
     show_warnings = args.warnings
     warnings: list[str] = []
     glib_buffer: list[str] = []
+    # Stack frames inside a failure block: buffered and collapsed
+    # via compress_stacktrace. The engine treats `at ` frames as
+    # failures and would emit them verbatim — collapsing them
+    # here keeps only com.imbric frames plus a skip count.
+    stack_buffer: list[str] = []
+    # Universal repeated-line compressor: collapses consecutive
+    # runs of ANY repeated line (not just GLib). GLib lines keep
+    # their dedicated path below — compress_glib_warnings collapses
+    # at 2x and renders ⚠️ [LEVEL] prefixes, while the engine's
+    # contract is 2x-verbatim / [Nx] summaries (see dedup.py).
+    dedup = DedupEngine()
     in_stdout = False
 
     try:
@@ -145,6 +157,30 @@ def run(args):
             print(compress_glib_warnings(glib_buffer), flush=True)
             glib_buffer.clear()
 
+        def flush_stack():
+            # Same dot dance as flush_glib. Failure blocks are
+            # short, so this flushes almost immediately — only
+            # consecutive `at ` frames are ever pending.
+            if not stack_buffer:
+                return
+            if dot_count > 0:
+                print()
+            print(compress_stacktrace(stack_buffer), flush=True)
+            stack_buffer.clear()
+
+        def flush_dedup():
+            # Same dot dance as flush_glib: a pending dot row
+            # gets a newline first so a collapsed summary never
+            # glues onto the dots (dot_count is read, never
+            # reset — it feeds the final test total).
+            emitted = dedup.flush()
+            if not emitted:
+                return
+            if dot_count > 0:
+                print()
+            for line in emitted:
+                print(line, flush=True)
+
         for line in proc.stdout:
             line = line.rstrip()
             if not line:
@@ -169,15 +205,22 @@ def run(args):
             # and tolerates indentation. Lines inside a failure block
             # buffer instead of printing raw.
             if _GLIB_PATTERN.search(line):
+                # A GLib flood bounds any pending engine run:
+                # flush it first so an earlier flood's summary
+                # prints before this flood's (deferred) summary.
+                flush_dedup()
                 glib_buffer.append(line)
                 continue
             if glib_buffer:
+                # The GLib flood preceded the engine's pending
+                # run, so its summary keeps stream position.
                 flush_glib()
 
             # BUILD banners: show, but they END error context — matching
             # them via _IMPORTANT used to set in_error=True, which kept
             # swallowing lines after a successful build.
             if "BUILD SUCCESSFUL" in line or "BUILD FAILED" in line:
+                flush_dedup()
                 if dot_count > 0:
                     print()
                 print(line, flush=True)
@@ -196,6 +239,9 @@ def run(args):
 
             # Failure or important line → show full output immediately
             if any(p.search(line) for p in _IMPORTANT):
+                # Failures are sacred: they print immediately,
+                # so any pending flood summary must come first.
+                flush_dedup()
                 if dot_count > 0:
                     print()
                 print(line, flush=True)
@@ -206,6 +252,7 @@ def run(args):
             # a bare dot — the name would flood scrollback. The newline flush
             # before the summary still works because each dot line ends here.
             if _PASSED.search(line):
+                flush_dedup()
                 if verbose:
                     print(f". {line.strip()}", flush=True)
                 else:
@@ -221,28 +268,61 @@ def run(args):
             if in_error:
                 if _TASK_START.match(line):
                     in_error = False
+                    flush_stack()
+                    flush_dedup()
                     print(f"\n{line}", flush=True)
+                elif line.strip().startswith("at "):
+                    # Stack frames: buffer and collapse framework
+                    # frames via compress_stacktrace (see flush_stack).
+                    stack_buffer.append(line)
                 else:
-                    print(line, flush=True)
+                    # Non-frame lines inside an error block can
+                    # still flood (progress chatter); route them
+                    # through the engine. Failure-shaped lines pass
+                    # through verbatim — the engine never dedupes
+                    # them (failures are sacred).
+                    flush_stack()
+                    for emitted in dedup.feed(line):
+                        print(emitted, flush=True)
                 continue
 
             # Test task boundary → show as progress marker
             if _TASK_START.match(line) and re.search(r":test\b", line):
+                flush_dedup()
                 print(f"\n{line}", flush=True)
                 continue
 
-            # Non-test Gradle task line → suppress
+            # Non-test Gradle task line → suppress. Task lines
+            # are engine boundaries: flush any pending run so
+            # floods don't merge across task boundaries.
             if _TASK_START.match(line):
+                flush_dedup()
                 continue
 
-            # Non-Gradle output → pass through
-            print(line, flush=True)
+            # Non-Gradle output → pass through, collapsing
+            # consecutive repeated lines via the universal
+            # engine (dedup.py).
+            emitted = dedup.feed(line)
+            if emitted:
+                # A collapsed summary starts a new line (same
+                # dance as flush_glib). Verbatim lines keep
+                # gluing to a pending dot row — exactly as
+                # unfiltered output always has.
+                if emitted[0] != line and dot_count > 0:
+                    print()
+                for em in emitted:
+                    print(em, flush=True)
+            continue
 
         proc.wait()
 
         # Trailing flood: the child may end mid-GLib-spam with no
         # non-GLib line after it to trigger the in-loop flush.
+        # GLib first: a glib flood that preceded an engine flood
+        # must keep its stream position.
+        flush_stack()
         flush_glib()
+        flush_dedup()
 
         elapsed = int(time.time() - start)
         elapsed_str = f"{elapsed}s" if elapsed < 60 else f"{elapsed//60}m {elapsed%60}s"
