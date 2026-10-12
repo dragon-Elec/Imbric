@@ -1,7 +1,8 @@
 import subprocess
 import time
 import sys
-from ..daemon import PROJECT_ROOT
+from pathlib import Path
+from ..daemon import PROJECT_ROOT, gradle_base_cmd
 from ..filter import OutputFilter
 
 def register(subparsers):
@@ -20,7 +21,7 @@ def run(args):
     
     # 1. Check compilation
     print("1. Compilation check...")
-    gradle_cmd = ["./gradlew", "compileKotlin", "--console=plain"]
+    gradle_cmd = gradle_base_cmd("compileKotlin")
     filt = OutputFilter(mode="lint")
     start = time.time()
     
@@ -60,7 +61,7 @@ def run(args):
     
     # 2. Check test compilation
     print("2. Test compilation check...")
-    gradle_cmd = ["./gradlew", "compileTestKotlin", "--console=plain"]
+    gradle_cmd = gradle_base_cmd("compileTestKotlin")
     filt = OutputFilter(mode="lint")
     start = time.time()
     
@@ -107,7 +108,13 @@ def run(args):
             ["grep", "-r", "-n", "-i", "-E", "TODO|FIXME|HACK|XXX", "src/main/kotlin"],
             cwd=str(PROJECT_ROOT), capture_output=True, text=True
         )
-        if result.stdout.strip():
+        # grep exits 0=match, 1=no match, 2=error (missing dir). Treating 2 as
+        # "clean" reported success for a check that never ran.
+        if result.returncode == 2:
+            print("   ⚠ TODO/FIXME check could not run (src/main/kotlin missing?)")
+            if args.strict:
+                checks_passed = False
+        elif result.stdout.strip():
             lines = result.stdout.strip().splitlines()
             print(f"   ⚠ Found {len(lines)} TODO/FIXME comments:")
             for line in lines[:5]:  # Show first 5
@@ -120,17 +127,31 @@ def run(args):
             print("   ✓ No TODO/FIXME comments found")
     except Exception:
         print("   ⚠ Could not check for TODO/FIXME comments")
-    
+
     # Check for unused imports (basic check)
     try:
+        # Kotlin marks an unused import by never referencing the symbol; the old
+        # pattern `import.*unused` matched nothing in any real Kotlin file and so
+        # always reported clean. Detect imports whose simple name never appears
+        # again in the file body.
         result = subprocess.run(
-            ["grep", "-r", "-n", "import.*unused", "src/main/kotlin"],
+            [sys.executable, str(Path(__file__).parent / "_unused_imports.py")],
             cwd=str(PROJECT_ROOT), capture_output=True, text=True
         )
-        if result.stdout.strip():
-            print("   ⚠ Found potential unused imports")
+        if result.returncode != 0:
+            # 2 = missing source dir. Any other non-zero is an unexpected crash,
+            # and reporting that as "✓ No obvious unused imports" would claim a
+            # clean bill of health for a check that never completed.
+            print("   ⚠ unused-import check could not run (non-zero exit)")
             if args.strict:
                 checks_passed = False
+        elif result.stdout.strip():
+            # Advisory only: this is a name-occurrence heuristic, and deleting an
+            # import it wrongly flags breaks compilation. It informs; it does not
+            # gate --strict.
+            print("   ⚠ Found potential unused imports (advisory — verify before removing):")
+            for line in result.stdout.strip().splitlines()[:5]:
+                print(f"     {line}")
         else:
             print("   ✓ No obvious unused imports")
     except Exception:

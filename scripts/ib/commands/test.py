@@ -4,7 +4,7 @@ import sys
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from ..daemon import PROJECT_ROOT
+from ..daemon import PROJECT_ROOT, gradle_base_cmd
 from ..filter import OutputFilter
 
 _PASSED = re.compile(r" > .* PASSED")
@@ -12,7 +12,9 @@ _TASK_START = re.compile(r"^> Task ")
 
 _IMPORTANT = [
     re.compile(r"FAILED"),
-    re.compile(r"error:"),
+    # Kotlin compiler errors are `e: file://...` — matching only `error:` (Gradle's
+    # own wording) hid every Kotlin compile failure from the filtered output.
+    re.compile(r"^\s*e: "),
     re.compile(r"Exception"),
     re.compile(r"BUILD SUCCESSFUL"),
     re.compile(r"BUILD FAILED"),
@@ -51,7 +53,7 @@ def register(subparsers):
     p.add_argument("--continue", dest="continue_on_fail", action="store_true", help="Continue running tests even if some fail")
 
 def run(args):
-    gradle_cmd = ["./gradlew", "test", "--console=plain"]
+    gradle_cmd = gradle_base_cmd("test")
 
     if args.failed and args.tests:
         print("note: --tests ignored because --failed", file=sys.stderr)
@@ -106,9 +108,10 @@ def run(args):
                 in_error = True
                 continue
 
-            # Passed test → single dot
+            # Passed test → dot + name for shape and grep-ability. The newline
+            # flush before the summary still works because each dot line ends here.
             if _PASSED.search(line):
-                print(".", end="", flush=True)
+                print(f". {line.strip()}", flush=True)
                 dot_count += 1
                 continue
 

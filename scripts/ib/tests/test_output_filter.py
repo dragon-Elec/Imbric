@@ -119,7 +119,7 @@ class TestDotRendering(unittest.TestCase):
         printed = out.getvalue()
         self.assertIn(".", printed)                       # dot for the passed test
         self.assertIn("BUILD SUCCESSFUL in 5s", printed)  # gradle summary passes through
-        self.assertIn(".\n", printed)                     # newline between dots and summary
+        self.assertIn(". FooTest > bar PASSED\n", printed)  # dot carries the test name
         self.assertNotIn(".BUILD SUCCESSFUL", printed)    # ...never glued
 
     def test_passing_proc_reports_success(self):
@@ -183,3 +183,52 @@ class TestFailureDigest(unittest.TestCase):
         f = OutputFilter()
         self.assertIsNone(f.filter_line("* Get more help at https://help.gradle.org"))
         self.assertIsNone(f.filter_line("> Run some other task"))
+
+
+class TestTestCommandVisibility(unittest.TestCase):
+    """Regression pins for the two real defects found in the 2026-10 deepwork audit.
+
+    1. Kotlin compiler errors print as `e: file://...`. The old `_IMPORTANT`
+       matched only `error:` (Gradle's own wording), so every Kotlin compile
+       failure was filtered out of `ib test` — you had to go read the build
+       directory to learn the build was broken.
+    2. Passing tests print their name, not a bare `.`, so `--tests FooTest` is
+       verifiable from one run instead of guessing whether it was discovered.
+    """
+
+    def _run_test_cmd(self, lines, returncode=0):
+        proc = FakeProc(lines=lines, returncode=returncode)
+        out = io.StringIO()
+        # run() propagates the child exit code via sys.exit — swallow it so the
+        # assertion is about printed output, not the process status.
+        with mock.patch.object(test_cmd.subprocess, "Popen", return_value=proc):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                with contextlib.suppress(SystemExit):
+                    test_cmd.run(argparse.Namespace(
+                        tests=None, failed=False, rerun=False, continue_on_fail=False))
+        return out.getvalue()
+
+    def test_kotlin_compile_error_is_visible(self):
+        printed = self._run_test_cmd([
+            "> Task :compileTestKotlin FAILED\n",
+            "e: file:///p/Test.kt:2:5 Unresolved reference: foo\n",
+            "FAILURE: Build failed\n",
+        ], returncode=1)
+        self.assertIn("e: file:///p/Test.kt:2:5 Unresolved reference: foo", printed)
+
+    def test_passing_test_shows_name(self):
+        printed = self._run_test_cmd([
+            "FooTest > doesTheThing() PASSED\n",
+            "BUILD SUCCESSFUL in 5s\n",
+        ])
+        self.assertIn("FooTest > doesTheThing() PASSED", printed)
+
+    def test_kotlin_warning_does_not_enter_error_block(self):
+        # `w:` is a warning, not a failure: it must print but must NOT set
+        # in_error, or every line after it floods until the next task line.
+        printed = self._run_test_cmd([
+            "w: file:///p/A.kt:3:1 unused variable\n",
+            "FooTest > bar PASSED\n",
+            "BUILD SUCCESSFUL in 5s\n",
+        ])
+        self.assertIn("unused variable", printed)

@@ -2,7 +2,7 @@ import subprocess
 import time
 import sys
 import re
-from ..daemon import PROJECT_ROOT
+from ..daemon import PROJECT_ROOT, gradle_base_cmd
 from ..filter import OutputFilter
 
 def register(subparsers):
@@ -11,7 +11,7 @@ def register(subparsers):
     p.add_argument("--all", action="store_true", help="Run all benchmarks")
 
 def run(args):
-    gradle_cmd = ["./gradlew", "test", "--console=plain"]
+    gradle_cmd = gradle_base_cmd("test")
     
     if args.tests and args.all:
         print("note: --all ignored because --tests", file=sys.stderr)

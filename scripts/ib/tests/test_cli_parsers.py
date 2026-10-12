@@ -19,6 +19,7 @@ PROJECT_ROOT is pointed at a temp sandbox.
 import argparse
 import contextlib
 import io
+import os
 import subprocess
 import tempfile
 import unittest
@@ -78,6 +79,8 @@ class TestTestsFlagRepeatable(unittest.TestCase):
                     continue_on_fail=False))
         self.assertEqual(
             popen.call_args.args[0],
+            # --console=plain comes from the shared GRADLE_FLAGS so no command can
+            # forget it; --tests is still forwarded once per class.
             ["./gradlew", "test", "--console=plain", "--tests", "A", "--tests", "B"],
         )
 
@@ -142,27 +145,45 @@ class TestConflictingFlagPrecedence(unittest.TestCase):
 
 
 class TestDoctorGradleVersionCheck(unittest.TestCase):
-    def _run_doctor(self, gradle_stdout):
-        """Run doctor with subprocess.run stubbed; return captured stdout."""
+    def _run_doctor(self, gradle_stdout, env_ok=True):
+        """Run doctor with subprocess.run stubbed; return (stdout, exit_code).
+
+        doctor exits non-zero when any check fails, so a test that leaves the real
+        JAVA_HOME in place now (correctly) exits 1. Both the output and the code
+        are returned so tests can assert either.
+        """
         def fake_run(cmd, *a, **kw):
             if cmd and cmd[0] == "java":
                 return subprocess.CompletedProcess(
                     cmd, 0, stdout='openjdk version "25.0.1"', stderr="")
             return subprocess.CompletedProcess(cmd, 0, stdout=gradle_stdout, stderr="")
 
+        env = {"JAVA_HOME": "/usr/lib/jvm/java-25-openjdk-amd64"} if env_ok else {}
         out, err = io.StringIO(), io.StringIO()
+        code = None
         with mock.patch.object(doctor.subprocess, "run", side_effect=fake_run):
-            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                doctor.run(_parse(["doctor"]))
-        return out.getvalue()
+            with mock.patch.dict(os.environ, env, clear=True):
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    try:
+                        doctor.run(_parse(["doctor"]))
+                    except SystemExit as e:
+                        code = e.code
+        return out.getvalue(), code
 
     def test_matching_version_reports_ok(self):
-        out = self._run_doctor("Gradle 9.6.1\nBuild time: 2026-01-01\n")
+        out, code = self._run_doctor("Gradle 9.6.1\nBuild time: 2026-01-01\n")
         self.assertIn("✓ Gradle 9.6.1 wrapper OK", out)
+        self.assertIsNone(code)  # every check passed -> exit 0
 
     def test_wrong_version_reports_issue(self):
-        out = self._run_doctor("Gradle 8.1.1\n")
+        out, _ = self._run_doctor("Gradle 8.1.1\n")
         self.assertIn("✗ Gradle wrapper issue", out)
+
+    def test_failing_check_exits_nonzero(self):
+        """A health check that always exits 0 cannot gate `ib doctor && deploy`."""
+        out, code = self._run_doctor("Gradle 9.6.1\n", env_ok=False)
+        self.assertIn("✗ JAVA_HOME", out)
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":

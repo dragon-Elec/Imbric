@@ -243,12 +243,14 @@ def run(args):
         
         total_files = 0
         total_missing = 0
-        
+        checked = 0
+
         for kt_file in sorted(kt_files):
             context_path = find_context_file(kt_file)
             if not context_path:
                 continue
-                
+
+            checked += 1
             src_decls, missing = validate_file(kt_file, context_path)
             if missing:
                 total_files += 1
@@ -256,9 +258,20 @@ def run(args):
                 print(f"\n[!] {kt_file.relative_to(PROJECT_ROOT)}:")
                 for name in sorted(missing):
                     print(f"  - {name}")
-                    
-        if total_files == 0:
-            print("\n[✓] All public declarations across the codebase are fully documented!")
+
+        if checked == 0:
+            # `total_files` counts files WITH gaps, not files checked — it is 0
+            # both when everything is documented and when find_context_file()
+            # matched nothing at all. Only `checked` tells those apart; without
+            # this the old banner claimed full coverage over an unaudited tree.
+            print("\n[?] No files with a *context.md were found — nothing was audited.")
+            sys.exit(1)
+        elif total_missing == 0:
+            # Only reachable once something was actually checked. The old banner
+            # fired whenever `total_files == 0`, which is also true when the tree
+            # has no context files at all — an unaudited tree claimed full
+            # coverage. Report how many files this claim covers.
+            print(f"\n[✓] All public declarations across {checked} audited files are fully documented!")
         else:
             print(f"\nFound {total_missing} missing declarations across {total_files} files.")
             sys.exit(1)

@@ -2,7 +2,7 @@ import subprocess
 import time
 import sys
 import signal
-from ..daemon import PROJECT_ROOT
+from ..daemon import PROJECT_ROOT, gradle_base_cmd
 from ..process import ProcessManager
 from ..filter import OutputFilter
 
@@ -12,10 +12,10 @@ def register(subparsers):
 
 def run(args):
     if args.hot:
-        gradle_cmd = ["./gradlew", "hotRun", "--auto", "--no-configuration-cache", "--console=plain"]
+        gradle_cmd = gradle_base_cmd("hotRun", "--auto", "--no-configuration-cache")
         print("Starting Imbric in Hot-Reload mode...")
     else:
-        gradle_cmd = ["./gradlew", "run", "--console=plain"]
+        gradle_cmd = gradle_base_cmd("run")
         print("Starting Imbric...")
 
     filt = OutputFilter(mode="run")

@@ -1,7 +1,7 @@
 import os
 import subprocess
 from pathlib import Path
-from ..daemon import PROJECT_ROOT
+from ..daemon import PROJECT_ROOT, gradle_base_cmd
 
 def register(subparsers):
     p = subparsers.add_parser("project", help="Show project information")
@@ -54,8 +54,11 @@ def _get_gradle_info() -> dict:
         )
         if result.returncode == 0:
             for line in result.stdout.splitlines():
-                if "Gradle" in line and "version" in line:
-                    info["version"] = line.split()[-1]
+                # `gradlew --version` prints `Gradle 9.6.1` — the old check also
+                # required the word "version", which is never there, so Gradle
+                # always reported as `?`.
+                if line.strip().startswith("Gradle "):
+                    info["version"] = line.split()[1]
                     break
     except Exception:
         pass
@@ -66,8 +69,10 @@ def _get_gradle_info() -> dict:
         try:
             content = build_file.read_text()
             import re
-            # Look for kotlin version
-            match = re.search(r"kotlin\(['\"](.+?)['\"]\)", content)
+            # `kotlin("jvm") version "2.4.10"` — the old regex captured the
+            # plugin id ("jvm") instead of the version. Anchor on the version
+            # string that follows.
+            match = re.search(r"""kotlin\(\s*['"][^'"]+['"]\s*\)\s*version\s*['"]([^'"]+)['"]""", content)
             if match:
                 info["kotlin"] = match.group(1)
             # Look for java version
@@ -139,7 +144,7 @@ def run(args):
         print("Dependencies:")
         try:
             result = subprocess.run(
-                ["./gradlew", "dependencies", "--configuration", "compileClasspath", "--console=plain"],
+                gradle_base_cmd("dependencies", "--configuration", "compileClasspath"),
                 cwd=str(PROJECT_ROOT), capture_output=True, text=True
             )
             if result.returncode == 0:
@@ -158,7 +163,7 @@ def run(args):
         print("Available Gradle tasks:")
         try:
             result = subprocess.run(
-                ["./gradlew", "tasks", "--all", "--console=plain"],
+                gradle_base_cmd("tasks", "--all"),
                 cwd=str(PROJECT_ROOT), capture_output=True, text=True
             )
             if result.returncode == 0:

@@ -13,6 +13,20 @@ GRADLE_DIR = PROJECT_ROOT / ".gradle"
 PID_FILE = GRADLE_DIR / "imbric-daemon.pid"
 LOG_FILE = GRADLE_DIR / "imbric-daemon.log"
 
+# Flags every Gradle invocation shares. `--console=plain` was copy-pasted into
+# six command modules, so a new command would silently fall back to Gradle's
+# rich progress output — unreadable through a pipe and noisy for an agent.
+#
+# `--stacktrace` was tried here and removed: on a failed build Gradle dumps 30+
+# frames of its own internals *after* `* What went wrong:`, which buries the one
+# line that names the failing task. That block already carries the cause.
+GRADLE_FLAGS = ["--console=plain"]
+
+
+def gradle_base_cmd(*tasks: str) -> list[str]:
+    """Build a Gradle argv from task names plus the shared flags."""
+    return ["./gradlew", *tasks, *GRADLE_FLAGS]
+
 class DaemonManager:
     @staticmethod
     def read_pid() -> int | None:
@@ -100,9 +114,9 @@ class DaemonManager:
         signal.signal(signal.SIGINT, handle_sigterm)
 
         if hot:
-            gradle_cmd = ["./gradlew", "hotRun", "--auto", "--no-configuration-cache", "--console=plain"]
+            gradle_cmd = gradle_base_cmd("hotRun", "--auto", "--no-configuration-cache")
         else:
-            gradle_cmd = ["./gradlew", "run", "--continuous", "--console=plain"]
+            gradle_cmd = gradle_base_cmd("run", "--continuous")
 
         cls._log("Daemon started.")
         cls._log(f"Project: {PROJECT_ROOT}")

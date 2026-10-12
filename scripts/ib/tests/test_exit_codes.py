@@ -115,8 +115,22 @@ class TestAuditExitCodes(unittest.TestCase):
             root = self._make_project(tmp, document_bar=True)
             out, _, code = self._run_audit_scan(root)
         self.assertIsNone(code)
+        # The banner must state how many files it actually audited, so an
+        # unaudited tree cannot pass itself off as fully documented.
         self.assertIn(
-            "All public declarations across the codebase are fully documented", out)
+            "All public declarations across 1 audited files are fully documented", out)
+
+    def test_scan_with_no_context_files_does_not_claim_clean(self):
+        # A tree with Kotlin sources but no *context.md checked nothing. That
+        # used to print the all-documented banner and exit 0.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src" / "Foo.kt").write_text(TestAuditExitCodes.FOO_KT)
+            out, _, code = self._run_audit_scan(root)
+        self.assertEqual(code, 1)
+        self.assertNotIn("fully documented", out)
+        self.assertIn("nothing was audited", out)
 
     def test_single_file_with_missing_declaration_exits_1(self):
         with tempfile.TemporaryDirectory() as tmp:

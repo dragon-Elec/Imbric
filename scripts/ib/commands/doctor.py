@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 from pathlib import Path
 from ..daemon import PROJECT_ROOT
 
@@ -8,25 +9,29 @@ def register(subparsers):
 
 def run(args):
     print("=== Imbric Doctor ===")
-    
+
+    # A health check that always exits 0 cannot gate anything — `ib doctor && deploy`
+    # would deploy on a broken env. Count failures and exit non-zero.
+    failures = 0
+
+    def check(ok: bool, good: str, bad: str):
+        nonlocal failures
+        print(("✓ " if ok else "✗ ") + (good if ok else bad))
+        if not ok:
+            failures += 1
+
     # Check Java
     try:
         res = subprocess.run(["java", "-version"], capture_output=True, text=True)
         out = res.stdout + res.stderr
-        if "25" in out:
-            print("✓ JDK 25 found")
-        else:
-            print("✗ JDK 25 missing or not default")
+        check("25" in out, "JDK 25 found", "JDK 25 missing or not default")
     except Exception:
-        print("✗ Java not found")
-        
+        check(False, "", "Java not found")
+
     # Check JAVA_HOME
     jh = os.environ.get("JAVA_HOME")
-    if jh and "25" in jh:
-        print("✓ JAVA_HOME looks correct")
-    else:
-        print("✗ JAVA_HOME missing or wrong version")
-        
+    check(bool(jh) and "25" in jh, "JAVA_HOME looks correct", "JAVA_HOME missing or wrong version")
+
     # Check Gradle
     try:
         try:
@@ -35,23 +40,19 @@ def run(args):
         except Exception:
             gradle_version = "9.6.1"
         res = subprocess.run(["./gradlew", "--version"], cwd=str(PROJECT_ROOT), capture_output=True, text=True)
-        if gradle_version in res.stdout:
-            print(f"✓ Gradle {gradle_version} wrapper OK")
-        else:
-            print("✗ Gradle wrapper issue")
+        check(gradle_version in res.stdout, f"Gradle {gradle_version} wrapper OK", "Gradle wrapper issue")
     except Exception:
-        print("✗ gradlew failed")
-        
+        check(False, "", "gradlew failed")
+
     # Check GIR
     gir_dir = PROJECT_ROOT / "ref" / "java-gi_patched" / "ext" / "gir-files" / "linux"
-    if gir_dir.exists() and (gir_dir / "GLib-2.0.gir").exists():
-        print("✓ GIR files found")
-    else:
-        print("✗ GIR files missing")
-        
+    check(gir_dir.exists() and (gir_dir / "GLib-2.0.gir").exists(), "GIR files found", "GIR files missing")
+
     # Check bindings
     gen_dir = PROJECT_ROOT / "build" / "native-gen" / "bindings"
-    if gen_dir.exists() and any(gen_dir.iterdir()):
-        print("✓ Bindings exist")
-    else:
-        print("✗ Bindings missing (run 'ib generate')")
+    check(gen_dir.exists() and any(gen_dir.iterdir()), "Bindings exist", "Bindings missing (run 'ib generate')")
+
+    if failures:
+        print(f"\n{failures} check(s) failed.")
+        sys.exit(1)
+    print("\nAll checks passed.")

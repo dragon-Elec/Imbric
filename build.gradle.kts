@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+
 plugins {
     kotlin("jvm") version "2.4.10"
     id("org.jetbrains.kotlin.plugin.serialization") version "2.4.10"
@@ -70,6 +72,14 @@ tasks.test {
     testLogging {
         events("passed", "skipped", "failed")
         showStandardStreams = true
+        // Gradle's default prints only `AssertionFailedError at Foo.kt:12` —
+        // the expected/got values, the assertion message and the stack all go to
+        // an HTML report nobody reads. FULL keeps the failure actionable in the
+        // terminal, which is the only place `ib test` output goes.
+        exceptionFormat = TestExceptionFormat.FULL
+        showExceptions = true
+        showCauses = true
+        showStackTraces = true
     }
 }
 

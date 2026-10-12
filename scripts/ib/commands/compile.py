@@ -1,7 +1,7 @@
 import subprocess
 import time
 import sys
-from ..daemon import PROJECT_ROOT
+from ..daemon import PROJECT_ROOT, gradle_base_cmd
 from ..filter import OutputFilter
 
 def register(subparsers):
@@ -23,11 +23,11 @@ def run(args):
         sys.exit(1)
 
     if args.full:
-        gradle_cmd = ["./gradlew", "build", "--console=plain", "-x", "test"]
+        gradle_cmd = gradle_base_cmd("build", "-x", "test")
     elif args.tests:
-        gradle_cmd = ["./gradlew", "compileKotlin", "compileTestKotlin", "--console=plain"]
+        gradle_cmd = gradle_base_cmd("compileKotlin", "compileTestKotlin")
     else:
-        gradle_cmd = ["./gradlew", "compileKotlin", "--console=plain"]
+        gradle_cmd = gradle_base_cmd("compileKotlin")
 
     if args.rerun:
         gradle_cmd.append("--rerun-tasks")
